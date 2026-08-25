@@ -1,0 +1,6 @@
+{
+  "resoniteLinkUrl": "ws://localhost:12449",
+  "timeoutSeconds": 30,
+  "fluxExecutable": "flux-sdk",
+  "resoniteManagedDataPath": "D:\\Users\\star_\\AppData\\Local\\RESO Launcher\\profiles\\profile1\\Game"
+}

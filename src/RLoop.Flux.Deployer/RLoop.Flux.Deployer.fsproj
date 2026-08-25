@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>RLoop.Flux.Deployer</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Papaltine.FluxSDK.Core" />
+    <PackageReference Include="FParsec-Pipes" />
+    <PackageReference Include="FParsec" />
+    <PackageReference Include="FSharp.Data.Json.Core" />
+    <PackageReference Include="Papaltine.ResoniteLink.RPath" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../RLoop.Core/RLoop.Core.csproj" />
+  </ItemGroup>
+</Project>

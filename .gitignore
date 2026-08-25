@@ -1,0 +1,11 @@
+bin/
+obj/
+.vs/
+.idea/
+TestResults/
+*.user
+*.nupkg
+artifacts/
+examples/flux/build/
+examples/flux/.protograph/
+*.brson

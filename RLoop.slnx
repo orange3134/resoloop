@@ -1,0 +1,9 @@
+<Solution>
+  <Project Path="src/RLoop.Core/RLoop.Core.csproj" />
+  <Project Path="src/RLoop.ResoniteLink/RLoop.ResoniteLink.csproj" />
+  <Project Path="src/RLoop.Flux/RLoop.Flux.csproj" />
+  <Project Path="src/RLoop.Flux.Deployer/RLoop.Flux.Deployer.fsproj" />
+  <Project Path="src/RLoop.Cli/RLoop.Cli.csproj" />
+  <Project Path="tests/RLoop.Tests/RLoop.Tests.csproj" />
+  <Project Path="tests/RLoop.IntegrationTests/RLoop.IntegrationTests.csproj" />
+</Solution>

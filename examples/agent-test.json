@@ -1,0 +1,16 @@
+{
+  "slot": {
+    "name": "RLoop_Test",
+    "parent": "Root",
+    "position": [0, 1.5, 2],
+    "scale": [1, 1, 1]
+  },
+  "components": [
+    {
+      "type": "FrooxEngine.Grabbable",
+      "fields": {
+        "Scalable": true
+      }
+    }
+  ]
+}

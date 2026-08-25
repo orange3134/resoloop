@@ -1,0 +1,17 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageVersion Include="YellowDogMan.ResoniteLink" Version="0.13.1" />
+    <PackageVersion Include="Papaltine.FluxSDK.Core" Version="1.9.0" />
+    <PackageVersion Include="FParsec-Pipes" Version="1.1.2.0" />
+    <PackageVersion Include="FParsec" Version="2.0.0-beta2" />
+    <PackageVersion Include="FSharp.Data.Json.Core" Version="6.6.0.0" />
+    <PackageVersion Include="Papaltine.ResoniteLink.RPath" Version="0.6.0" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
+    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,52 @@
+using System.Text.Json;
+using RLoop.Core;
+
+namespace RLoop.Tests;
+
+public sealed class ConfigurationTests : IDisposable
+{
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "rloop-tests-" + Guid.NewGuid().ToString("N"));
+
+    public ConfigurationTests() => Directory.CreateDirectory(_root);
+
+    [Fact]
+    public void ResolvesCliOverEnvironmentOverProjectOverUser()
+    {
+        var project = Path.Combine(_root, "project");
+        var child = Path.Combine(project, "src");
+        var user = Path.Combine(_root, "user");
+        Directory.CreateDirectory(child);
+        Directory.CreateDirectory(Path.Combine(user, ".rloop"));
+        File.WriteAllText(Path.Combine(project, ".rloop.json"), JsonSerializer.Serialize(new { resoniteLinkUrl = "ws://project:3", timeoutSeconds = 11 }));
+        File.WriteAllText(Path.Combine(user, ".rloop", "config.json"), JsonSerializer.Serialize(new { resoniteLinkUrl = "ws://user:4", fluxExecutable = "user-flux" }));
+        var env = new Dictionary<string, string?> { ["RESONITE_LINK_URL"] = "ws://env:2" };
+
+        var result = ConfigResolver.Resolve(child, new Dictionary<string, string?> { ["url"] = "ws://cli:1" }, key => env.GetValueOrDefault(key), user);
+
+        Assert.Equal("ws://cli:1", result.Config.ResoniteLinkUrl);
+        Assert.Equal(11, result.Config.TimeoutSeconds);
+        Assert.Equal("user-flux", result.Config.FluxExecutable);
+        Assert.Equal("cli", result.Sources["resoniteLinkUrl"]);
+    }
+
+    [Fact]
+    public void MissingUrlProducesActionableError()
+    {
+        var result = ConfigResolver.Resolve(_root, new Dictionary<string, string?>(), _ => null, Path.Combine(_root, "none"));
+        var ex = Assert.Throws<RLoopException>(() => ConfigResolver.RequireUrl(result.Config));
+        Assert.Equal("RESONITE_LINK_URL_MISSING", ex.Code);
+        Assert.NotEmpty(ex.Suggestions);
+    }
+
+    [Fact]
+    public void RejectsNonWebSocketUrl()
+    {
+        var ex = Assert.Throws<RLoopException>(() => ConfigResolver.RequireUrl(new RLoopConfig("http://localhost:1")));
+        Assert.Equal("INVALID_RESONITE_LINK_URL", ex.Code);
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_root)) Directory.Delete(_root, true);
+    }
+}
