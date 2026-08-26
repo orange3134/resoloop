@@ -136,11 +136,17 @@ rloop inspect $slotId --depth 2 --members --json
 
 ## 6. AIエージェントと反復する
 
-機械処理では `--json` を標準にすると、成功時は `data`、失敗時は `error.code`、`context`、`suggestions` を安定して利用できます。Codexへ同梱skillsを導入する場合は、rloopリポジトリで次を実行します。
+機械処理では `--json` を標準にすると、成功時は `data`、失敗時は `error.code`、`context`、`suggestions` を安定して利用できます。
+
+Codexへ同梱skillsを導入する場合は、personal skillsではなく、Resoniteコンテンツprojectの `.agents/skills/` へコピーします。次のコマンドは対象projectのrootで実行してください。`$rloopRepository` にはクローン済みrloopリポジトリのpathを指定します。
 
 ~~~powershell
-Copy-Item -Recurse skills\codex\* "$env:USERPROFILE\.codex\skills\"
+$rloopRepository = "D:\path\to\resonite-link-cli-loop"
+New-Item -ItemType Directory -Force .agents\skills | Out-Null
+Copy-Item -Recurse -Force "$rloopRepository\skills\codex\*" .agents\skills\
 ~~~
+
+Codexはcurrent directoryからrepository rootまでの `.agents/skills/` を読み込むため、これらのskillはこのproject内でだけ利用されます。`.agents/skills/` をversion controlに含めれば、チームで同じworkflowを共有できます。以前の手順で `$env:USERPROFILE\.codex\skills\` へコピー済みの場合、そのpersonal copyを削除するまでglobalにも表示されます。Codexが変更を検出しない場合は再起動してください。詳細は[OpenAI公式のskill discovery仕様](https://developers.openai.com/codex/skills#where-codex-loads-local-skills)を参照してください。
 
 エージェントには、対象project directory、実現したい内容、変更してよい範囲を伝えます。安全な基本ループは次のとおりです。
 
