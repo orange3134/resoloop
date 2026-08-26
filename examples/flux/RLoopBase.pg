@@ -1,0 +1,4 @@
+module RLoopBase
+where {
+    1->display
+}

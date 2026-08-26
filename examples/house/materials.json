@@ -1,0 +1,227 @@
+{
+  "children": [
+    {
+      "slot": {
+        "name": "_Assets"
+      },
+      "children": [
+        {
+          "slot": {
+            "name": "WarmWood"
+          },
+          "components": [
+            {
+              "key": "matWarm",
+              "type": "FrooxEngine.PBS_Metallic",
+              "fields": {
+                "AlbedoColor": [
+                  0.34,
+                  0.14,
+                  0.055,
+                  1
+                ],
+                "Metallic": 0.05,
+                "Smoothness": 0.32
+              }
+            }
+          ]
+        },
+        {
+          "slot": {
+            "name": "DarkWood"
+          },
+          "components": [
+            {
+              "key": "matDark",
+              "type": "FrooxEngine.PBS_Metallic",
+              "fields": {
+                "AlbedoColor": [
+                  0.11,
+                  0.035,
+                  0.018,
+                  1
+                ],
+                "Metallic": 0.08,
+                "Smoothness": 0.42
+              }
+            }
+          ]
+        },
+        {
+          "slot": {
+            "name": "CreamPlaster"
+          },
+          "components": [
+            {
+              "key": "matCream",
+              "type": "FrooxEngine.PBS_Metallic",
+              "fields": {
+                "AlbedoColor": [
+                  0.72,
+                  0.58,
+                  0.4,
+                  1
+                ],
+                "Metallic": 0,
+                "Smoothness": 0.22
+              }
+            }
+          ]
+        },
+        {
+          "slot": {
+            "name": "HearthStone"
+          },
+          "components": [
+            {
+              "key": "matStone",
+              "type": "FrooxEngine.PBS_Metallic",
+              "fields": {
+                "AlbedoColor": [
+                  0.18,
+                  0.15,
+                  0.13,
+                  1
+                ],
+                "Metallic": 0.05,
+                "Smoothness": 0.18
+              }
+            }
+          ]
+        },
+        {
+          "slot": {
+            "name": "TealFabric"
+          },
+          "components": [
+            {
+              "key": "matTeal",
+              "type": "FrooxEngine.PBS_Metallic",
+              "fields": {
+                "AlbedoColor": [
+                  0.045,
+                  0.22,
+                  0.24,
+                  1
+                ],
+                "Metallic": 0,
+                "Smoothness": 0.58
+              }
+            }
+          ]
+        },
+        {
+          "slot": {
+            "name": "WarmLinen"
+          },
+          "components": [
+            {
+              "key": "matLinen",
+              "type": "FrooxEngine.PBS_Metallic",
+              "fields": {
+                "AlbedoColor": [
+                  0.83,
+                  0.75,
+                  0.62,
+                  1
+                ],
+                "Metallic": 0,
+                "Smoothness": 0.45
+              }
+            }
+          ]
+        },
+        {
+          "slot": {
+            "name": "BrushedMetal"
+          },
+          "components": [
+            {
+              "key": "matMetal",
+              "type": "FrooxEngine.PBS_Metallic",
+              "fields": {
+                "AlbedoColor": [
+                  0.12,
+                  0.14,
+                  0.16,
+                  1
+                ],
+                "Metallic": 0.82,
+                "Smoothness": 0.68
+              }
+            }
+          ]
+        },
+        {
+          "slot": {
+            "name": "EmberGlow"
+          },
+          "components": [
+            {
+              "key": "matEmber",
+              "type": "FrooxEngine.PBS_Metallic",
+              "fields": {
+                "AlbedoColor": [
+                  0.75,
+                  0.07,
+                  0.015,
+                  1
+                ],
+                "Metallic": 0,
+                "Smoothness": 0.4,
+                "EmissiveColor": [
+                  1.5,
+                  0.16,
+                  0.025,
+                  1
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "slot": {
+            "name": "PlantGreen"
+          },
+          "components": [
+            {
+              "key": "matGreen",
+              "type": "FrooxEngine.PBS_Metallic",
+              "fields": {
+                "AlbedoColor": [
+                  0.04,
+                  0.24,
+                  0.09,
+                  1
+                ],
+                "Metallic": 0,
+                "Smoothness": 0.38
+              }
+            }
+          ]
+        },
+        {
+          "slot": {
+            "name": "MirrorMaterial"
+          },
+          "components": [
+            {
+              "key": "matMirror",
+              "type": "FrooxEngine.ReflectionMaterial",
+              "fields": {
+                "TintColor": [
+                  0.82,
+                  0.9,
+                  1,
+                  1
+                ],
+                "Distort": 0,
+                "Sidedness": "Double"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -11,7 +11,10 @@ public sealed record ApplyDocument(
     ApplyOwnershipSpec? Ownership,
     ApplySlotSpec? Slot,
     IReadOnlyList<ApplyComponentSpec>? Components,
-    IReadOnlyList<ApplyNodeSpec>? Children = null)
+    IReadOnlyList<ApplyNodeSpec>? Children = null,
+    IReadOnlyDictionary<string, ApplyAssetSpec>? Assets = null,
+    IReadOnlyDictionary<string, ApplyCameraSpec>? Cameras = null,
+    IReadOnlyList<ApplyTestSpec>? Tests = null)
 {
     [JsonIgnore]
     public string? SourcePath { get; init; }
@@ -25,8 +28,13 @@ public sealed record ApplyDocument(
         try
         {
             var fullPath = Path.GetFullPath(path);
-            return (JsonSerializer.Deserialize<ApplyDocument>(File.ReadAllText(fullPath), JsonOptions)
-                    ?? throw new JsonException("Document was empty.")) with { SourcePath = fullPath };
+            var expanded = ApplyDocumentCompiler.Compile(fullPath);
+            return (JsonSerializer.Deserialize<ApplyDocument>(expanded.Json, JsonOptions)
+                    ?? throw new JsonException("Document was empty.")) with
+            {
+                SourcePath = fullPath,
+                Compilation = expanded.Summary
+            };
         }
         catch (JsonException ex)
         {
@@ -35,12 +43,53 @@ public sealed record ApplyDocument(
         }
     }
 
+    [JsonIgnore]
+    public ApplyCompilationSummary? Compilation { get; init; }
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
     };
 }
+
+public sealed record ApplyCompilationSummary(
+    int SourceFiles,
+    int Prototypes,
+    int Instances,
+    int RepeatedNodes,
+    int ExpandedNodes,
+    long ExpandedBytes);
+
+public sealed record ApplyAssetSpec(string Kind, string Source, IReadOnlyDictionary<string, JsonElement>? Options = null);
+
+public sealed record ApplyCameraSpec(
+    float[] Position,
+    float[] Target,
+    float FieldOfView = 60,
+    int Width = 1280,
+    int Height = 720,
+    string? Output = null,
+    bool Representative = false);
+
+public sealed record ApplyTestSpec(
+    string Name,
+    IReadOnlyList<ApplyAssertionSpec> Assertions,
+    ApplyProbeSpec? Probe = null,
+    int TimeoutMs = 2000,
+    int PollMs = 100);
+
+public sealed record ApplyAssertionSpec(
+    string Target,
+    JsonElement? Expected = null,
+    bool? Exists = null,
+    string? Phase = null);
+
+public sealed record ApplyProbeSpec(
+    string Target,
+    string Method,
+    IReadOnlyDictionary<string, JsonElement>? Arguments = null,
+    bool Safe = false);
 
 public sealed record ApplySlotSpec(
     string Name,
@@ -64,7 +113,9 @@ public sealed record ApplyOptions(
     string? StateFile = null,
     bool Adopt = false,
     bool Profile = false,
-    Action<ApplyProgress>? Progress = null);
+    Action<ApplyProgress>? Progress = null,
+    bool Prune = false,
+    bool ConfirmDeletes = false);
 
 public static class ApplyDocumentValidator
 {
@@ -94,15 +145,42 @@ public static class ApplyDocumentValidator
         else if (string.IsNullOrWhiteSpace(document.Slot.Key))
             Issue("APPLY_ROOT_KEY_MISSING", "The root slot requires a stable slot.key.", "$.slot.key");
 
+        foreach (var asset in document.Assets ?? new Dictionary<string, ApplyAssetSpec>())
+        {
+            var path = "$.assets." + asset.Key;
+            if (string.IsNullOrWhiteSpace(asset.Value.Kind)) Issue("ASSET_KIND_MISSING", "Asset kind is required.", path + ".kind");
+            if (string.IsNullOrWhiteSpace(asset.Value.Source)) { Issue("ASSET_SOURCE_MISSING", "Asset source is required.", path + ".source"); continue; }
+            var hasAbsoluteUri = Uri.TryCreate(asset.Value.Source, UriKind.Absolute, out var uri);
+            if (Path.IsPathFullyQualified(asset.Value.Source) || !hasAbsoluteUri || uri!.Scheme == Uri.UriSchemeFile)
+            {
+                var kind = asset.Value.Kind.ToLowerInvariant();
+                if (kind is not ("texture" or "texture2d" or "audio" or "audioclip" or "mesh"))
+                    Issue("ASSET_KIND_UNSUPPORTED", $"Local asset kind '{asset.Value.Kind}' is not supported.", path + ".kind");
+                var baseDirectory = Path.GetDirectoryName(document.SourcePath) ?? Environment.CurrentDirectory;
+                var sourcePath = uri?.Scheme == Uri.UriSchemeFile ? uri.LocalPath : Path.GetFullPath(asset.Value.Source, baseDirectory);
+                if (!File.Exists(sourcePath)) Issue("ASSET_SOURCE_NOT_FOUND", $"Asset source '{sourcePath}' does not exist.", path + ".source");
+            }
+        }
+
+        foreach (var camera in document.Cameras ?? new Dictionary<string, ApplyCameraSpec>())
+        {
+            var path = "$.cameras." + camera.Key;
+            if (camera.Value.Position.Length != 3 || camera.Value.Target.Length != 3)
+                Issue("CAPTURE_CAMERA_INVALID", "Camera position and target require three numbers.", path);
+            if (camera.Value.Width is < 64 or > 8192 || camera.Value.Height is < 64 or > 8192)
+                Issue("CAPTURE_RESOLUTION_INVALID", "Camera width and height must be between 64 and 8192.", path);
+        }
+
         void ScanValue(JsonElement value, string path)
         {
             if (value.ValueKind == JsonValueKind.String)
             {
                 var text = value.GetString() ?? string.Empty;
-                if (text.StartsWith("$ref:", StringComparison.Ordinal))
+                if (text.StartsWith("$ref:", StringComparison.Ordinal) || text.StartsWith("$component:", StringComparison.Ordinal) ||
+                    text.StartsWith("$slot:", StringComparison.Ordinal) || text.StartsWith("$asset:", StringComparison.Ordinal))
                 {
                     references++;
-                    var key = text[5..];
+                    var key = text[(text.IndexOf(':') + 1)..];
                     if (string.IsNullOrWhiteSpace(key)) Issue("APPLY_REFERENCE_INVALID", "Reference key is empty.", path);
                 }
                 else if (text.StartsWith("$member:", StringComparison.Ordinal))
@@ -119,6 +197,8 @@ public static class ApplyDocumentValidator
                 var index = 0;
                 foreach (var element in value.EnumerateArray()) ScanValue(element, $"{path}[{index++}]");
             }
+            else if (value.ValueKind == JsonValueKind.Object)
+                foreach (var property in value.EnumerateObject()) ScanValue(property.Value, path + "." + property.Name);
         }
 
         void Visit(ApplySlotSpec slot, IReadOnlyList<ApplyComponentSpec>? nodeComponents,
@@ -142,7 +222,11 @@ public static class ApplyDocumentValidator
                 if (string.IsNullOrWhiteSpace(component.Type))
                     Issue("APPLY_COMPONENT_TYPE_MISSING", "Every component requires type.", componentPath + ".type");
                 else
+                {
                     typeCounts[component.Type] = typeCounts.GetValueOrDefault(component.Type) + 1;
+                    if (!GenericTypeSyntaxValid(component.Type))
+                        Issue("APPLY_GENERIC_TYPE_INVALID", $"Generic component type '{component.Type}' has unbalanced type arguments.", componentPath + ".type");
+                }
                 if (!string.IsNullOrWhiteSpace(component.Key))
                 {
                     if (!componentKeys.TryAdd(component.Key, (component, componentPath)))
@@ -175,7 +259,8 @@ public static class ApplyDocumentValidator
         {
             foreach (var field in component.Fields ?? new Dictionary<string, JsonElement>())
             {
-                ValidateReferences(field.Value, componentKeys, issues, componentPath + ".fields." + field.Key);
+                ValidateReferences(field.Value, componentKeys, slotKeys, document.Assets?.Keys.ToHashSet(StringComparer.Ordinal) ?? [],
+                    issues, componentPath + ".fields." + field.Key);
             }
         }
 
@@ -223,20 +308,31 @@ public static class ApplyDocumentValidator
 
     private static void ValidateReferences(JsonElement value,
         IReadOnlyDictionary<string, (ApplyComponentSpec Spec, string Path)> keys,
+        IReadOnlySet<string> slotKeys,
+        IReadOnlySet<string> assetKeys,
         List<ApplyValidationIssue> issues, string path)
     {
         if (value.ValueKind == JsonValueKind.String)
         {
             var text = value.GetString() ?? string.Empty;
             var key = text.StartsWith("$ref:", StringComparison.Ordinal) ? text[5..] :
+                text.StartsWith("$component:", StringComparison.Ordinal) ? text[11..] :
                 text.StartsWith("$member:", StringComparison.Ordinal) ? MemberKey(text[8..]) : null;
             if (key is not null && !keys.ContainsKey(key))
                 issues.Add(new ApplyValidationIssue("APPLY_REFERENCE_NOT_FOUND", $"Symbolic reference '{text}' has no declared component key.", path));
+            if (text.StartsWith("$slot:", StringComparison.Ordinal) && !slotKeys.Contains(text[6..]))
+                issues.Add(new ApplyValidationIssue("APPLY_REFERENCE_NOT_FOUND", $"Symbolic reference '{text}' has no declared slot key.", path));
+            if (text.StartsWith("$asset:", StringComparison.Ordinal) && !assetKeys.Contains(text[7..]))
+                issues.Add(new ApplyValidationIssue("APPLY_REFERENCE_NOT_FOUND", $"Symbolic reference '{text}' has no declared asset key.", path));
             return;
         }
-        if (value.ValueKind != JsonValueKind.Array) return;
-        var index = 0;
-        foreach (var item in value.EnumerateArray()) ValidateReferences(item, keys, issues, $"{path}[{index++}]");
+        if (value.ValueKind == JsonValueKind.Array)
+        {
+            var index = 0;
+            foreach (var item in value.EnumerateArray()) ValidateReferences(item, keys, slotKeys, assetKeys, issues, $"{path}[{index++}]");
+        }
+        else if (value.ValueKind == JsonValueKind.Object)
+            foreach (var property in value.EnumerateObject()) ValidateReferences(property.Value, keys, slotKeys, assetKeys, issues, path + "." + property.Name);
     }
 
     private static Task ValidateMemberReferencesStrict(JsonElement value,
@@ -260,6 +356,9 @@ public static class ApplyDocumentValidator
             foreach (var item in value.EnumerateArray())
                 ValidateMemberReferencesStrict(item, definitions, keys, issues, $"{path}[{index++}]", cancellationToken).GetAwaiter().GetResult();
         }
+        else if (value.ValueKind == JsonValueKind.Object)
+            foreach (var property in value.EnumerateObject())
+                ValidateMemberReferencesStrict(property.Value, definitions, keys, issues, path + "." + property.Name, cancellationToken).GetAwaiter().GetResult();
         return Task.CompletedTask;
     }
 
@@ -268,10 +367,25 @@ public static class ApplyDocumentValidator
         var separator = selector.LastIndexOf('.');
         return separator > 0 ? selector[..separator] : selector;
     }
+
+    private static bool GenericTypeSyntaxValid(string type)
+    {
+        var angle = 0;
+        var square = 0;
+        foreach (var character in type)
+        {
+            if (character == '<') angle++;
+            else if (character == '>' && --angle < 0) return false;
+            else if (character == '[') square++;
+            else if (character == ']' && --square < 0) return false;
+        }
+        return angle == 0 && square == 0 && !type.EndsWith("`1", StringComparison.Ordinal);
+    }
 }
 
 internal sealed record ApplyStateSlot(string Id, string Path);
 internal sealed record ApplyStateComponent(string Id, string SlotKey, string Type, int TypeOrdinal);
+internal sealed record ApplyStateAsset(string Kind, string SourceHash, string Url);
 
 internal sealed class ApplyState
 {
@@ -280,6 +394,7 @@ internal sealed class ApplyState
     public string? SessionId { get; set; }
     public Dictionary<string, ApplyStateSlot> Slots { get; set; } = new(StringComparer.Ordinal);
     public Dictionary<string, ApplyStateComponent> Components { get; set; } = new(StringComparer.Ordinal);
+    public Dictionary<string, ApplyStateAsset> Assets { get; set; } = new(StringComparer.Ordinal);
 }
 
 internal static class ApplyStateStore
@@ -307,6 +422,7 @@ internal static class ApplyStateStore
                 throw new RLoopException("APPLY_STATE_OWNERSHIP_MISMATCH", $"State file '{path}' belongs to '{state.OwnershipKey}', not '{ownershipKey}'.", ExitCodes.ValidationFailed);
             state.Slots = new Dictionary<string, ApplyStateSlot>(state.Slots, StringComparer.Ordinal);
             state.Components = new Dictionary<string, ApplyStateComponent>(state.Components, StringComparer.Ordinal);
+            state.Assets = new Dictionary<string, ApplyStateAsset>(state.Assets ?? [], StringComparer.Ordinal);
             return state;
         }
         catch (RLoopException) { throw; }

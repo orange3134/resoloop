@@ -69,6 +69,38 @@ public static class Program
                 output.Success(validation);
                 return ExitCodes.Success;
             }
+            if (parsed.Positionals[0].Equals("scene", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!parsed.Positional(1, "scene subcommand").Equals("summary", StringComparison.OrdinalIgnoreCase))
+                    throw UnknownCommand(string.Join(' ', parsed.Positionals));
+                var summary = await SceneArtifactService.SummarizeAsync(ApplyDocument.Load(parsed.Positional(2, "Apply file")), commandToken);
+                if (parsed.Option("output") is { } summaryPath)
+                {
+                    summaryPath = Path.GetFullPath(summaryPath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(summaryPath)!);
+                    await File.WriteAllTextAsync(summaryPath, JsonSerializer.Serialize(summary, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true }) + "\n", commandToken);
+                }
+                output.Success(summary);
+                return ExitCodes.Success;
+            }
+            if (parsed.Positionals[0].Equals("capture", StringComparison.OrdinalIgnoreCase))
+            {
+                var document = ApplyDocument.Load(parsed.Positional(1, "Apply file"));
+                var camera = parsed.RequireOption("camera");
+                var explicitCaptureOutput = parsed.Option("output");
+                var captureOutput = explicitCaptureOutput ?? document.Cameras?.GetValueOrDefault(camera)?.Output;
+                if (string.IsNullOrWhiteSpace(captureOutput))
+                    throw new RLoopException("CAPTURE_OUTPUT_REQUIRED", "--output is required unless the camera bookmark declares output.", ExitCodes.InvalidArguments);
+                if (!Path.IsPathFullyQualified(captureOutput))
+                    captureOutput = explicitCaptureOutput is not null || document.SourcePath is null
+                        ? Path.GetFullPath(captureOutput)
+                        : Path.GetFullPath(captureOutput, Path.GetDirectoryName(document.SourcePath)!);
+                var result = await SceneArtifactService.CaptureAsync(document, camera, captureOutput,
+                    parsed.Option("width") is null ? null : parsed.IntOption("width", 1280, 64, 8192),
+                    parsed.Option("height") is null ? null : parsed.IntOption("height", 720, 64, 8192), commandToken);
+                output.Success(result, writer => writer.WriteLine($"captured {result.Format} {result.Width}x{result.Height} -> {result.Output}"));
+                return ExitCodes.Success;
+            }
 
             var uri = ConfigResolver.RequireUrl(resolution.Config);
             await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds));
@@ -159,9 +191,8 @@ public static class Program
             if (!status.Available)
                 checks.Add(new DoctorCheck("flux-sdk", "warning", false, $"'{status.Executable}' is not available.",
                     "Install Papaltine.FluxSDK 1.9.0 when ProtoFlux development is needed."));
-            else if (status.Version is { } version && !version.StartsWith("1.9.", StringComparison.Ordinal))
-                checks.Add(new DoctorCheck("flux-sdk", "warning", false, $"{status.Executable} {version}",
-                    "rloop's Flux deployer is pinned to Flux-SDK 1.9.0; update the global tool before deploying."));
+            else if (FluxCompatibility.Check(status.Version) is { Compatible: false } compatibility)
+                checks.Add(new DoctorCheck("flux-sdk", "warning", false, $"{status.Executable} {status.Version}", compatibility.Message));
             else
                 checks.Add(new DoctorCheck("flux-sdk", "pass", false, $"{status.Executable} {status.Version ?? "(version unknown)"}"));
         }
@@ -257,6 +288,7 @@ public static class Program
                 output.Success(result, w => w.WriteLine($"applied slot {result.SlotId} (created={result.Created}, slots added={result.SlotsCreated}, slots updated={result.SlotsUpdated}, slots unchanged={result.SlotsUnchanged}, components added={result.ComponentsAdded}, updated={result.ComponentsUpdated}, unchanged={result.ComponentsUnchanged})"));
                 break;
             }
+            case "diff":
             case "plan":
             {
                 var result = await world.PlanApplyAsync(ApplyDocument.Load(args.Positional(1, "Apply file")),
@@ -265,7 +297,8 @@ public static class Program
                 {
                     foreach (var operation in result.Operations)
                         w.WriteLine($"{operation.Action,-7} {operation.Kind,-9} {operation.Path}");
-                    w.WriteLine($"creates={result.Creates} updates={result.Updates} no-ops={result.NoOps}");
+                    w.WriteLine($"creates={result.Creates} updates={result.Updates} renames={result.Renames} deletes={result.Deletes} no-ops={result.NoOps}");
+                    w.WriteLine($"atomic={result.Atomic}; recovery={result.Recovery}");
                 });
                 break;
             }
@@ -274,6 +307,20 @@ public static class Program
                 var validation = await world.ValidateApplyAsync(ApplyDocument.Load(args.Positional(1, "Apply file")), true, cancellationToken);
                 ApplyDocumentValidator.ThrowIfInvalid(validation);
                 output.Success(validation);
+                break;
+            }
+            case "test":
+            {
+                if (args.Has("probe") && !args.Has("yes")) RequireYes(args, "test --probe");
+                var report = await world.TestAsync(ApplyDocument.Load(args.Positional(1, "Apply file")),
+                    ApplyOptionsFrom(args, output), args.Has("probe"), cancellationToken);
+                if (!report.Passed)
+                    throw new RLoopException("APPLY_TEST_FAILED", $"{report.PassedCount}/{report.Total} tests passed.", ExitCodes.ValidationFailed,
+                        new Dictionary<string, object?> { ["report"] = report });
+                output.Success(report, writer =>
+                {
+                    foreach (var test in report.Tests) writer.WriteLine($"{(test.Passed ? "PASS" : "FAIL")} {test.Name} ({(test.StructuralOnly ? "structural-only" : "runtime")})");
+                });
                 break;
             }
             default: throw UnknownCommand(string.Join(' ', args.Positionals));
@@ -378,6 +425,49 @@ public static class Program
     {
         var sub = args.Positional(1, "flux subcommand").ToLowerInvariant();
         if (sub == "status") { output.Success(await flux.GetStatusAsync(ct)); return ExitCodes.Success; }
+        if (sub == "deploy-manifest" || sub == "watch" && args.Positional(2, "Flux source or manifest").EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+        {
+            var manifestPath = Path.GetFullPath(args.Positional(2, "Flux manifest"));
+            var manifest = FluxManifestOrchestrator.Inspect(manifestPath);
+            var uri = ConfigResolver.RequireUrl(config);
+            await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(config.TimeoutSeconds));
+            await client.ConnectAsync(uri, TimeSpan.FromSeconds(config.TimeoutSeconds), ct);
+            var world = new WorldService(client);
+            var currentSession = await client.GetSessionInfoAsync(ct);
+            var parentSelector = args.Option("parent") ?? manifest.Parent ?? "Root";
+            string parentId;
+            if (parentSelector.StartsWith("$slot:", StringComparison.Ordinal))
+            {
+                var statePath = args.Option("state") ?? manifest.WorldState;
+                if (string.IsNullOrWhiteSpace(statePath))
+                    throw new RLoopException("FLUX_WORLD_STATE_REQUIRED", "A Flux parent using $slot:key requires worldState in the manifest or --state.", ExitCodes.ValidationFailed);
+                statePath = Path.GetFullPath(statePath, Path.GetDirectoryName(manifestPath)!);
+                var stable = StableReferenceResolver.ResolveSlot(statePath, parentSelector);
+                if (stable.SessionId == currentSession.UniqueSessionId && !string.IsNullOrWhiteSpace(stable.Id))
+                {
+                    _ = await client.GetSlotAsync(stable.Id, 0, false, ct);
+                    parentId = stable.Id;
+                }
+                else parentId = await world.ResolveSlotIdAsync(stable.Path, ct);
+            }
+            else parentId = await world.ResolveSlotIdAsync(parentSelector, ct);
+            var orchestrator = new FluxManifestOrchestrator(flux);
+            var report = sub == "watch"
+                ? await orchestrator.WatchAsync(manifestPath, parentId, uri, args.Option("library-path") ?? config.ResoniteManagedDataPath,
+                    config.FluxDeployerPath, currentSession.UniqueSessionId,
+                    TimeSpan.FromMilliseconds(args.IntOption("poll-ms", 500, 100, 10000)), ct)
+                : await orchestrator.DeployAsync(manifestPath, parentId, uri, args.Option("library-path") ?? config.ResoniteManagedDataPath,
+                    config.FluxDeployerPath, currentSession.UniqueSessionId, ct);
+            if (!report.Success)
+                throw new RLoopException("FLUX_MANIFEST_DEPLOY_FAILED", "One or more Flux modules failed; successful modules were checkpointed.", ExitCodes.ExternalToolFailed,
+                    new Dictionary<string, object?> { ["report"] = report }, [report.Recovery]);
+            output.Success(report, writer =>
+            {
+                foreach (var module in report.Modules) writer.WriteLine($"{module.Action,-7} {module.Name} build={module.BuildSucceeded} deploy={module.Deployed}");
+                writer.WriteLine($"atomic={report.Atomic}; recovery={report.Recovery}");
+            });
+            return ExitCodes.Success;
+        }
         FluxResult result;
         if (sub is "build" or "check" or "watch")
         {
@@ -441,7 +531,8 @@ public static class Program
 
     private static ApplyOptions ApplyOptionsFrom(ParsedArguments args, OutputWriter output) => new(
         args.Option("state"), args.Has("adopt"), args.Has("profile"),
-        args.Has("quiet") ? null : progress => output.Progress(progress, args.Has("ndjson-progress")));
+        args.Has("quiet") ? null : progress => output.Progress(progress, args.Has("ndjson-progress")),
+        args.Has("prune"), args.Has("yes"));
 
     private static Vector3Value? ParseVector(ParsedArguments args, string name) => args.Option(name) is { } text ? Vector3Value.Parse(text, $"--{name}") : null;
     private static QuaternionValue? ParseQuaternion(ParsedArguments args, string name) => args.Option(name) is { } text ? QuaternionValue.Parse(text, $"--{name}") : null;
@@ -464,6 +555,8 @@ Connection and observation:
   rloop hierarchy [--depth 2] [--include-components] [--json]
   rloop find (--name TEXT [--exact] | --component TYPE) [--depth 8] [--json]
   rloop inspect SLOT [--depth 1] [--members] [--json]
+  rloop scene summary FILE.json [--output summary.json]
+  rloop capture FILE.json --camera BOOKMARK [--output capture.svg] [--width 1280 --height 720]
 
 Editing:
   rloop slot create --name NAME [--parent SLOT] [--position x,y,z] [--rotation x,y,z,w] [--scale x,y,z]
@@ -477,13 +570,16 @@ Editing:
   rloop type search QUERY [--limit 50]
   rloop type describe TYPE
   rloop validate FILE.json [--strict]
-  rloop plan FILE.json [--state FILE] [--adopt]
-  rloop apply FILE.json [--state FILE] [--adopt] [--profile] [--ndjson-progress]
+  rloop plan|diff FILE.json [--state FILE] [--adopt]
+  rloop apply FILE.json [--state FILE] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
+  rloop test FILE.json [--state FILE] [--probe --yes]
 
 ProtoFlux (Flux-SDK):
   rloop flux status
   rloop flux check|build|watch FILE.pg [--project DIR] [--out FILE] [--library-path DIR]
   rloop flux deploy --project DIR --module MODULE_PATH [--parent SLOT] [--library-path DIR]
+  rloop flux deploy-manifest FILE.json [--parent SLOT|$slot:key] [--state WORLD_STATE]
+  rloop flux watch FILE.json [--parent SLOT|$slot:key] [--state WORLD_STATE] [--poll-ms 500]
 
 Diagnostics:
   rloop doctor

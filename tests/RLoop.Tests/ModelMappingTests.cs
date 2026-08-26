@@ -46,4 +46,23 @@ public sealed class ModelMappingTests
         Assert.Equal("field", mapped.Members["Enabled"].Kind);
         Assert.Equal("S", mapped.Members["Target"].TargetId);
     }
+
+    [Fact]
+    public void MapsSyncObjectAndDictionaryMembersRecursively()
+    {
+        var syncObject = new Link.SyncObject
+        {
+            Members = new Dictionary<string, Link.Member> { ["Count"] = new Link.Field_int { Value = 3 } }
+        };
+        var dictionary = new Link.SyncDictionary_string
+        {
+            Elements = new Dictionary<string, Link.Member> { ["enabled"] = new Link.Field_bool { Value = true } }
+        };
+
+        var mappedObject = ModelMapper.MapMember(syncObject);
+        var mappedDictionary = ModelMapper.MapMember(dictionary);
+
+        Assert.Equal(3, mappedObject.Members!["Count"].Value!.GetValue<int>());
+        Assert.True(mappedDictionary.Members!["enabled"].Value!.GetValue<bool>());
+    }
 }

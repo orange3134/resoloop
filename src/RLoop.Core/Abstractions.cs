@@ -21,6 +21,13 @@ public interface IResoniteClient : IAsyncDisposable
     Task<ComponentTypeInfo> DescribeComponentTypeAsync(string type,
         CancellationToken cancellationToken = default);
     Task<TypeInfo> DescribeTypeAsync(string type, CancellationToken cancellationToken = default);
+    Task<SyncMethodCallResult> CallComponentMethodAsync(string componentId, string method,
+        IReadOnlyDictionary<string, System.Text.Json.JsonElement>? arguments = null,
+        CancellationToken cancellationToken = default) => Task.FromException<SyncMethodCallResult>(
+            new RLoopException("SYNC_METHOD_UNAVAILABLE", "This Resonite adapter does not expose SyncMethod calls.", ExitCodes.OperationFailed));
+    Task<string> ImportAssetAsync(ApplyAssetSpec asset, string resolvedSource,
+        CancellationToken cancellationToken = default) => Task.FromException<string>(
+            new RLoopException("ASSET_IMPORT_UNAVAILABLE", "This Resonite adapter does not expose asset imports.", ExitCodes.OperationFailed));
 }
 
 public interface IResoniteClientDiagnostics

@@ -58,11 +58,40 @@ public sealed class ValueCodecTests
     }
 
     [Fact]
-    public async Task ReportsUnsupportedMemberKind()
+    public async Task ConvertsStringDictionary()
     {
         var link = new Link.LinkInterface();
-        var definition = new Link.DictionaryDefinition();
-        var ex = await Assert.ThrowsAsync<RLoop.Core.RLoopException>(() => ValueCodec.ParseAsync(link, definition, "1"));
-        Assert.Equal("MEMBER_TYPE_UNSUPPORTED", ex.Code);
+        var definition = new Link.DictionaryDefinition
+        {
+            KeyType = new Link.TypeReference { Type = "string" },
+            ElementDefinition = new Link.FieldDefinition { ValueType = new Link.TypeReference { Type = "int" } }
+        };
+        var dictionary = Assert.IsAssignableFrom<Link.SyncDictionary>(await ValueCodec.ParseAsync(link, definition, "{\"one\":1,\"two\":2}"));
+        var elements = Assert.IsAssignableFrom<System.Collections.IDictionary>(dictionary.GetType().GetProperty("Elements")!.GetValue(dictionary));
+        Assert.Equal(2, elements.Count);
+    }
+
+    [Fact]
+    public async Task ConvertsNullableAndNestedValueThroughRuntimeFieldWrappers()
+    {
+        var link = new Link.LinkInterface();
+        var nullable = new Link.FieldDefinition { ValueType = new Link.TypeReference { Type = "System.Nullable<float>" } };
+        var nullableField = await ValueCodec.ParseAsync(link, nullable, "null");
+        Assert.Contains("Nullable", nullableField.GetType().Name);
+
+        var nested = new Link.FieldDefinition { ValueType = new Link.TypeReference { Type = "float3x3" } };
+        var nestedField = await ValueCodec.ParseAsync(link, nested, "{}");
+        Assert.Equal("Field_float3x3", nestedField.GetType().Name);
+    }
+
+    [Fact]
+    public void ValidatesEnumFlagsBoundaries()
+    {
+        var values = new Dictionary<string, long> { ["Read"] = 1, ["Write"] = 2 };
+        Assert.Equal("Read,Write", ValueCodec.ValidateEnumValue("Permissions", values, true, "Read, Write"));
+        Assert.Equal("ENUM_FLAGS_INVALID", Assert.Throws<RLoop.Core.RLoopException>(() =>
+            ValueCodec.ValidateEnumValue("Mode", values, false, "Read,Write")).Code);
+        Assert.Equal("ENUM_VALUE_INVALID", Assert.Throws<RLoop.Core.RLoopException>(() =>
+            ValueCodec.ValidateEnumValue("Permissions", values, true, "Execute")).Code);
     }
 }

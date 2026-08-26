@@ -175,11 +175,84 @@ public sealed class ApplyWorkflowTests : IDisposable
 
         client.SessionId = "session-2";
         client.ResetWriteCounts();
-        var renamed = await service.ApplyAsync(Document("rename", "[]", "ManagedRenamed"), new ApplyOptions(state));
+        var renamedDocument = Document("rename", "[]", "ManagedRenamed");
+        var renamePlan = await service.PlanApplyAsync(renamedDocument, new ApplyOptions(state));
+        Assert.Contains(renamePlan.Operations, operation => operation.Action == "rename" && operation.Key == "root");
+        var renamed = await service.ApplyAsync(renamedDocument, new ApplyOptions(state));
 
         Assert.Equal(1, renamed.SlotsUpdated);
         Assert.Equal("ManagedRenamed", Assert.Single(client.Root.Children).Name);
         Assert.Equal(1, client.Writes);
+    }
+
+    [Fact]
+    public async Task PruneRequiresConfirmationAndDeletesOnlyStaleOwnedTargets()
+    {
+        var state = Path.Combine(_root, "prune.state.json");
+        var initialPath = Path.Combine(_root, "prune-initial.json");
+        File.WriteAllText(initialPath, """
+            { "schemaVersion":"1", "ownership":{"key":"prune"}, "slot":{"key":"root","name":"Managed","parent":"Root"},
+              "children":[{"slot":{"key":"old-slot","name":"Old"},"components":[{"key":"old-component","type":"Test.Target","fields":{"Enabled":true}}]}] }
+            """);
+        var desiredPath = Path.Combine(_root, "prune-desired.json");
+        File.WriteAllText(desiredPath, """
+            { "schemaVersion":"1", "ownership":{"key":"prune"}, "slot":{"key":"root","name":"Managed","parent":"Root"}, "children":[] }
+            """);
+        var client = new FakeResoniteClient();
+        var service = new WorldService(client);
+        await service.ApplyAsync(ApplyDocument.Load(initialPath), new ApplyOptions(state));
+
+        var plan = await service.PlanApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(state));
+        Assert.Contains(plan.Operations, operation => operation.Action == "delete" && operation.Key == "old-slot");
+        Assert.Single(Assert.Single(client.Root.Children).Children);
+        await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(state, Prune: true)));
+
+        var applied = await service.ApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(state, Prune: true, ConfirmDeletes: true));
+        Assert.Equal(1, applied.SlotsDeleted);
+        Assert.Empty(Assert.Single(client.Root.Children).Children);
+        Assert.False(applied.Atomic);
+        Assert.NotNull(applied.Recovery);
+    }
+
+    [Fact]
+    public async Task AssetImportIsContentAddressedAndAssetReferenceUpdatesOnChange()
+    {
+        var asset = Path.Combine(_root, "texture.bin");
+        await File.WriteAllTextAsync(asset, "first");
+        var source = Path.Combine(_root, "assets.json");
+        await File.WriteAllTextAsync(source, """
+            { "schemaVersion":"1", "ownership":{"key":"assets"}, "slot":{"key":"root","name":"Managed","parent":"Root"},
+              "assets":{"surface":{"kind":"texture","source":"texture.bin"}},
+              "components":[{"key":"holder","type":"Test.AssetHolder","fields":{"Uri":"$asset:surface"}}] }
+            """);
+        var document = ApplyDocument.Load(source);
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "assets.state.json");
+
+        await service.ApplyAsync(document, new ApplyOptions(state));
+        await service.ApplyAsync(document, new ApplyOptions(state));
+        Assert.Equal(1, client.AssetImports);
+
+        await File.WriteAllTextAsync(asset, "second");
+        var changed = await service.ApplyAsync(ApplyDocument.Load(source), new ApplyOptions(state));
+        Assert.Equal(2, client.AssetImports);
+        Assert.Equal(1, changed.ComponentsUpdated);
+    }
+
+    [Fact]
+    public async Task ClosedGenericComponentTypeIsPassedIntactToRuntimeReflection()
+    {
+        const string generic = "Test.Generic<System.Boolean>";
+        var document = Document("generic", $$"""
+            [{ "key": "generic", "type": "{{generic}}", "fields": { "Value": true } }]
+            """);
+        var client = new FakeResoniteClient(document);
+
+        var validation = await new WorldService(client).ValidateApplyAsync(document, true);
+
+        Assert.True(validation.Valid);
+        Assert.Contains(generic, client.DescribedTypes);
     }
 
     [Fact]
@@ -201,6 +274,25 @@ public sealed class ApplyWorkflowTests : IDisposable
         Assert.Equal(217, second.Profile!.NoOps);
         Assert.InRange(second.Profile.Client.Requests, 1, 12);
         Assert.Equal(0, client.Writes);
+    }
+
+    [Fact]
+    public async Task HouseMirrorFixtureVerifiesWiringAndReportsUnavailableProbeAsStructuralOnly()
+    {
+        var path = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "examples", "house-world.json"));
+        var document = ApplyDocument.Load(path);
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "house-test.state.json");
+        await service.ApplyAsync(document, new ApplyOptions(state));
+
+        var report = await service.TestAsync(document, new ApplyOptions(state));
+
+        Assert.True(report.Passed);
+        Assert.True(report.StructuralOnly);
+        var test = Assert.Single(report.Tests);
+        Assert.Contains(test.Assertions, assertion => assertion.Target == "$component:mirrorToggle.TargetValue" && assertion.Passed);
+        Assert.Contains(test.Assertions, assertion => assertion.Phase == "after" && !assertion.Evaluated);
     }
 
     private ApplyDocument Document(string ownership, string components, string name = "Managed")
@@ -237,6 +329,8 @@ public sealed class ApplyWorkflowTests : IDisposable
         public CancellationTokenSource? Cancellation { get; set; }
         public string SessionId { get; set; } = "session-1";
         public bool LoseNextSlotCreateResponse { get; set; }
+        public int AssetImports { get; private set; }
+        public List<string> DescribedTypes { get; } = [];
 
         public FakeResoniteClient(ApplyDocument? definitions = null)
         {
@@ -292,7 +386,14 @@ public sealed class ApplyWorkflowTests : IDisposable
             return Task.CompletedTask;
         }
 
-        public Task DeleteSlotAsync(string id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task DeleteSlotAsync(string id, CancellationToken cancellationToken = default)
+        {
+            Write();
+            var slot = _slots[id];
+            _slots[slot.ParentId!].Children.Remove(slot);
+            RemoveSlotTree(slot);
+            return Task.CompletedTask;
+        }
 
         public Task<ComponentCreateResult> AddComponentAsync(string slotId, string componentType,
             IReadOnlyDictionary<string, string> fields, CancellationToken cancellationToken = default)
@@ -320,13 +421,21 @@ public sealed class ApplyWorkflowTests : IDisposable
             return Task.CompletedTask;
         }
 
-        public Task RemoveComponentAsync(string componentId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task RemoveComponentAsync(string componentId, CancellationToken cancellationToken = default)
+        {
+            Write();
+            var component = _components[componentId];
+            foreach (var slot in _slots.Values) slot.Components.Remove(component);
+            _components.Remove(componentId);
+            return Task.CompletedTask;
+        }
         public Task<IReadOnlyList<string>> SearchComponentTypesAsync(string query, int limit, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<string>>(Read(_knownMembers.Keys.Where(x => x.Contains(query, StringComparison.OrdinalIgnoreCase)).Take(limit).ToArray()));
 
         public Task<ComponentTypeInfo> DescribeComponentTypeAsync(string type, CancellationToken cancellationToken = default)
         {
             _requests++;
+            DescribedTypes.Add(type);
             if (!_knownMembers.TryGetValue(type, out var known))
                 throw new RLoopException("COMPONENT_TYPE_NOT_FOUND", type, ExitCodes.NotFound);
             IReadOnlyList<MemberDefinitionInfo> members = known.Select(name =>
@@ -336,6 +445,11 @@ public sealed class ApplyWorkflowTests : IDisposable
         }
 
         public Task<TypeInfo> DescribeTypeAsync(string type, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<string> ImportAssetAsync(ApplyAssetSpec asset, string resolvedSource, CancellationToken cancellationToken = default)
+        {
+            AssetImports++;
+            return Task.FromResult("resdb:///asset-" + AssetImports);
+        }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         public void ResetMetrics() => _requests = 0;
         public ClientMetrics SnapshotMetrics() => new(_requests, 0, 0,
@@ -346,6 +460,13 @@ public sealed class ApplyWorkflowTests : IDisposable
         {
             Writes++;
             if (CancelAfterWrites == Writes) Cancellation?.Cancel();
+        }
+
+        private void RemoveSlotTree(FakeSlot slot)
+        {
+            foreach (var child in slot.Children.ToArray()) RemoveSlotTree(child);
+            foreach (var component in slot.Components) _components.Remove(component.Id);
+            _slots.Remove(slot.Id);
         }
 
         private static void SetFields(FakeComponent component, IReadOnlyDictionary<string, string> fields)

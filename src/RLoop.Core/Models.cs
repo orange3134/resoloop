@@ -114,7 +114,15 @@ public sealed record ComponentTypeInfo(
     string? CategoryPath,
     string? BaseType,
     bool IsGeneric,
-    IReadOnlyList<MemberDefinitionInfo> Members);
+    IReadOnlyList<MemberDefinitionInfo> Members,
+    IReadOnlyList<SyncMethodInfo>? Methods = null);
+
+public sealed record SyncMethodInfo(
+    string Name,
+    IReadOnlyDictionary<string, string?> Parameters,
+    string? ReturnType,
+    bool IsStatic,
+    bool IsAsync);
 
 public sealed record TypeInfo(
     string FullTypeName,
@@ -135,6 +143,14 @@ public sealed record TypeInfo(
     bool? IsFlags = null);
 
 public sealed record ComponentCreateResult(string Id, string Type);
+public sealed record SyncMethodCallResult(bool Success, JsonNode? Result, string? Error);
+
+public sealed record ApplyAssertionResult(string Name, string Target, string Phase, bool Passed,
+    JsonNode? Expected, JsonNode? Actual, string Message, bool Evaluated = true);
+public sealed record ApplyTestCaseResult(string Name, bool Passed, bool StructuralOnly, bool ProbeExecuted,
+    string Capability, IReadOnlyList<ApplyAssertionResult> Assertions);
+public sealed record ApplyTestReport(bool Passed, bool StructuralOnly, int Total, int PassedCount,
+    IReadOnlyList<ApplyTestCaseResult> Tests);
 
 public sealed record ApplyResult(
     string SlotId,
@@ -147,7 +163,13 @@ public sealed record ApplyResult(
     int ComponentsUnchanged = 0,
     string? StateFile = null,
     string? SessionId = null,
-    ApplyProfile? Profile = null);
+    ApplyProfile? Profile = null,
+    int ComponentsDeleted = 0,
+    int SlotsDeleted = 0,
+    bool Atomic = false,
+    string? Recovery = null,
+    int AssetsImported = 0,
+    int AssetsUnchanged = 0);
 
 public sealed record ClientOperationMetric(string Operation, int Requests, double ElapsedMs);
 
@@ -178,7 +200,13 @@ public sealed record ApplyPlanEntry(
     string? Key = null,
     string? Type = null,
     IReadOnlyList<string>? Members = null,
-    string? Reason = null);
+    string? Reason = null,
+    IReadOnlyList<ApplyMemberDiff>? Diffs = null,
+    bool Atomic = false,
+    string Recovery = "checkpoint-and-reapply");
+
+public sealed record ApplyMemberDiff(string Member, string Kind,
+    IReadOnlyList<JsonNode?>? Added = null, IReadOnlyList<JsonNode?>? Removed = null, string? Reason = null);
 
 public sealed record ApplyPlanResult(
     bool Valid,
@@ -189,7 +217,11 @@ public sealed record ApplyPlanResult(
     IReadOnlyList<ApplyPlanEntry> Operations,
     int Creates,
     int Updates,
-    int NoOps);
+    int NoOps,
+    int Renames = 0,
+    int Deletes = 0,
+    bool Atomic = false,
+    string? Recovery = null);
 
 public sealed record ApplyValidationIssue(
     string Code,

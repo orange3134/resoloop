@@ -47,6 +47,14 @@ public static class ProjectInitializer
                         type = "FrooxEngine.Grabbable",
                         fields = new Dictionary<string, object?> { ["Scalable"] = true }
                     }
+                },
+                cameras = new Dictionary<string, object?>
+                {
+                    ["main"] = new { position = new[] { 0f, 2.5f, -6f }, target = new[] { 0f, 1.5f, 2f }, fieldOfView = 60, width = 1280, height = 720, representative = true }
+                },
+                tests = new[]
+                {
+                    new { name = "root-exists", assertions = new[] { new { target = "$slot:root", exists = true } } }
                 }
             }, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase }) + "\n",
             [Path.Combine("flux", "Main.pg")] = """
@@ -55,12 +63,30 @@ public static class ProjectInitializer
                     "Hello from rloop!"->display
                 }
                 """ + "\n",
+            [Path.Combine("flux", "protograph.toml")] = """
+                name = "rloop-project"
+                version = "0.1.0"
+
+                [build.dev]
+                optimization_preset = "dev"
+
+                [dependencies]
+                """ + "\n",
+            [Path.Combine("flux", "rloop.flux.json")] = JsonSerializer.Serialize(new
+            {
+                schemaVersion = "1",
+                projectDirectory = ".",
+                parent = "$slot:root",
+                worldState = "../.rloop/state/" + ToSafeName(projectName).ToLowerInvariant() + ".json",
+                deployState = "../.rloop/flux-state/main.json",
+                modules = new[] { new { name = "main", source = "Main.pg", module = "Main" } }
+            }, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase }) + "\n",
             [Path.Combine("flux", ".gitignore")] = """
                 build/
                 .protograph/
                 *.brson
                 """ + "\n",
-            [Path.Combine(".rloop", ".gitignore")] = "state/\n"
+            [Path.Combine(".rloop", ".gitignore")] = "state/\nflux-state/\n"
         };
 
         var conflicts = new List<string>();
@@ -96,8 +122,9 @@ public static class ProjectInitializer
         return new ProjectInitResult(root, projectName, created, unchanged,
         [
             "Set RESONITE_LINK_URL to the current ResoniteLink WebSocket URL.",
-            "Run rloop doctor, then rloop apply content/main.json --json.",
-            "For ProtoFlux, set RESONITE_MANAGED_DATA_PATH and run rloop flux check flux/Main.pg --project flux --json."
+            "Run rloop doctor, then validate, diff, and apply content/main.json.",
+            "Generate scene artifacts with rloop capture content/main.json --camera main --output artifacts/main.svg --json.",
+            "For ProtoFlux, set RESONITE_MANAGED_DATA_PATH and use flux/rloop.flux.json."
         ]);
     }
 

@@ -1,0 +1,1808 @@
+{
+  "prototypes": {
+    "table-leg": {
+      "slot": {
+        "name": "${name}",
+        "position": [
+          "${x}",
+          0.45,
+          "${z}"
+        ]
+      },
+      "components": [
+        {
+          "key": "${meshKey}",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              0.13,
+              0.8,
+              0.13
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$component:${meshKey}",
+            "Materials": [
+              "$ref:matDark"
+            ]
+          }
+        }
+      ]
+    },
+    "box": {
+      "slot": {
+        "name": "${name}",
+        "position": "${position}"
+      },
+      "components": [
+        {
+          "key": "${meshKey}",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": "${size}"
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$component:${meshKey}",
+            "Materials": [
+              "${material}"
+            ]
+          }
+        }
+      ]
+    },
+    "box-rotated": {
+      "slot": {
+        "name": "${name}",
+        "position": "${position}",
+        "rotation": "${rotation}"
+      },
+      "components": [
+        {
+          "key": "${meshKey}",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": "${size}"
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$component:${meshKey}",
+            "Materials": [
+              "${material}"
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "children": [
+    {
+      "slot": {
+        "name": "Architecture_Floor",
+        "position": [
+          0,
+          0.1,
+          0
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh1",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              8,
+              0.2,
+              6
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh1",
+            "Materials": [
+              "$ref:matWarm"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              8,
+              0.2,
+              6
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "name": "Architecture_BackWall",
+        "position": [
+          0,
+          1.5,
+          3
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh2",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              8,
+              3,
+              0.18
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh2",
+            "Materials": [
+              "$ref:matCream"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              8,
+              3,
+              0.18
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "name": "Architecture_LeftWall",
+        "position": [
+          -4,
+          1.5,
+          0
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh3",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              0.18,
+              3,
+              6
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh3",
+            "Materials": [
+              "$ref:matCream"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              0.18,
+              3,
+              6
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "name": "Architecture_RightWall",
+        "position": [
+          4,
+          1.5,
+          0
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh4",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              0.18,
+              3,
+              6
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh4",
+            "Materials": [
+              "$ref:matCream"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              0.18,
+              3,
+              6
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "name": "Architecture_FrontLeft",
+        "position": [
+          -2.5,
+          1.5,
+          -3
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh5",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              3,
+              3,
+              0.18
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh5",
+            "Materials": [
+              "$ref:matCream"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              3,
+              3,
+              0.18
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "name": "Architecture_FrontRight",
+        "position": [
+          2.5,
+          1.5,
+          -3
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh6",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              3,
+              3,
+              0.18
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh6",
+            "Materials": [
+              "$ref:matCream"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              3,
+              3,
+              0.18
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "name": "Architecture_FrontLintel",
+        "position": [
+          0,
+          2.65,
+          -3
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh7",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              2,
+              0.7,
+              0.18
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh7",
+            "Materials": [
+              "$ref:matCream"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              2,
+              0.7,
+              0.18
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "name": "Architecture_RoofLeft",
+        "position": [
+          -2,
+          3.55,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0.1305262,
+          0.9914449
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh8",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              4.6,
+              0.22,
+              6.5
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh8",
+            "Materials": [
+              "$ref:matDark"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              4.6,
+              0.22,
+              6.5
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "name": "Architecture_RoofRight",
+        "position": [
+          2,
+          3.55,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          -0.1305262,
+          0.9914449
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh9",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              4.6,
+              0.22,
+              6.5
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh9",
+            "Materials": [
+              "$ref:matDark"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              4.6,
+              0.22,
+              6.5
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "name": "Architecture_Porch",
+        "position": [
+          0,
+          0.14,
+          -3.55
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh10",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              3.6,
+              0.16,
+              1
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh10",
+            "Materials": [
+              "$ref:matWarm"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              3.6,
+              0.16,
+              1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "$prototype": "box",
+      "$with": {
+        "name": "Decor_Rug",
+        "position": [
+          0,
+          0.23,
+          -0.4
+        ],
+        "size": [
+          2.8,
+          0.04,
+          1.8
+        ],
+        "meshKey": "mesh11",
+        "material": "$ref:matTeal"
+      }
+    },
+    {
+      "slot": {
+        "name": "Bed_Frame",
+        "position": [
+          -2.55,
+          0.35,
+          1.55
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh12",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              1.8,
+              0.3,
+              2.2
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh12",
+            "Materials": [
+              "$ref:matDark"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              1.8,
+              0.3,
+              2.2
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "$prototype": "box",
+      "$with": {
+        "name": "Bed_Mattress",
+        "position": [
+          -2.55,
+          0.64,
+          1.55
+        ],
+        "size": [
+          1.7,
+          0.28,
+          2
+        ],
+        "meshKey": "mesh13",
+        "material": "$ref:matLinen"
+      }
+    },
+    {
+      "$prototype": "box",
+      "$with": {
+        "name": "Bed_Blanket",
+        "position": [
+          -2.55,
+          0.84,
+          1.82
+        ],
+        "size": [
+          1.66,
+          0.1,
+          1.15
+        ],
+        "meshKey": "mesh14",
+        "material": "$ref:matTeal"
+      }
+    },
+    {
+      "$prototype": "box",
+      "$with": {
+        "name": "Bed_Pillow",
+        "position": [
+          -2.55,
+          0.85,
+          0.82
+        ],
+        "size": [
+          1.15,
+          0.18,
+          0.42
+        ],
+        "meshKey": "mesh15",
+        "material": "$ref:matLinen"
+      }
+    },
+    {
+      "slot": {
+        "name": "Bed_Headboard",
+        "position": [
+          -2.55,
+          0.88,
+          2.65
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh16",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              1.9,
+              1.15,
+              0.12
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh16",
+            "Materials": [
+              "$ref:matDark"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              1.9,
+              1.15,
+              0.12
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "name": "Table_Top",
+        "position": [
+          0,
+          0.88,
+          -0.45
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh17",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              2,
+              0.13,
+              1.1
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh17",
+            "Materials": [
+              "$ref:matWarm"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              2,
+              0.13,
+              1.1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "$prototype": "table-leg",
+      "$with": {
+        "name": "Table_Leg_FL",
+        "x": -0.84,
+        "z": -0.84,
+        "meshKey": "mesh18"
+      }
+    },
+    {
+      "$prototype": "table-leg",
+      "$with": {
+        "name": "Table_Leg_FR",
+        "x": 0.84,
+        "z": -0.84,
+        "meshKey": "mesh19"
+      }
+    },
+    {
+      "$prototype": "table-leg",
+      "$with": {
+        "name": "Table_Leg_BL",
+        "x": -0.84,
+        "z": -0.06,
+        "meshKey": "mesh20"
+      }
+    },
+    {
+      "$prototype": "table-leg",
+      "$with": {
+        "name": "Table_Leg_BR",
+        "x": 0.84,
+        "z": -0.06,
+        "meshKey": "mesh21"
+      }
+    },
+    {
+      "slot": {
+        "name": "Kitchen_CounterBase",
+        "position": [
+          3.52,
+          0.55,
+          0.75
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh22",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              0.68,
+              0.9,
+              2.65
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh22",
+            "Materials": [
+              "$ref:matDark"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              0.68,
+              0.9,
+              2.65
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "name": "Kitchen_CounterTop",
+        "position": [
+          3.42,
+          1.07,
+          0.75
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh23",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              0.88,
+              0.13,
+              2.85
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh23",
+            "Materials": [
+              "$ref:matWarm"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              0.88,
+              0.13,
+              2.85
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "name": "Kitchen_Fridge",
+        "position": [
+          3.5,
+          1.05,
+          2.15
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh24",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              0.76,
+              1.9,
+              0.76
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh24",
+            "Materials": [
+              "$ref:matMetal"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              0.76,
+              1.9,
+              0.76
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "name": "Kitchen_Stove",
+        "position": [
+          3.48,
+          0.55,
+          -0.78
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh25",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              0.75,
+              0.9,
+              0.78
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh25",
+            "Materials": [
+              "$ref:matMetal"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              0.75,
+              0.9,
+              0.78
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "$prototype": "box",
+      "$with": {
+        "name": "Kitchen_Cooktop",
+        "position": [
+          3.39,
+          1.13,
+          -0.78
+        ],
+        "size": [
+          0.84,
+          0.06,
+          0.78
+        ],
+        "meshKey": "mesh26",
+        "material": "$ref:matDark"
+      }
+    },
+    {
+      "$prototype": "box",
+      "$with": {
+        "name": "Kitchen_Sink",
+        "position": [
+          3.38,
+          1.14,
+          0.52
+        ],
+        "size": [
+          0.7,
+          0.07,
+          0.72
+        ],
+        "meshKey": "mesh27",
+        "material": "$ref:matMetal"
+      }
+    },
+    {
+      "slot": {
+        "name": "Kitchen_UpperCabinet",
+        "position": [
+          3.68,
+          2.15,
+          0.65
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh28",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              0.5,
+              0.75,
+              1.55
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh28",
+            "Materials": [
+              "$ref:matDark"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              0.5,
+              0.75,
+              1.55
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "name": "Fireplace_Hearth",
+        "position": [
+          1.55,
+          0.26,
+          2.42
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh29",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              2.05,
+              0.24,
+              0.82
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh29",
+            "Materials": [
+              "$ref:matStone"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              2.05,
+              0.24,
+              0.82
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "name": "Fireplace_LeftPillar",
+        "position": [
+          0.72,
+          1.08,
+          2.62
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh30",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              0.36,
+              1.7,
+              0.56
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh30",
+            "Materials": [
+              "$ref:matStone"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              0.36,
+              1.7,
+              0.56
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "name": "Fireplace_RightPillar",
+        "position": [
+          2.38,
+          1.08,
+          2.62
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh31",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              0.36,
+              1.7,
+              0.56
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh31",
+            "Materials": [
+              "$ref:matStone"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              0.36,
+              1.7,
+              0.56
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "name": "Fireplace_Mantle",
+        "position": [
+          1.55,
+          1.96,
+          2.53
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh32",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              2.08,
+              0.25,
+              0.72
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh32",
+            "Materials": [
+              "$ref:matWarm"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              2.08,
+              0.25,
+              0.72
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "$prototype": "box",
+      "$with": {
+        "name": "Fireplace_Firebox",
+        "position": [
+          1.55,
+          0.92,
+          2.82
+        ],
+        "size": [
+          1.25,
+          1.22,
+          0.12
+        ],
+        "meshKey": "mesh33",
+        "material": "$ref:matDark"
+      }
+    },
+    {
+      "$prototype": "box-rotated",
+      "$with": {
+        "name": "Fireplace_LogA",
+        "position": [
+          1.42,
+          0.46,
+          2.36
+        ],
+        "size": [
+          0.8,
+          0.13,
+          0.13
+        ],
+        "meshKey": "mesh34",
+        "material": "$ref:matWarm",
+        "rotation": [
+          0,
+          0,
+          0.1736482,
+          0.9848078
+        ]
+      }
+    },
+    {
+      "$prototype": "box-rotated",
+      "$with": {
+        "name": "Fireplace_LogB",
+        "position": [
+          1.68,
+          0.46,
+          2.36
+        ],
+        "size": [
+          0.8,
+          0.13,
+          0.13
+        ],
+        "meshKey": "mesh35",
+        "material": "$ref:matWarm",
+        "rotation": [
+          0,
+          0,
+          -0.1736482,
+          0.9848078
+        ]
+      }
+    },
+    {
+      "$prototype": "box-rotated",
+      "$with": {
+        "name": "Fireplace_FlameA",
+        "position": [
+          1.25,
+          0.83,
+          2.35
+        ],
+        "size": [
+          0.15,
+          0.66,
+          0.08
+        ],
+        "meshKey": "mesh36",
+        "material": "$ref:matEmber",
+        "rotation": [
+          0,
+          0,
+          0.1305262,
+          0.9914449
+        ]
+      }
+    },
+    {
+      "$prototype": "box",
+      "$with": {
+        "name": "Fireplace_FlameB",
+        "position": [
+          1.55,
+          0.91,
+          2.34
+        ],
+        "size": [
+          0.18,
+          0.82,
+          0.08
+        ],
+        "meshKey": "mesh37",
+        "material": "$ref:matEmber"
+      }
+    },
+    {
+      "$prototype": "box-rotated",
+      "$with": {
+        "name": "Fireplace_FlameC",
+        "position": [
+          1.84,
+          0.79,
+          2.35
+        ],
+        "size": [
+          0.14,
+          0.58,
+          0.08
+        ],
+        "meshKey": "mesh38",
+        "material": "$ref:matEmber",
+        "rotation": [
+          0,
+          0,
+          -0.1305262,
+          0.9914449
+        ]
+      }
+    },
+    {
+      "slot": {
+        "name": "Light_Fireplace",
+        "position": [
+          1.55,
+          1.15,
+          2.05
+        ]
+      },
+      "components": [
+        {
+          "type": "FrooxEngine.Light",
+          "fields": {
+            "Intensity": 6,
+            "Range": 5,
+            "Color": [
+              1,
+              0.28,
+              0.055,
+              1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "$prototype": "box",
+      "$with": {
+        "name": "Light_PendantA_Shade",
+        "position": [
+          -1.35,
+          2.72,
+          -0.5
+        ],
+        "size": [
+          0.5,
+          0.16,
+          0.5
+        ],
+        "meshKey": "mesh39",
+        "material": "$ref:matEmber"
+      }
+    },
+    {
+      "slot": {
+        "name": "Light_PendantA",
+        "position": [
+          -1.35,
+          2.58,
+          -0.5
+        ]
+      },
+      "components": [
+        {
+          "type": "FrooxEngine.Light",
+          "fields": {
+            "Intensity": 3.2,
+            "Range": 4.5,
+            "Color": [
+              1,
+              0.58,
+              0.28,
+              1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "$prototype": "box",
+      "$with": {
+        "name": "Light_PendantB_Shade",
+        "position": [
+          2.05,
+          2.72,
+          -0.55
+        ],
+        "size": [
+          0.5,
+          0.16,
+          0.5
+        ],
+        "meshKey": "mesh40",
+        "material": "$ref:matEmber"
+      }
+    },
+    {
+      "slot": {
+        "name": "Light_PendantB",
+        "position": [
+          2.05,
+          2.58,
+          -0.55
+        ]
+      },
+      "components": [
+        {
+          "type": "FrooxEngine.Light",
+          "fields": {
+            "Intensity": 3,
+            "Range": 4.5,
+            "Color": [
+              1,
+              0.5,
+              0.22,
+              1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "name": "Light_TealAccent",
+        "position": [
+          -3.15,
+          1.35,
+          0.2
+        ]
+      },
+      "components": [
+        {
+          "type": "FrooxEngine.Light",
+          "fields": {
+            "Intensity": 1.8,
+            "Range": 3.2,
+            "Color": [
+              0.06,
+              0.28,
+              0.36,
+              1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "name": "Mirror_Surface",
+        "position": [
+          -0.42,
+          1.62,
+          2.84
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh41",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              1.34,
+              1.65,
+              0.04
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "key": "mirrorRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh41",
+            "Materials": [
+              "$ref:matMirror"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "$prototype": "box",
+      "$with": {
+        "name": "Mirror_FrameTop",
+        "position": [
+          -0.42,
+          2.5,
+          2.78
+        ],
+        "size": [
+          1.62,
+          0.11,
+          0.12
+        ],
+        "meshKey": "mesh42",
+        "material": "$ref:matMetal"
+      }
+    },
+    {
+      "$prototype": "box",
+      "$with": {
+        "name": "Mirror_FrameBottom",
+        "position": [
+          -0.42,
+          0.74,
+          2.78
+        ],
+        "size": [
+          1.62,
+          0.11,
+          0.12
+        ],
+        "meshKey": "mesh43",
+        "material": "$ref:matMetal"
+      }
+    },
+    {
+      "$prototype": "box",
+      "$with": {
+        "name": "Mirror_FrameLeft",
+        "position": [
+          -1.17,
+          1.62,
+          2.78
+        ],
+        "size": [
+          0.11,
+          1.86,
+          0.12
+        ],
+        "meshKey": "mesh44",
+        "material": "$ref:matMetal"
+      }
+    },
+    {
+      "$prototype": "box",
+      "$with": {
+        "name": "Mirror_FrameRight",
+        "position": [
+          0.33,
+          1.62,
+          2.78
+        ],
+        "size": [
+          0.11,
+          1.86,
+          0.12
+        ],
+        "meshKey": "mesh45",
+        "material": "$ref:matMetal"
+      }
+    },
+    {
+      "slot": {
+        "name": "Mirror_Toggle_Button_PRESS_ME",
+        "position": [
+          0.62,
+          1.35,
+          2.68
+        ]
+      },
+      "components": [
+        {
+          "key": "mirrorButtonMesh",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              0.28,
+              0.28,
+              0.14
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mirrorButtonMesh",
+            "Materials": [
+              "$ref:matEmber"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              0.28,
+              0.28,
+              0.14
+            ]
+          }
+        },
+        {
+          "key": "mirrorTouch",
+          "type": "FrooxEngine.TouchButton",
+          "fields": {
+            "AcceptPhysicalTouch": true,
+            "AcceptRemoteTouch": true,
+            "AcceptOutOfSightTouch": false
+          }
+        },
+        {
+          "key": "mirrorToggle",
+          "type": "FrooxEngine.ButtonToggle",
+          "fields": {
+            "TargetValue": "$member:mirrorRenderer.Enabled"
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "name": "Lounge_CouchBase",
+        "position": [
+          -2.1,
+          0.42,
+          -1.35
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh46",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              2.1,
+              0.38,
+              0.82
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh46",
+            "Materials": [
+              "$ref:matDark"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              2.1,
+              0.38,
+              0.82
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "$prototype": "box",
+      "$with": {
+        "name": "Lounge_CouchCushion",
+        "position": [
+          -2.1,
+          0.68,
+          -1.32
+        ],
+        "size": [
+          1.92,
+          0.25,
+          0.72
+        ],
+        "meshKey": "mesh47",
+        "material": "$ref:matTeal"
+      }
+    },
+    {
+      "slot": {
+        "name": "Lounge_CouchBack",
+        "position": [
+          -2.1,
+          1.08,
+          -1.7
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh48",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              1.98,
+              0.82,
+              0.22
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh48",
+            "Materials": [
+              "$ref:matTeal"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              1.98,
+              0.82,
+              0.22
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "name": "Plant_Pot",
+        "position": [
+          -3.28,
+          0.38,
+          -0.25
+        ]
+      },
+      "components": [
+        {
+          "key": "mesh49",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              0.52,
+              0.52,
+              0.52
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$ref:mesh49",
+            "Materials": [
+              "$ref:matStone"
+            ]
+          }
+        },
+        {
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              0.52,
+              0.52,
+              0.52
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "$prototype": "box",
+      "$with": {
+        "name": "Plant_Stem",
+        "position": [
+          -3.28,
+          0.88,
+          -0.25
+        ],
+        "size": [
+          0.12,
+          0.72,
+          0.12
+        ],
+        "meshKey": "mesh50",
+        "material": "$ref:matGreen"
+      }
+    },
+    {
+      "$prototype": "box-rotated",
+      "$with": {
+        "name": "Plant_LeafLeft",
+        "position": [
+          -3.48,
+          1.12,
+          -0.25
+        ],
+        "size": [
+          0.4,
+          0.14,
+          0.28
+        ],
+        "meshKey": "mesh51",
+        "material": "$ref:matGreen",
+        "rotation": [
+          0,
+          0,
+          0.3826834,
+          0.9238795
+        ]
+      }
+    },
+    {
+      "$prototype": "box-rotated",
+      "$with": {
+        "name": "Plant_LeafRight",
+        "position": [
+          -3.08,
+          1.15,
+          -0.25
+        ],
+        "size": [
+          0.4,
+          0.14,
+          0.28
+        ],
+        "meshKey": "mesh52",
+        "material": "$ref:matGreen",
+        "rotation": [
+          0,
+          0,
+          -0.3826834,
+          0.9238795
+        ]
+      }
+    }
+  ]
+}

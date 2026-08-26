@@ -9,4 +9,6 @@ Keep ProtoFlux logic in .pg files. Confirm rloop flux status --json, the Resonit
 
 Run flux check for fast semantic diagnostics, then flux build. Resolve the destination with find/inspect, and deploy using a verified parent ID or path. Deployment replaces only a same-named module child under that parent; unrelated children must remain untouched.
 
-After deployment, re-inspect the parent and confirm the module appeared. For a watch loop use flux watch; keep it foreground and stop on cancellation. Do not reimplement compilation or generate ProtoFlux nodes directly—use Flux-SDK.
+For multiple modules or hot reload, keep a checked-in schema-v1 Flux module manifest with explicit `dependsOn`. Prefer a `$slot:key` parent plus the matching world apply state; rloop verifies a same-session ID or resolves the saved path after a session change. Run `flux deploy-manifest` once, then use `flux watch MANIFEST.json` in the foreground. It topologically builds changed modules and deploys only successful builds. Preserve its deploy-state checkpoint and follow the non-atomic recovery report after failure.
+
+After deployment, re-inspect the parent and confirm each module's before/after Slot identity. Stop watch on cancellation. Do not reimplement compilation or generate ProtoFlux nodes directly—use Flux-SDK. Treat an untested Flux-SDK series reported by doctor as a compatibility warning that must be resolved before live deployment.

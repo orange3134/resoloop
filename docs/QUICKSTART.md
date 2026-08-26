@@ -37,6 +37,8 @@ MyResoniteProject/
 │  └─ main.json         # SlotとComponentの宣言
 └─ flux/
    ├─ Main.pg           # ProtoGraph source
+   ├─ protograph.toml   # Flux-SDK project manifest
+   ├─ rloop.flux.json   # dependency orderとstable parent
    └─ .gitignore        # Flux生成物を除外
 ~~~
 
@@ -75,6 +77,7 @@ rloop inspect $slotId --members --json
 rloop validate content/main.json --json
 rloop plan content/main.json --json
 rloop apply content/main.json --profile --json
+rloop diff content/main.json --json
 rloop inspect $slotId --members --json
 ~~~
 
@@ -90,6 +93,18 @@ rloop type describe FrooxEngine.Grabbable --json
 ~~~
 
 型名やmember名を推測せず、`type describe` の結果を `content/main.json` に反映してください。
+
+宣言が大きくなったらinclude、parameter、prototype、repeatで分割します。参照は `$slot:key`、`$component:key`、`$member:key.Member`、`$asset:key` を使います。完全な構文と上限は[DECLARATIVE.md](DECLARATIVE.md)を参照してください。
+
+cameraとtestsを宣言した場合は、apply後にCIで比較可能な成果物と構造assertionを生成できます。
+
+~~~powershell
+rloop scene summary content/main.json --output artifacts/scene.json --json
+rloop capture content/main.json --camera main --output artifacts/main.svg --json
+rloop test content/main.json --json
+~~~
+
+ResoniteLink 0.13.1にはscreenshot APIがないため、SVGは最終レンダリングではなく決定的な空間投影です。interaction probeはmanifestの `safe: true` と `--probe --yes` の両方があるときだけ呼ばれ、利用不能ならstructural-onlyと報告されます。
 
 ## 5. ProtoFluxを使う（任意）
 
@@ -110,10 +125,14 @@ rloop doctor
 rloop flux check flux/Main.pg --project flux --json
 rloop flux build flux/Main.pg --project flux --json
 rloop flux deploy --project flux --module Main --parent $slotId --json
+rloop flux deploy-manifest flux/rloop.flux.json --json
+rloop flux watch flux/rloop.flux.json --json
 rloop inspect $slotId --depth 2 --members --json
 ~~~
 
-`flux deploy` は指定parent配下の同名moduleだけを置換します。parentは現在セッションで再取得した正確なIDを渡してください。
+`flux deploy` は指定parent配下の同名moduleだけを置換します。module manifestでは複数moduleと依存順を宣言でき、world apply stateの `$slot:key` をparentにできます。watchは成功buildだけを再deployします。
+
+宣言から対象を取り除いた場合、まず`diff`でownership内のdelete候補を確認します。通常applyは削除しません。意図した候補だけだと確認した場合に限り、`rloop apply content/main.json --prune --yes --json`で収束させます。処理は非atomicなので、失敗時は結果のcheckpoint pathを保持して同じapplyを再実行します。
 
 ## 6. AIエージェントと反復する
 

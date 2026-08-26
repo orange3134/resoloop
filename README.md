@@ -4,7 +4,7 @@ rloopは、CodexやClaude CodeなどのAIエージェントがResoniteを
 
 観測 → 実装 → 適用 → 検証 → 解析 → 修正
 
-のループで操作するための非対話CLIです。ResoniteLinkを単純に露出せず、Slot、Component、member、runtime typeという安定した概念へ写像します。v0.1はproject初期化・診断、接続、Hierarchy/検索/inspection、Slot・Component CRUD、Reflection、JSON apply、Flux-SDK build/deploy、ログtailを実装しています。
+のループで操作するための非対話CLIです。ResoniteLinkを単純に露出せず、Slot、Component、member、runtime typeという安定した概念へ写像します。v0.1はproject初期化・診断、接続、Hierarchy/検索/inspection、Slot・Component CRUD、Reflection、再利用可能なJSON apply、scene/test artifact、安全な差分収束、Flux-SDK build/hot deploy、ログtailを実装しています。
 
 ## Architecture
 
@@ -131,8 +131,8 @@ Exit codeは、2=引数、3=設定、4=接続、5=not found、6=validation、7=�
 | Slot | slot create, slot set, slot delete --yes |
 | Component | component list/inspect/add/set/remove |
 | Reflection | type search, type describe |
-| Declarative | validate FILE.json [--strict], plan FILE.json, apply FILE.json |
-| Flux | flux status/check/build/watch/deploy |
+| Declarative | validate, plan/diff, apply [--prune --yes], scene summary, capture, test |
+| Flux | flux status/check/build/watch/deploy/deploy-manifest |
 | Diagnostics | doctor, logs |
 
 全オプションは rloop help で確認できます。hierarchyのdefault depthは2、findは8です。depth -1は全階層なので大規模worldでは避けてください。削除は --yes 必須で、Root削除は常に拒否されます。IDはResoniteLink session内だけで安定し、world再読込後には再取得が必要です。
@@ -156,13 +156,19 @@ rloop apply examples/house-world.json --json
 
 schema v1では、top-levelに `schemaVersion: "1"`、`ownership.key`、root `slot.key`が必要です。ownershipごとのstateは既定でproject内の `.rloop/state/<ownership>.json` に保存され、途中経過もcheckpointされます。このdirectoryは `rloop init` が生成するignore設定によりversion controlから除外されます。
 
-`children` でSlot階層を宣言できます。SlotとComponentの明示的 `key` はrenameやセッション変更後の再解決に使われます。同じSlotに同型Componentを複数宣言する場合は、それぞれにkeyが必要です。fieldから `$ref:key` でComponentを、`$member:key.MemberName` でそのmember fieldを参照でき、forward referenceも利用できます。
+`children` でSlot階層を宣言できます。SlotとComponentの明示的 `key` はrenameやセッション変更後の再解決に使われます。同じSlotに同型Componentを複数宣言する場合は、それぞれにkeyが必要です。fieldから `$slot:key`、`$component:key`、`$member:key.MemberName`、`$asset:key` を参照でき、forward referenceも利用できます。旧 `$ref:key` も互換です。
+
+include、parameter/variable、prototype/instance、repeat、asset、camera、assertionの仕様は[docs/DECLARATIVE.md](docs/DECLARATIVE.md)にまとめています。house fixtureは3ファイルへ分割し、22個のboxと4本のtable legをprototype化しました。展開結果69 Slot・148 Componentを維持したまま、宣言量は46,178 byteから42,430 byteへ8.1%減っています。
 
 `validate` は接続なしのschema・値形状・key・参照検査、`validate --strict` は接続先のruntime Reflectionを使ったComponent/member検査です。`plan` はworldを変更せずcreate/update/no-opを列挙します。既存rootを初めて管理対象へ取り込む場合、inspectとplanで完全一致対象を確認してから一度だけ `--adopt` を付けます。stateがある通常の再適用では不要です。
 
 ~~~powershell
 rloop plan content/main.json --json
 rloop apply content/main.json --profile --json
+rloop diff content/main.json --json
+rloop scene summary content/main.json --output artifacts/scene.json --json
+rloop capture content/main.json --camera main --output artifacts/main.svg --json
+rloop test content/main.json --json
 ~~~
 
 applyの最終JSONはstdout、進捗はstderrへ分離されます。機械処理できる進捗が必要なら `--ndjson-progress`、表示を抑えるなら `--quiet` を使います。`--timeout` は各ResoniteLink request、`--command-timeout` はcommand全体のdeadlineです。Ctrl+Cやdeadlineで中断した場合はstate fileと完了件数が報告され、同じapplyで再開できます。
@@ -176,9 +182,11 @@ $env:RESONITE_MANAGED_DATA_PATH="D:\Users\star_\AppData\Local\RESO Launcher\prof
 rloop flux check examples/flux/RLoopHello.pg --project examples/flux --json
 rloop flux build examples/flux/RLoopHello.pg --project examples/flux --json
 rloop flux deploy --project examples/flux --module RLoopHello --parent RLoop_Test --json
+rloop flux deploy-manifest examples/flux/rloop.flux.json --json
+rloop flux watch examples/flux/rloop.flux.json --json
 ~~~
 
-build/check/watchは既存Flux-SDK CLIをラップします。flux deployはFlux-SDK 1.9のLoader.replaceを利用し、指定parent配下で同じmodule名のchildだけを置換します。Flux-SDK programmatic APIもBetaです。RLoop.Flux.Deployerに隔離しているため追従箇所は限定されています。
+`.pg`に対するbuild/check/watchは既存Flux-SDK CLIをラップします。JSON module manifestに対するwatchは依存順に成功buildだけを再deployします。`$slot:key` parentはworld stateから現在session向けに検証・再解決されます。deployはFlux-SDK 1.9のLoader.replaceを利用し、moduleごとのbefore/after ID、構造差分、checkpoint recoveryを返します。
 
 ## Codex Skills
 
@@ -228,11 +236,11 @@ rloop logs --tail 200 --json
 ## Known limitations
 
 - ResoniteLink 0.13.1自体がBetaで、breaking changeの可能性があります。
-- applyはschema v1のJSONのみです。planとstate/checkpointは実装済みですが、所有範囲内の削除収束とrollbackは未実装です。
-- member conversionはbool/numeric/string/URI/type/float vectors/quaternion/color/enum/referenceと、それらを要素に持つlistを対象とします。dictionary/sync objectの書き換えは未対応です。
-- screenshotは未実装です。安定したwindow selection/capture方式をCLI本体へ持ち込まず、将来optional Windows helperとして実装予定です。
+- applyはschema v1のJSONのみです。operationは非atomicでrollbackはできませんが、操作単位のcheckpointと再実行手順を返します。
+- List更新は公開API上whole-member replacementです。`diff`は要素added/removedを表示してから一括更新します。
+- ResoniteLink 0.13.1にscreenshot APIがないため、captureは決定的なcamera-space SVGで、最終レンダリング画像ではありません。結果は `screenshotAvailable: false` を明示します。
 - logsはLink protocolからのstreamではなく、明示されたローカルlog fileのtailです。
-- flux watchはcompiler watchであり、Resoniteへのhot deploy loopは今後の拡張です。
+- runtime probeはpublic Reflectionに公開されたSyncMethodだけを明示許可付きで呼びます。公開されないinteractionはstructural-onlyです。
 
 ## License and upstream notes
 

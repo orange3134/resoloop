@@ -186,8 +186,9 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         EnsureConnected();
         var definition = await GetComponentDefinitionCachedAsync(type, cancellationToken);
         var members = definition.Members.Select(x => ModelMapper.MapMemberDefinition(x.Key, x.Value)).ToArray();
+        var methods = definition.Methods.Select(ModelMapper.MapMethodDefinition).ToArray();
         return new ComponentTypeInfo(definition.Type.FullTypeName, definition.CategoryPath,
-            ModelMapper.Render(definition.Type.BaseType), definition.Type.IsGenericType, members);
+            ModelMapper.Render(definition.Type.BaseType), definition.Type.IsGenericType, members, methods);
     }
 
     public async Task<TypeInfo> DescribeTypeAsync(string type, CancellationToken cancellationToken = default)
@@ -210,6 +211,73 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             isFlags = enumResponse.Definition.IsFlags;
         }
         return ModelMapper.MapType(response.Definition, enumValues, isFlags);
+    }
+
+    public async Task<SyncMethodCallResult> CallComponentMethodAsync(string componentId, string method,
+        IReadOnlyDictionary<string, JsonElement>? arguments = null, CancellationToken cancellationToken = default)
+    {
+        EnsureConnected();
+        var converted = new Dictionary<string, Link.Data>(StringComparer.Ordinal);
+        foreach (var argument in arguments ?? new Dictionary<string, JsonElement>())
+            converted[argument.Key] = ConvertMethodArgument(argument.Value);
+        var response = await Wait(_link.CallMethod(new Link.CallSyncMethod
+        {
+            TargetID = componentId,
+            MethodName = method,
+            Arguments = converted
+        }), "method.call", cancellationToken);
+        return new SyncMethodCallResult(response.Success,
+            response.Result is null ? null : JsonSerializer.SerializeToNode(response.Result, response.Result.GetType()),
+            response.Success ? null : response.ErrorInfo);
+    }
+
+    public async Task<string> ImportAssetAsync(ApplyAssetSpec asset, string resolvedSource,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConnected();
+        Link.AssetData response = asset.Kind.ToLowerInvariant() switch
+        {
+            "texture" or "texture2d" => await Wait(_link.ImportTexture(new Link.ImportTexture2DFile { FilePath = resolvedSource }), "asset.texture.import", cancellationToken),
+            "audio" or "audioclip" => await Wait(_link.ImportAudioClip(new Link.ImportAudioClipFile { FilePath = resolvedSource }), "asset.audio.import", cancellationToken),
+            "mesh" => await ImportMeshJson(resolvedSource, cancellationToken),
+            _ => throw new RLoopException("ASSET_KIND_UNSUPPORTED", $"Asset kind '{asset.Kind}' is not importable. Use a resdb URI for material and other runtime assets.", ExitCodes.ValidationFailed)
+        };
+        EnsureSuccess(response, "ASSET_IMPORT_FAILED", new Dictionary<string, object?> { ["kind"] = asset.Kind, ["source"] = resolvedSource });
+        return response.AssetURL?.ToString() ?? throw new RLoopException("ASSET_URL_MISSING", "Asset import succeeded without an AssetURL.", ExitCodes.OperationFailed);
+    }
+
+    private async Task<Link.AssetData> ImportMeshJson(string path, CancellationToken cancellationToken)
+    {
+        Link.ImportMeshJSON request;
+        try { request = JsonSerializer.Deserialize<Link.ImportMeshJSON>(await File.ReadAllTextAsync(path, cancellationToken)) ?? throw new JsonException("Mesh JSON was empty."); }
+        catch (JsonException ex) { throw new RLoopException("MESH_JSON_INVALID", $"Mesh asset '{path}' is not a ResoniteLink ImportMeshJSON document: {ex.Message}", ExitCodes.ValidationFailed, innerException: ex); }
+        return await Wait(_link.ImportMesh(request), "asset.mesh.import", cancellationToken);
+    }
+
+    private static Link.Data ConvertMethodArgument(JsonElement value)
+    {
+        var suffix = value.ValueKind switch
+        {
+            JsonValueKind.String => "string",
+            JsonValueKind.True or JsonValueKind.False => "bool",
+            JsonValueKind.Number when value.TryGetInt32(out _) => "int",
+            JsonValueKind.Number => "float",
+            _ => throw new RLoopException("METHOD_ARGUMENT_UNSUPPORTED", $"Method argument kind '{value.ValueKind}' is not supported.", ExitCodes.ValidationFailed)
+        };
+        var type = typeof(Link.Data).Assembly.GetType("ResoniteLink.Data_" + suffix)
+                   ?? throw new RLoopException("METHOD_ARGUMENT_UNSUPPORTED", $"ResoniteLink has no Data_{suffix} wrapper.", ExitCodes.ValidationFailed);
+        var data = (Link.Data)Activator.CreateInstance(type)!;
+        var property = type.GetProperty("Value") ?? type.GetProperty("BoxedValue")
+            ?? throw new RLoopException("METHOD_ARGUMENT_UNSUPPORTED", $"ResoniteLink Data_{suffix} has no writable value.", ExitCodes.ValidationFailed);
+        object converted = suffix switch
+        {
+            "string" => value.GetString() ?? string.Empty,
+            "bool" => value.GetBoolean(),
+            "int" => value.GetInt32(),
+            _ => value.GetSingle()
+        };
+        property.SetValue(data, converted);
+        return data;
     }
 
     private async Task<string> ResolveComponentTypeAsync(string query, CancellationToken cancellationToken)
@@ -431,12 +499,24 @@ internal static class ModelMapper
         Link.Field field => new MemberValue("field", field.ID, field.ValueType.FullName,
             JsonSerializer.SerializeToNode(field.BoxedValue, field.BoxedValue?.GetType() ?? typeof(object), JsonOptions)),
         Link.Reference reference => new MemberValue("reference", reference.ID, TargetId: reference.TargetID, TargetType: reference.TargetType),
+        Link.SyncDictionary dictionary => new MemberValue("dictionary", dictionary.ID,
+            Members: MapDictionary(dictionary)),
         Link.SyncObject syncObject => new MemberValue("syncObject", syncObject.ID,
             Members: (syncObject.Members ?? []).ToDictionary(x => x.Key, x => MapMember(x.Value))),
         Link.SyncList list => new MemberValue("list", list.ID, Elements: (list.Elements ?? []).Select(MapMember).ToArray()),
         Link.EmptyElement empty => new MemberValue("empty", empty.ID),
         _ => new MemberValue(member.GetType().Name, member.ID, Value: JsonSerializer.SerializeToNode(member, member.GetType(), JsonOptions))
     };
+
+    private static IReadOnlyDictionary<string, MemberValue> MapDictionary(Link.SyncDictionary dictionary)
+    {
+        var elements = dictionary.GetType().GetProperty("Elements")?.GetValue(dictionary) as System.Collections.IDictionary;
+        var result = new Dictionary<string, MemberValue>(StringComparer.Ordinal);
+        if (elements is null) return result;
+        foreach (System.Collections.DictionaryEntry entry in elements)
+            if (entry.Value is Link.Member member) result[Convert.ToString(entry.Key, CultureInfo.InvariantCulture) ?? string.Empty] = MapMember(member);
+        return result;
+    }
 
     public static MemberDefinitionInfo MapMemberDefinition(string name, Link.MemberDefinition definition) => definition switch
     {
@@ -447,6 +527,11 @@ internal static class ModelMapper
         Link.DictionaryDefinition dictionary => new MemberDefinitionInfo(name, "dictionary", Render(dictionary.Type), null, null),
         _ => new MemberDefinitionInfo(name, definition.GetType().Name, Render(definition.Type), null, null)
     };
+
+    public static SyncMethodInfo MapMethodDefinition(Link.SyncMethodDefinition definition) => new(
+        definition.Name,
+        (definition.Parameters ?? []).ToDictionary(x => x.Key, x => Render(x.Value), StringComparer.Ordinal),
+        Render(definition.ReturnType), definition.IsStatic, definition.IsAsync);
 
     public static TypeInfo MapType(Link.TypeDefinition type, IReadOnlyDictionary<string, long>? enumValues, bool? isFlags) => new(
         type.FullTypeName, type.AssemblyName, type.Namespace, type.Name, Render(type.BaseType), type.IsAbstract,
@@ -470,6 +555,8 @@ public static class ValueCodec
     {
         if (definition is Link.ReferenceDefinition) return new Link.Reference { TargetID = raw.Equals("null", StringComparison.OrdinalIgnoreCase) ? null : raw };
         if (definition is Link.ListDefinition list) return await ParseListAsync(link, list, raw, cancellationToken, requestTimeout, requestCompleted);
+        if (definition is Link.DictionaryDefinition dictionary) return await ParseDictionaryAsync(link, dictionary, raw, cancellationToken, requestTimeout, requestCompleted);
+        if (definition is Link.SyncObjectMemberDefinition syncObject) return await ParseSyncObjectAsync(link, syncObject, raw, cancellationToken, requestTimeout, requestCompleted);
         if (definition is not Link.FieldDefinition field)
             throw new RLoopException("MEMBER_TYPE_UNSUPPORTED", $"Setting {definition.GetType().Name} members is not supported in v0.1.", ExitCodes.ValidationFailed);
 
@@ -498,7 +585,7 @@ public static class ValueCodec
                 "floatq" or "quaternion" => FloatQ(raw),
                 "color" => Color(raw),
                 "colorx" => ColorX(raw),
-                _ => await ParseEnumOrThrow(link, type, raw, cancellationToken, requestTimeout, requestCompleted)
+                _ => await ParseEnumOrReflection(link, type, raw, cancellationToken, requestTimeout, requestCompleted)
             };
         }
         catch (RLoopException) { throw; }
@@ -507,6 +594,58 @@ public static class ValueCodec
             throw new RLoopException("VALUE_CONVERSION_FAILED", $"Cannot convert '{raw}' to '{type}'.", ExitCodes.ValidationFailed,
                 new Dictionary<string, object?> { ["value"] = raw, ["targetType"] = type }, innerException: ex);
         }
+    }
+
+    private static async Task<Link.SyncDictionary> ParseDictionaryAsync(Link.LinkInterface link, Link.DictionaryDefinition definition,
+        string raw, CancellationToken cancellationToken, TimeSpan? requestTimeout, Action<string, double>? requestCompleted)
+    {
+        if (definition.ElementDefinition is null)
+            throw new RLoopException("DICTIONARY_ELEMENT_TYPE_MISSING", "The runtime dictionary definition did not include a value type.", ExitCodes.ValidationFailed);
+        JsonObject source;
+        try { source = JsonNode.Parse(raw) as JsonObject ?? throw new JsonException("Expected an object."); }
+        catch (JsonException ex) { throw new RLoopException("DICTIONARY_VALUE_INVALID", "Dictionary values must use a JSON object.", ExitCodes.ValidationFailed, innerException: ex); }
+        var keyType = ModelMapper.Render(definition.KeyType) ?? "string";
+        var simpleKey = SimpleType(keyType);
+        var concrete = typeof(Link.SyncDictionary).Assembly.GetTypes().FirstOrDefault(type =>
+            !type.IsAbstract && typeof(Link.SyncDictionary).IsAssignableFrom(type) &&
+            type.Name.Equals("SyncDictionary_" + simpleKey, StringComparison.OrdinalIgnoreCase));
+        if (concrete is null)
+            throw new RLoopException("DICTIONARY_KEY_UNSUPPORTED", $"Dictionary key type '{keyType}' is not supported by this ResoniteLink build.", ExitCodes.ValidationFailed);
+        var result = (Link.SyncDictionary)Activator.CreateInstance(concrete)!;
+        var property = concrete.GetProperty("Elements")!;
+        var elements = (System.Collections.IDictionary)Activator.CreateInstance(property.PropertyType)!;
+        var dictionaryKeyType = property.PropertyType.GetGenericArguments()[0];
+        foreach (var pair in source)
+        {
+            var key = Convert.ChangeType(pair.Key, dictionaryKeyType, CultureInfo.InvariantCulture);
+            var valueRaw = pair.Value is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var text) ? text : pair.Value?.ToJsonString() ?? "null";
+            elements.Add(key!, await ParseAsync(link, definition.ElementDefinition, valueRaw, cancellationToken, requestTimeout, requestCompleted));
+        }
+        property.SetValue(result, elements);
+        return result;
+    }
+
+    private static async Task<Link.SyncObject> ParseSyncObjectAsync(Link.LinkInterface link, Link.SyncObjectMemberDefinition member,
+        string raw, CancellationToken cancellationToken, TimeSpan? requestTimeout, Action<string, double>? requestCompleted)
+    {
+        JsonObject source;
+        try { source = JsonNode.Parse(raw) as JsonObject ?? throw new JsonException("Expected an object."); }
+        catch (JsonException ex) { throw new RLoopException("SYNC_OBJECT_VALUE_INVALID", "SyncObject values must use a JSON object.", ExitCodes.ValidationFailed, innerException: ex); }
+        var type = ModelMapper.Render(member.Type) ?? throw new RLoopException("SYNC_OBJECT_TYPE_MISSING", "SyncObject member has no runtime type.", ExitCodes.ValidationFailed);
+        var response = await WaitValueRequest(link.GetSyncObjectDefinition(new Link.GetSyncObjectDefinition { SyncObjectType = type, Flattened = true }), "sync-object-definition.get", requestTimeout,
+            cancellationToken, requestCompleted);
+        if (!response.Success) throw new RLoopException("SYNC_OBJECT_DESCRIBE_FAILED", response.ErrorInfo, ExitCodes.OperationFailed);
+        var definition = response.Definition;
+        var members = new Dictionary<string, Link.Member>(StringComparer.Ordinal);
+        foreach (var pair in source)
+        {
+            if (!definition.Members.TryGetValue(pair.Key, out var memberDefinition))
+                throw new RLoopException("SYNC_OBJECT_MEMBER_NOT_FOUND", $"SyncObject member '{pair.Key}' was not found.", ExitCodes.ValidationFailed,
+                    suggestions: definition.Members.Keys.Take(30).ToArray());
+            var valueRaw = pair.Value is JsonValue value && value.TryGetValue<string>(out var text) ? text : pair.Value?.ToJsonString() ?? "null";
+            members[pair.Key] = await ParseAsync(link, memberDefinition, valueRaw, cancellationToken, requestTimeout, requestCompleted);
+        }
+        return new Link.SyncObject { Members = members };
     }
 
     private static async Task<Link.SyncList> ParseListAsync(Link.LinkInterface link, Link.ListDefinition definition,
@@ -544,24 +683,73 @@ public static class ValueCodec
         return new Link.SyncList { Elements = elements };
     }
 
-    private static async Task<Link.Member> ParseEnumOrThrow(Link.LinkInterface link, string type, string raw,
+    private static async Task<Link.Member> ParseEnumOrReflection(Link.LinkInterface link, string type, string raw,
         CancellationToken cancellationToken, TimeSpan? requestTimeout, Action<string, double>? requestCompleted)
     {
+        var reflected = TryParseReflectedField(type, raw);
+        if (reflected is not null) return reflected;
         var typeResponse = await WaitValueRequest(link.GetTypeDefinition(type), "type.get", requestTimeout, cancellationToken, requestCompleted);
         if (typeResponse.Success && typeResponse.Definition.IsEnum)
         {
             var enumResponse = await WaitValueRequest(link.GetEnumDefinition(type), "enum.get", requestTimeout, cancellationToken, requestCompleted);
             if (!enumResponse.Success) throw new RLoopException("ENUM_DESCRIBE_FAILED", enumResponse.ErrorInfo, ExitCodes.OperationFailed);
             var values = enumResponse.Definition.Values;
-            var requested = raw.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-            var unknown = requested.Where(x => !values.ContainsKey(x) && !long.TryParse(x, out _)).ToArray();
-            if (unknown.Length > 0)
-                throw new RLoopException("ENUM_VALUE_INVALID", $"'{string.Join(',', unknown)}' is not valid for '{type}'.", ExitCodes.ValidationFailed,
-                    suggestions: values.Keys.Take(30).ToArray());
-            return new Link.Field_Enum { EnumType = type, Value = raw };
+            return new Link.Field_Enum { EnumType = type, Value = ValidateEnumValue(type, values, enumResponse.Definition.IsFlags, raw) };
         }
         throw new RLoopException("VALUE_TYPE_UNSUPPORTED", $"Field type '{type}' is not supported by the v0.1 converter.", ExitCodes.ValidationFailed,
             suggestions: ["Use rloop type describe to confirm the runtime type, then open an issue with this type."]);
+    }
+
+    internal static string ValidateEnumValue(string type, IReadOnlyDictionary<string, long> values, bool isFlags, string raw)
+    {
+        var requested = raw.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        var unknown = requested.Where(x => !values.ContainsKey(x) && !long.TryParse(x, out _)).ToArray();
+        if (unknown.Length > 0)
+            throw new RLoopException("ENUM_VALUE_INVALID", $"'{string.Join(',', unknown)}' is not valid for '{type}'.", ExitCodes.ValidationFailed,
+                suggestions: values.Keys.Take(30).ToArray());
+        if (!isFlags && requested.Length > 1)
+            throw new RLoopException("ENUM_FLAGS_INVALID", $"Enum '{type}' is not marked with Flags and accepts one value.", ExitCodes.ValidationFailed,
+                suggestions: values.Keys.Take(30).ToArray());
+        return string.Join(',', requested);
+    }
+
+    private static Link.Member? TryParseReflectedField(string type, string raw)
+    {
+        var nullable = type.Contains("Nullable", StringComparison.OrdinalIgnoreCase) || type.EndsWith("?", StringComparison.Ordinal);
+        var underlying = type;
+        var open = type.IndexOf('<');
+        if (open >= 0 && type.EndsWith('>')) underlying = type[(open + 1)..^1];
+        underlying = underlying.TrimEnd('?');
+        var simple = SimpleType(underlying);
+        var expectedName = "Field_" + (nullable ? "Nullable_" : string.Empty) + simple;
+        var concrete = typeof(Link.Field).Assembly.GetTypes().FirstOrDefault(candidate =>
+            !candidate.IsAbstract && typeof(Link.Field).IsAssignableFrom(candidate) &&
+            candidate.Name.Equals(expectedName, StringComparison.OrdinalIgnoreCase));
+        if (concrete is null) return null;
+        var field = (Link.Field)Activator.CreateInstance(concrete)!;
+        var property = concrete.GetProperty("Value") ?? concrete.GetProperty("BoxedValue");
+        if (property is null || !property.CanWrite) return null;
+        if (raw.Equals("null", StringComparison.OrdinalIgnoreCase))
+        {
+            property.SetValue(field, null);
+            return field;
+        }
+        var targetType = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+        object? value;
+        if (targetType == typeof(string)) value = raw;
+        else if (targetType == typeof(Uri)) value = new Uri(raw, UriKind.RelativeOrAbsolute);
+        else
+        {
+            var json = raw;
+            if (targetType.IsEnum) value = Enum.Parse(targetType, raw, true);
+            else value = JsonSerializer.Deserialize(json, targetType, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals
+            });
+        }
+        property.SetValue(field, value);
+        return field;
     }
 
     private static async Task<T> WaitValueRequest<T>(Task<T> task, string operation, TimeSpan? timeout,

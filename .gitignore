@@ -7,6 +7,7 @@ TestResults/
 *.nupkg
 artifacts/
 **/.rloop/state/
+**/.rloop/flux-state/
 examples/flux/build/
 examples/flux/.protograph/
 *.brson

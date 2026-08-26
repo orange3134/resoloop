@@ -12,7 +12,7 @@ public sealed class ProjectInitializerTests : IDisposable
         var result = ProjectInitializer.Initialize(_root);
 
         Assert.Equal(Path.GetFullPath(_root), result.RootDirectory);
-        Assert.Equal(5, result.Created.Count);
+        Assert.Equal(7, result.Created.Count);
         Assert.True(File.Exists(Path.Combine(_root, ".rloop.json")));
         var apply = ApplyDocument.Load(Path.Combine(_root, "content", "main.json"));
         Assert.Equal("1", apply.SchemaVersion);
@@ -21,6 +21,8 @@ public sealed class ProjectInitializerTests : IDisposable
         Assert.StartsWith("RLoop_Test_", apply.Slot!.Name);
         Assert.Equal("FrooxEngine.Grabbable", Assert.Single(apply.Components!).Type);
         Assert.Contains("module Main", File.ReadAllText(Path.Combine(_root, "flux", "Main.pg")));
+        Assert.True(File.Exists(Path.Combine(_root, "flux", "rloop.flux.json")));
+        Assert.NotNull(apply.Cameras!["main"]);
     }
 
     [Fact]
@@ -31,7 +33,7 @@ public sealed class ProjectInitializerTests : IDisposable
         var result = ProjectInitializer.Initialize(_root);
 
         Assert.Empty(result.Created);
-        Assert.Equal(5, result.Unchanged.Count);
+        Assert.Equal(7, result.Unchanged.Count);
     }
 
     [Fact]
@@ -44,7 +46,7 @@ public sealed class ProjectInitializerTests : IDisposable
         var result = ProjectInitializer.Initialize(_root);
 
         Assert.Empty(result.Created);
-        Assert.Equal(5, result.Unchanged.Count);
+        Assert.Equal(7, result.Unchanged.Count);
     }
 
     [Fact]
