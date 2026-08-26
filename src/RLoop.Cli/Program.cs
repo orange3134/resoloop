@@ -13,8 +13,9 @@ public static class Program
     {
         var parsed = ParsedArguments.Parse(args);
         var output = new OutputWriter(parsed.Has("json"));
-        using var cts = new CancellationTokenSource();
-        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+        using var userCancellation = new CancellationTokenSource();
+        CancellationTokenSource? commandCancellation = null;
+        Console.CancelKeyPress += (_, e) => { e.Cancel = true; userCancellation.Cancel(); };
         try
         {
             if (parsed.Positionals.Count == 0 || parsed.Has("help") || parsed.Positionals[0] is "help" or "-h")
@@ -23,31 +24,80 @@ public static class Program
                 return ExitCodes.Success;
             }
 
+            if (parsed.Positionals[0].Equals("init", StringComparison.OrdinalIgnoreCase))
+            {
+                if (parsed.Positionals.Count > 2)
+                    throw new RLoopException("UNEXPECTED_ARGUMENT", "rloop init accepts at most one target directory.", ExitCodes.InvalidArguments);
+                var target = parsed.Positionals.Count > 1 ? parsed.Positionals[1] : Environment.CurrentDirectory;
+                var result = ProjectInitializer.Initialize(target);
+                output.Success(result, writer =>
+                {
+                    writer.WriteLine($"initialized {result.RootDirectory}");
+                    foreach (var path in result.Created) writer.WriteLine($"  created   {path}");
+                    foreach (var path in result.Unchanged) writer.WriteLine($"  unchanged {path}");
+                    writer.WriteLine("next:");
+                    foreach (var step in result.NextSteps) writer.WriteLine($"  {step}");
+                });
+                return ExitCodes.Success;
+            }
+
             var cliConfig = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
             {
                 ["url"] = parsed.Option("url"), ["timeout"] = parsed.Option("timeout"),
+                ["command-timeout"] = parsed.Option("command-timeout"),
                 ["flux-executable"] = parsed.Option("flux-executable"), ["flux-deployer"] = parsed.Option("flux-deployer"),
                 ["library-path"] = parsed.Option("library-path"), ["log-path"] = parsed.Option("log-path")
             };
             var resolution = ConfigResolver.Resolve(Environment.CurrentDirectory, cliConfig);
+            commandCancellation = CancellationTokenSource.CreateLinkedTokenSource(userCancellation.Token);
+            commandCancellation.CancelAfter(TimeSpan.FromSeconds(resolution.Config.CommandTimeoutSeconds));
+            var commandToken = commandCancellation.Token;
             if (parsed.Has("verbose")) Console.Error.WriteLine(JsonSerializer.Serialize(new { configSources = resolution.Sources }));
 
             var flux = new FluxProcessTool(resolution.Config.FluxExecutable ?? "flux-sdk", new FluxSdkDeployer());
+            if (parsed.Positionals[0].Equals("doctor", StringComparison.OrdinalIgnoreCase))
+                return await RunDoctor(output, resolution.Config, flux, commandToken);
             if (parsed.Positionals[0].Equals("flux", StringComparison.OrdinalIgnoreCase))
-                return await RunFlux(parsed, output, resolution.Config, flux, cts.Token);
+                return await RunFlux(parsed, output, resolution.Config, flux, commandToken);
             if (parsed.Positionals[0].Equals("logs", StringComparison.OrdinalIgnoreCase))
                 return RunLogs(parsed, output, resolution.Config);
+            if (parsed.Positionals[0].Equals("validate", StringComparison.OrdinalIgnoreCase) && !parsed.Has("strict"))
+            {
+                var validation = await ApplyDocumentValidator.ValidateAsync(
+                    ApplyDocument.Load(parsed.Positional(1, "Apply file")), cancellationToken: commandToken);
+                ApplyDocumentValidator.ThrowIfInvalid(validation);
+                output.Success(validation);
+                return ExitCodes.Success;
+            }
 
             var uri = ConfigResolver.RequireUrl(resolution.Config);
-            await using var client = new ResoniteLinkClientAdapter();
-            await client.ConnectAsync(uri, TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds), cts.Token);
+            await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds));
+            await client.ConnectAsync(uri, TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds), commandToken);
             var world = new WorldService(client);
-            await RunResonite(parsed, output, client, world, cts.Token);
+            await RunResonite(parsed, output, client, world, commandToken);
             return ExitCodes.Success;
+        }
+        catch (OperationCanceledException) when (!userCancellation.IsCancellationRequested)
+        {
+            var error = new RLoopException("COMMAND_TIMEOUT", "The command exceeded its configured deadline.", ExitCodes.Timeout,
+                suggestions: ["Increase --command-timeout only after checking progress and Resonite responsiveness."]);
+            output.Error(error);
+            return error.ExitCode;
         }
         catch (OperationCanceledException)
         {
             var error = new RLoopException("CANCELLED", "Operation was cancelled.", ExitCodes.OperationFailed);
+            output.Error(error);
+            return error.ExitCode;
+        }
+        catch (RLoopException ex) when (ex.Code == "APPLY_CANCELLED" &&
+                                             commandCancellation?.IsCancellationRequested == true &&
+                                             !userCancellation.IsCancellationRequested)
+        {
+            var error = new RLoopException("COMMAND_TIMEOUT",
+                "The apply command exceeded its configured deadline; completed operations were checkpointed.",
+                ExitCodes.Timeout, ex.Context,
+                ["Re-run the same apply command to resume, or increase --command-timeout after checking Resonite responsiveness."], ex);
             output.Error(error);
             return error.ExitCode;
         }
@@ -63,6 +113,101 @@ public static class Program
                 ["Re-run with --verbose and inspect stderr."], ex);
             output.Error(wrapped);
             return wrapped.ExitCode;
+        }
+        finally
+        {
+            commandCancellation?.Dispose();
+        }
+    }
+
+    private static async Task<int> RunDoctor(OutputWriter output, RLoopConfig config, IFluxTool flux,
+        CancellationToken cancellationToken)
+    {
+        var checks = new List<DoctorCheck>();
+        Uri? uri = null;
+        try
+        {
+            uri = ConfigResolver.RequireUrl(config);
+            checks.Add(new DoctorCheck("resonite-link-url", "pass", true, uri.ToString()));
+        }
+        catch (RLoopException ex)
+        {
+            checks.Add(new DoctorCheck("resonite-link-url", "fail", true, ex.Message, ex.Suggestions.FirstOrDefault()));
+        }
+
+        if (uri is not null)
+        {
+            try
+            {
+                await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(config.TimeoutSeconds));
+                await client.ConnectAsync(uri, TimeSpan.FromSeconds(config.TimeoutSeconds), cancellationToken);
+                var session = await client.GetSessionInfoAsync(cancellationToken);
+                checks.Add(new DoctorCheck("resonite-connection", "pass", true,
+                    $"Connected to Resonite {session.ResoniteVersion ?? "unknown"} through ResoniteLink {session.ResoniteLinkVersion ?? "unknown"}."));
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                checks.Add(new DoctorCheck("resonite-connection", "fail", true, ex.Message,
+                    "Confirm that ResoniteLink is enabled in the target world and refresh the current port."));
+            }
+        }
+
+        try
+        {
+            var status = await flux.GetStatusAsync(cancellationToken);
+            if (!status.Available)
+                checks.Add(new DoctorCheck("flux-sdk", "warning", false, $"'{status.Executable}' is not available.",
+                    "Install Papaltine.FluxSDK 1.9.0 when ProtoFlux development is needed."));
+            else if (status.Version is { } version && !version.StartsWith("1.9.", StringComparison.Ordinal))
+                checks.Add(new DoctorCheck("flux-sdk", "warning", false, $"{status.Executable} {version}",
+                    "rloop's Flux deployer is pinned to Flux-SDK 1.9.0; update the global tool before deploying."));
+            else
+                checks.Add(new DoctorCheck("flux-sdk", "pass", false, $"{status.Executable} {status.Version ?? "(version unknown)"}"));
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            checks.Add(new DoctorCheck("flux-sdk", "warning", false, ex.Message,
+                "Check RLOOP_FLUX_EXECUTABLE or install Papaltine.FluxSDK 1.9.0."));
+        }
+
+        checks.Add(PathCheck("resonite-managed-data", config.ResoniteManagedDataPath,
+            "Set RESONITE_MANAGED_DATA_PATH when ProtoFlux Reflection or compilation is needed."));
+        checks.Add(PathCheck("resonite-log", config.ResoniteLogPath,
+            "Set RESONITE_LOG_PATH when rloop logs is needed."));
+
+        var report = new DoctorReport(
+            checks.Where(check => check.Required).All(check => check.Status == "pass"),
+            Environment.CurrentDirectory,
+            ConfigResolver.FindProjectConfigPath(Environment.CurrentDirectory),
+            checks);
+        output.Success(report, writer =>
+        {
+            foreach (var check in report.Checks)
+            {
+                writer.WriteLine($"[{check.Status}] {check.Name}: {check.Message}");
+                if (check.Suggestion is not null) writer.WriteLine($"  next: {check.Suggestion}");
+            }
+            writer.WriteLine(report.Ready ? "ready: core Resonite development can start" : "not ready: resolve required checks above");
+        });
+        return ExitCodes.Success;
+    }
+
+    private static DoctorCheck PathCheck(string name, string? path, string suggestion)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return new DoctorCheck(name, "warning", false, "Not configured.", suggestion);
+        try
+        {
+            var fullPath = Path.GetFullPath(path);
+            return File.Exists(fullPath) || Directory.Exists(fullPath)
+                ? new DoctorCheck(name, "pass", false, fullPath)
+                : new DoctorCheck(name, "warning", false, $"Configured path does not exist: {fullPath}", suggestion);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return new DoctorCheck(name, "warning", false, $"Configured path is invalid: {ex.Message}", suggestion);
         }
     }
 
@@ -108,8 +253,27 @@ public static class Program
             case "apply":
             {
                 var document = ApplyDocument.Load(args.Positional(1, "Apply file"));
-                var result = await world.ApplyAsync(document, cancellationToken);
-                output.Success(result, w => w.WriteLine($"applied slot {result.SlotId} (created={result.Created}, components added={result.ComponentsAdded}, updated={result.ComponentsUpdated})"));
+                var result = await world.ApplyAsync(document, ApplyOptionsFrom(args, output), cancellationToken);
+                output.Success(result, w => w.WriteLine($"applied slot {result.SlotId} (created={result.Created}, slots added={result.SlotsCreated}, slots updated={result.SlotsUpdated}, slots unchanged={result.SlotsUnchanged}, components added={result.ComponentsAdded}, updated={result.ComponentsUpdated}, unchanged={result.ComponentsUnchanged})"));
+                break;
+            }
+            case "plan":
+            {
+                var result = await world.PlanApplyAsync(ApplyDocument.Load(args.Positional(1, "Apply file")),
+                    ApplyOptionsFrom(args, output), cancellationToken);
+                output.Success(result, w =>
+                {
+                    foreach (var operation in result.Operations)
+                        w.WriteLine($"{operation.Action,-7} {operation.Kind,-9} {operation.Path}");
+                    w.WriteLine($"creates={result.Creates} updates={result.Updates} no-ops={result.NoOps}");
+                });
+                break;
+            }
+            case "validate":
+            {
+                var validation = await world.ValidateApplyAsync(ApplyDocument.Load(args.Positional(1, "Apply file")), true, cancellationToken);
+                ApplyDocumentValidator.ThrowIfInvalid(validation);
+                output.Success(validation);
                 break;
             }
             default: throw UnknownCommand(string.Join(' ', args.Positionals));
@@ -231,7 +395,7 @@ public static class Program
             var uri = ConfigResolver.RequireUrl(config);
             var project = Path.GetFullPath(args.RequireOption("project"));
             var module = args.RequireOption("module");
-            await using var client = new ResoniteLinkClientAdapter();
+            await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(config.TimeoutSeconds));
             await client.ConnectAsync(uri, TimeSpan.FromSeconds(config.TimeoutSeconds), ct);
             var parentId = await new WorldService(client).ResolveSlotIdAsync(args.Option("parent") ?? "Root", ct);
             result = await flux.DeployAsync(new FluxDeployRequest(project, module, parentId, uri,
@@ -275,6 +439,10 @@ public static class Program
         return result;
     }
 
+    private static ApplyOptions ApplyOptionsFrom(ParsedArguments args, OutputWriter output) => new(
+        args.Option("state"), args.Has("adopt"), args.Has("profile"),
+        args.Has("quiet") ? null : progress => output.Progress(progress, args.Has("ndjson-progress")));
+
     private static Vector3Value? ParseVector(ParsedArguments args, string name) => args.Option(name) is { } text ? Vector3Value.Parse(text, $"--{name}") : null;
     private static QuaternionValue? ParseQuaternion(ParsedArguments args, string name) => args.Option(name) is { } text ? QuaternionValue.Parse(text, $"--{name}") : null;
     private static void RequireYes(ParsedArguments args, string operation)
@@ -286,6 +454,10 @@ public static class Program
 
     private static void PrintHelp(TextWriter writer) => writer.WriteLine("""
 rloop 0.1 - agent-first Resonite CLI loop
+
+Project setup:
+  rloop init [DIRECTORY] [--json]
+  rloop doctor [--url ws://localhost:PORT] [--json]
 
 Connection and observation:
   rloop status|ping [--url ws://localhost:PORT] [--json]
@@ -304,7 +476,9 @@ Editing:
   rloop component remove COMPONENT_ID --yes
   rloop type search QUERY [--limit 50]
   rloop type describe TYPE
-  rloop apply FILE.json
+  rloop validate FILE.json [--strict]
+  rloop plan FILE.json [--state FILE] [--adopt]
+  rloop apply FILE.json [--state FILE] [--adopt] [--profile] [--ndjson-progress]
 
 ProtoFlux (Flux-SDK):
   rloop flux status
@@ -312,10 +486,11 @@ ProtoFlux (Flux-SDK):
   rloop flux deploy --project DIR --module MODULE_PATH [--parent SLOT] [--library-path DIR]
 
 Diagnostics:
+  rloop doctor
   rloop logs [--path FILE_OR_DIRECTORY] [--tail 200]
 
-Global options: --url, --timeout SECONDS, --json, --verbose
+Global options: --url, --timeout SECONDS, --command-timeout SECONDS, --json, --verbose
 Configuration priority: CLI > environment > .rloop.json > ~/.rloop/config.json
-Environment: RESONITE_LINK_URL, RESONITE_MANAGED_DATA_PATH, RESONITE_LOG_PATH
+Environment: RESONITE_LINK_URL, RLOOP_TIMEOUT_SECONDS, RLOOP_COMMAND_TIMEOUT_SECONDS, RESONITE_MANAGED_DATA_PATH, RESONITE_LOG_PATH
 """);
 }

@@ -136,4 +136,72 @@ public sealed record TypeInfo(
 
 public sealed record ComponentCreateResult(string Id, string Type);
 
-public sealed record ApplyResult(string SlotId, bool Created, int ComponentsAdded, int ComponentsUpdated);
+public sealed record ApplyResult(
+    string SlotId,
+    bool Created,
+    int ComponentsAdded,
+    int ComponentsUpdated,
+    int SlotsCreated = 0,
+    int SlotsUpdated = 0,
+    int SlotsUnchanged = 0,
+    int ComponentsUnchanged = 0,
+    string? StateFile = null,
+    string? SessionId = null,
+    ApplyProfile? Profile = null);
+
+public sealed record ClientOperationMetric(string Operation, int Requests, double ElapsedMs);
+
+public sealed record ClientMetrics(
+    int Requests,
+    int CacheHits,
+    double ElapsedMs,
+    IReadOnlyList<ClientOperationMetric> Operations);
+
+public sealed record ApplyProfile(
+    double TotalElapsedMs,
+    ClientMetrics Client,
+    int PlannedOperations,
+    int Mutations,
+    int NoOps);
+
+public sealed record ApplyProgress(
+    string Stage,
+    int Current,
+    int Total,
+    string? Path,
+    string Message);
+
+public sealed record ApplyPlanEntry(
+    string Action,
+    string Kind,
+    string Path,
+    string? Key = null,
+    string? Type = null,
+    IReadOnlyList<string>? Members = null,
+    string? Reason = null);
+
+public sealed record ApplyPlanResult(
+    bool Valid,
+    string SchemaVersion,
+    string OwnershipKey,
+    string StateFile,
+    string? SessionId,
+    IReadOnlyList<ApplyPlanEntry> Operations,
+    int Creates,
+    int Updates,
+    int NoOps);
+
+public sealed record ApplyValidationIssue(
+    string Code,
+    string Message,
+    string Path,
+    string Severity = "error");
+
+public sealed record ApplyValidationResult(
+    bool Valid,
+    string? SchemaVersion,
+    int Slots,
+    int Components,
+    int References,
+    bool Strict,
+    IReadOnlyList<ApplyValidationIssue> Issues);

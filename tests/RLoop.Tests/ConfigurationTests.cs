@@ -45,6 +45,19 @@ public sealed class ConfigurationTests : IDisposable
         Assert.Equal("INVALID_RESONITE_LINK_URL", ex.Code);
     }
 
+    [Fact]
+    public void ResolvesIndependentRequestAndCommandTimeouts()
+    {
+        var result = ConfigResolver.Resolve(_root,
+            new Dictionary<string, string?> { ["timeout"] = "7", ["command-timeout"] = "120" }, _ => null,
+            Path.Combine(_root, "none"));
+
+        Assert.Equal(7, result.Config.TimeoutSeconds);
+        Assert.Equal(120, result.Config.CommandTimeoutSeconds);
+        Assert.Throws<RLoopException>(() => ConfigResolver.Resolve(_root,
+            new Dictionary<string, string?> { ["command-timeout"] = "0" }, _ => null, Path.Combine(_root, "none")));
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_root)) Directory.Delete(_root, true);

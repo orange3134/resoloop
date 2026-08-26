@@ -1,5 +1,8 @@
 {
+  "schemaVersion": "1",
+  "ownership": { "key": "agent-test" },
   "slot": {
+    "key": "root",
     "name": "RLoop_Test",
     "parent": "Root",
     "position": [0, 1.5, 2],

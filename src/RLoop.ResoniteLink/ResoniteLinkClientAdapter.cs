@@ -1,15 +1,26 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using RLoop.Core;
 using Link = ResoniteLink;
 
 namespace RLoop.ResoniteLink;
 
-public sealed class ResoniteLinkClientAdapter : IResoniteClient
+public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClientDiagnostics
 {
     private readonly Link.LinkInterface _link = new();
+    private readonly TimeSpan _requestTimeout;
+    private readonly Dictionary<string, Link.ComponentDefinition> _componentDefinitions = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, MutableMetric> _metrics = new(StringComparer.Ordinal);
+    private IReadOnlyList<string>? _allComponentTypes;
+    private int _cacheHits;
     private Uri? _uri;
+
+    public ResoniteLinkClientAdapter(TimeSpan? requestTimeout = null)
+    {
+        _requestTimeout = requestTimeout is { } value && value > TimeSpan.Zero ? value : TimeSpan.FromSeconds(30);
+    }
 
     public async Task ConnectAsync(Uri uri, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
@@ -37,7 +48,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient
     public async Task<SessionInfo> GetSessionInfoAsync(CancellationToken cancellationToken = default)
     {
         EnsureConnected();
-        var response = await Wait(_link.GetSessionData(), cancellationToken);
+        var response = await Wait(_link.GetSessionData(), "session.get", cancellationToken);
         EnsureSuccess(response, "SESSION_INFO_FAILED");
         return new SessionInfo(_uri!.ToString(), true, response.ResoniteVersion, response.ResoniteLinkVersion, response.UniqueSessionId);
     }
@@ -45,7 +56,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient
     public async Task<SlotInfo> GetSlotAsync(string id, int depth, bool includeComponentData, CancellationToken cancellationToken = default)
     {
         EnsureConnected();
-        var response = await Wait(_link.GetSlotData(new Link.GetSlot { SlotID = id, Depth = depth, IncludeComponentData = includeComponentData }), cancellationToken);
+        var response = await Wait(_link.GetSlotData(new Link.GetSlot { SlotID = id, Depth = depth, IncludeComponentData = includeComponentData }), "slot.get", cancellationToken);
         EnsureSuccess(response, "SLOT_NOT_FOUND", new Dictionary<string, object?> { ["slotId"] = id });
         return ModelMapper.MapSlot(response.Data);
     }
@@ -53,7 +64,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient
     public async Task<ComponentInfo> GetComponentAsync(string id, CancellationToken cancellationToken = default)
     {
         EnsureConnected();
-        var response = await Wait(_link.GetComponentData(new Link.GetComponent { ComponentID = id }), cancellationToken);
+        var response = await Wait(_link.GetComponentData(new Link.GetComponent { ComponentID = id }), "component.get", cancellationToken);
         EnsureSuccess(response, "COMPONENT_NOT_FOUND", new Dictionary<string, object?> { ["componentId"] = id });
         return ModelMapper.MapComponent(response.Data);
     }
@@ -70,7 +81,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient
             Rotation = request.Rotation is null ? null : new Link.Field_floatQ { Value = ToLink(request.Rotation) },
             Scale = request.Scale is null ? null : new Link.Field_float3 { Value = ToLink(request.Scale) }
         };
-        var response = await Wait(_link.AddSlot(new Link.AddSlot { Data = slot }), cancellationToken);
+        var response = await Wait(_link.AddSlot(new Link.AddSlot { Data = slot }), "slot.add", cancellationToken);
         EnsureSuccess(response, "SLOT_CREATE_FAILED", new Dictionary<string, object?> { ["parentId"] = request.ParentId, ["name"] = request.Name });
         return response.EntityId;
     }
@@ -86,14 +97,14 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient
             Rotation = request.Rotation is null ? null : new Link.Field_floatQ { Value = ToLink(request.Rotation) },
             Scale = request.Scale is null ? null : new Link.Field_float3 { Value = ToLink(request.Scale) }
         };
-        var response = await Wait(_link.UpdateSlot(new Link.UpdateSlot { Data = slot }), cancellationToken);
+        var response = await Wait(_link.UpdateSlot(new Link.UpdateSlot { Data = slot }), "slot.update", cancellationToken);
         EnsureSuccess(response, "SLOT_UPDATE_FAILED", new Dictionary<string, object?> { ["slotId"] = request.Id });
     }
 
     public async Task DeleteSlotAsync(string id, CancellationToken cancellationToken = default)
     {
         EnsureConnected();
-        var response = await Wait(_link.RemoveSlot(new Link.RemoveSlot { SlotID = id }), cancellationToken);
+        var response = await Wait(_link.RemoveSlot(new Link.RemoveSlot { SlotID = id }), "slot.remove", cancellationToken);
         EnsureSuccess(response, "SLOT_DELETE_FAILED", new Dictionary<string, object?> { ["slotId"] = id });
     }
 
@@ -101,29 +112,22 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient
         IReadOnlyDictionary<string, string> fields, CancellationToken cancellationToken = default)
     {
         EnsureConnected();
-        var definitionResponse = await Wait(_link.GetComponentDefinition(componentType, true), cancellationToken);
-        var resolvedType = componentType;
-        if (!definitionResponse.Success)
-        {
-            resolvedType = await ResolveComponentTypeAsync(componentType, cancellationToken);
-            definitionResponse = await Wait(_link.GetComponentDefinition(resolvedType, true), cancellationToken);
-        }
-        EnsureSuccess(definitionResponse, "COMPONENT_TYPE_NOT_FOUND", suggestions: await Suggestions(componentType, cancellationToken));
-        resolvedType = definitionResponse.Definition.Type.FullTypeName;
+        var definition = await GetComponentDefinitionCachedAsync(componentType, cancellationToken);
+        var resolvedType = definition.Type.FullTypeName;
 
         var members = new Dictionary<string, Link.Member>(StringComparer.Ordinal);
         foreach (var assignment in fields)
         {
-            if (!definitionResponse.Definition.Members.TryGetValue(assignment.Key, out var memberDefinition))
-                throw UnknownMember(resolvedType, assignment.Key, definitionResponse.Definition.Members.Keys);
-            members[assignment.Key] = await ValueCodec.ParseAsync(_link, memberDefinition, assignment.Value, cancellationToken);
+            if (!definition.Members.TryGetValue(assignment.Key, out var memberDefinition))
+                throw UnknownMember(resolvedType, assignment.Key, definition.Members.Keys);
+            members[assignment.Key] = await ValueCodec.ParseAsync(_link, memberDefinition, assignment.Value, cancellationToken, _requestTimeout, RecordMetric);
         }
 
         var response = await Wait(_link.AddComponent(new Link.AddComponent
         {
             ContainerSlotId = slotId,
             Data = new Link.Component { ComponentType = resolvedType, Members = members }
-        }), cancellationToken);
+        }), "component.add", cancellationToken);
         EnsureSuccess(response, "COMPONENT_ADD_FAILED", new Dictionary<string, object?> { ["slotId"] = slotId, ["componentType"] = resolvedType });
         return new ComponentCreateResult(response.EntityId, resolvedType);
     }
@@ -132,25 +136,37 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient
         CancellationToken cancellationToken = default)
     {
         EnsureConnected();
-        var componentResponse = await Wait(_link.GetComponentData(new Link.GetComponent { ComponentID = componentId }), cancellationToken);
+        var componentResponse = await Wait(_link.GetComponentData(new Link.GetComponent { ComponentID = componentId }), "component.get", cancellationToken);
         EnsureSuccess(componentResponse, "COMPONENT_NOT_FOUND", new Dictionary<string, object?> { ["componentId"] = componentId });
-        var type = componentResponse.Data.ComponentType;
-        var definitionResponse = await Wait(_link.GetComponentDefinition(type, true), cancellationToken);
-        EnsureSuccess(definitionResponse, "COMPONENT_TYPE_NOT_FOUND");
-        if (!definitionResponse.Definition.Members.TryGetValue(member, out var memberDefinition))
-            throw UnknownMember(type, member, definitionResponse.Definition.Members.Keys);
-        var value = await ValueCodec.ParseAsync(_link, memberDefinition, rawValue, cancellationToken);
+        await SetComponentMembersAsync(componentId, componentResponse.Data.ComponentType,
+            new Dictionary<string, string> { [member] = rawValue }, cancellationToken);
+    }
+
+    public async Task SetComponentMembersAsync(string componentId, string componentType,
+        IReadOnlyDictionary<string, string> fields, CancellationToken cancellationToken = default)
+    {
+        EnsureConnected();
+        if (fields.Count == 0) return;
+        var definition = await GetComponentDefinitionCachedAsync(componentType, cancellationToken);
+        var members = new Dictionary<string, Link.Member>(StringComparer.Ordinal);
+        foreach (var field in fields)
+        {
+            if (!definition.Members.TryGetValue(field.Key, out var memberDefinition))
+                throw UnknownMember(definition.Type.FullTypeName, field.Key, definition.Members.Keys);
+            members[field.Key] = await ValueCodec.ParseAsync(_link, memberDefinition, field.Value, cancellationToken, _requestTimeout, RecordMetric);
+        }
         var response = await Wait(_link.UpdateComponent(new Link.UpdateComponent
         {
-            Data = new Link.Component { ID = componentId, Members = new Dictionary<string, Link.Member> { [member] = value } }
-        }), cancellationToken);
-        EnsureSuccess(response, "COMPONENT_UPDATE_FAILED", new Dictionary<string, object?> { ["componentId"] = componentId, ["member"] = member });
+            Data = new Link.Component { ID = componentId, Members = members }
+        }), "component.update", cancellationToken);
+        EnsureSuccess(response, "COMPONENT_UPDATE_FAILED", new Dictionary<string, object?>
+            { ["componentId"] = componentId, ["members"] = fields.Keys.ToArray() });
     }
 
     public async Task RemoveComponentAsync(string componentId, CancellationToken cancellationToken = default)
     {
         EnsureConnected();
-        var response = await Wait(_link.RemoveComponent(new Link.RemoveComponent { ComponentID = componentId }), cancellationToken);
+        var response = await Wait(_link.RemoveComponent(new Link.RemoveComponent { ComponentID = componentId }), "component.remove", cancellationToken);
         EnsureSuccess(response, "COMPONENT_REMOVE_FAILED", new Dictionary<string, object?> { ["componentId"] = componentId });
     }
 
@@ -168,14 +184,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient
     public async Task<ComponentTypeInfo> DescribeComponentTypeAsync(string type, CancellationToken cancellationToken = default)
     {
         EnsureConnected();
-        var response = await Wait(_link.GetComponentDefinition(type, true), cancellationToken);
-        if (!response.Success)
-        {
-            var resolvedType = await ResolveComponentTypeAsync(type, cancellationToken);
-            response = await Wait(_link.GetComponentDefinition(resolvedType, true), cancellationToken);
-        }
-        EnsureSuccess(response, "COMPONENT_TYPE_NOT_FOUND", suggestions: await Suggestions(type, cancellationToken));
-        var definition = response.Definition;
+        var definition = await GetComponentDefinitionCachedAsync(type, cancellationToken);
         var members = definition.Members.Select(x => ModelMapper.MapMemberDefinition(x.Key, x.Value)).ToArray();
         return new ComponentTypeInfo(definition.Type.FullTypeName, definition.CategoryPath,
             ModelMapper.Render(definition.Type.BaseType), definition.Type.IsGenericType, members);
@@ -184,18 +193,18 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient
     public async Task<TypeInfo> DescribeTypeAsync(string type, CancellationToken cancellationToken = default)
     {
         EnsureConnected();
-        var response = await Wait(_link.GetTypeDefinition(type), cancellationToken);
+        var response = await Wait(_link.GetTypeDefinition(type), "type.get", cancellationToken);
         if (!response.Success)
         {
             var resolved = await ResolveComponentTypeAsync(type, cancellationToken);
-            response = await Wait(_link.GetTypeDefinition(resolved), cancellationToken);
+            response = await Wait(_link.GetTypeDefinition(resolved), "type.get", cancellationToken);
         }
         EnsureSuccess(response, "TYPE_NOT_FOUND", suggestions: await Suggestions(type, cancellationToken));
         IReadOnlyDictionary<string, long>? enumValues = null;
         bool? isFlags = null;
         if (response.Definition.IsEnum)
         {
-            var enumResponse = await Wait(_link.GetEnumDefinition(response.Definition.FullTypeName), cancellationToken);
+            var enumResponse = await Wait(_link.GetEnumDefinition(response.Definition.FullTypeName), "enum.get", cancellationToken);
             EnsureSuccess(enumResponse, "ENUM_DESCRIBE_FAILED");
             enumValues = enumResponse.Definition.Values;
             isFlags = enumResponse.Definition.IsFlags;
@@ -218,21 +227,26 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient
 
     private async Task<IReadOnlyList<string>> GetAllComponentTypeNames(CancellationToken cancellationToken)
     {
-        var response = await Wait(_link.GetAllComponentTypes(), cancellationToken);
+        if (_allComponentTypes is not null)
+        {
+            Interlocked.Increment(ref _cacheHits);
+            return _allComponentTypes;
+        }
+        var response = await Wait(_link.GetAllComponentTypes(), "component-types.get-all", cancellationToken);
         EnsureSuccess(response, "TYPE_SEARCH_FAILED");
-        if (response.ComponentTypes is { Count: > 0 }) return response.ComponentTypes;
+        if (response.ComponentTypes is { Count: > 0 }) return _allComponentTypes = response.ComponentTypes;
 
         var results = new HashSet<string>(StringComparer.Ordinal);
         var visited = new HashSet<string>(StringComparer.Ordinal);
         await CollectCategory(string.Empty, results, visited, cancellationToken);
-        return results.ToArray();
+        return _allComponentTypes = results.ToArray();
     }
 
     private async Task CollectCategory(string category, HashSet<string> results, HashSet<string> visited,
         CancellationToken cancellationToken)
     {
         if (!visited.Add(category)) return;
-        var response = await Wait(_link.GetComponentTypes(category), cancellationToken);
+        var response = await Wait(_link.GetComponentTypes(category), "component-types.get-category", cancellationToken);
         EnsureSuccess(response, "TYPE_SEARCH_FAILED", new Dictionary<string, object?> { ["category"] = category });
         foreach (var type in response.ComponentTypes ?? []) results.Add(type);
         foreach (var child in response.SubCategories ?? [])
@@ -244,6 +258,34 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient
 
     private async Task<IReadOnlyList<string>> Suggestions(string query, CancellationToken cancellationToken) =>
         await SearchComponentTypesAsync(query.Split('.').Last(), 10, cancellationToken);
+
+    private async Task<Link.ComponentDefinition> GetComponentDefinitionCachedAsync(string type,
+        CancellationToken cancellationToken)
+    {
+        if (_componentDefinitions.TryGetValue(type, out var cached))
+        {
+            Interlocked.Increment(ref _cacheHits);
+            return cached;
+        }
+        var response = await Wait(_link.GetComponentDefinition(type, true), "component-definition.get", cancellationToken);
+        if (!response.Success)
+        {
+            var resolved = await ResolveComponentTypeAsync(type, cancellationToken);
+            if (_componentDefinitions.TryGetValue(resolved, out cached))
+            {
+                _componentDefinitions[type] = cached;
+                Interlocked.Increment(ref _cacheHits);
+                return cached;
+            }
+            response = await Wait(_link.GetComponentDefinition(resolved, true), "component-definition.get", cancellationToken);
+        }
+        if (!response.Success)
+            EnsureSuccess(response, "COMPONENT_TYPE_NOT_FOUND", suggestions: await Suggestions(type, cancellationToken));
+        var definition = response.Definition;
+        _componentDefinitions[type] = definition;
+        _componentDefinitions[definition.Type.FullTypeName] = definition;
+        return definition;
+    }
 
     private static RLoopException UnknownMember(string type, string member, IEnumerable<string> members)
     {
@@ -270,7 +312,63 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient
     private static Link.float3 ToLink(Vector3Value value) => new() { x = value.X, y = value.Y, z = value.Z };
     private static Link.floatQ ToLink(QuaternionValue value) => new() { x = value.X, y = value.Y, z = value.Z, w = value.W };
 
-    private static async Task<T> Wait<T>(Task<T> task, CancellationToken cancellationToken) => await task.WaitAsync(cancellationToken).ConfigureAwait(false);
+    private async Task<T> Wait<T>(Task<T> task, string operation, CancellationToken cancellationToken)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(_requestTimeout);
+        try
+        {
+            return await task.WaitAsync(timeout.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new RLoopException("REQUEST_TIMEOUT", $"ResoniteLink request '{operation}' timed out after {_requestTimeout.TotalSeconds:0.#} seconds.",
+                ExitCodes.Timeout, new Dictionary<string, object?>
+                {
+                    ["operation"] = operation,
+                    ["timeoutSeconds"] = _requestTimeout.TotalSeconds
+                }, ["Retry after checking Resonite responsiveness; apply checkpoints make retry safe."], ex);
+        }
+        finally
+        {
+            stopwatch.Stop();
+            RecordMetric(operation, stopwatch.Elapsed.TotalMilliseconds);
+        }
+    }
+
+    private void RecordMetric(string operation, double elapsedMs)
+    {
+        lock (_metrics)
+        {
+            if (!_metrics.TryGetValue(operation, out var metric)) _metrics[operation] = metric = new MutableMetric();
+            metric.Requests++;
+            metric.ElapsedMs += elapsedMs;
+        }
+    }
+
+    public void ResetMetrics()
+    {
+        lock (_metrics) _metrics.Clear();
+        Interlocked.Exchange(ref _cacheHits, 0);
+    }
+
+    public ClientMetrics SnapshotMetrics()
+    {
+        lock (_metrics)
+        {
+            var operations = _metrics.OrderBy(x => x.Key, StringComparer.Ordinal)
+                .Select(x => new ClientOperationMetric(x.Key, x.Value.Requests, x.Value.ElapsedMs)).ToArray();
+            return new ClientMetrics(operations.Sum(x => x.Requests), Volatile.Read(ref _cacheHits),
+                operations.Sum(x => x.ElapsedMs), operations);
+        }
+    }
+
+    private sealed class MutableMetric
+    {
+        public int Requests { get; set; }
+        public double ElapsedMs { get; set; }
+    }
 
     private void EnsureConnected()
     {
@@ -297,6 +395,11 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient
 
 internal static class ModelMapper
 {
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals
+    };
+
     public static SlotInfo MapSlot(Link.Slot slot) => new(
         slot.ID ?? string.Empty,
         slot.Name?.Value ?? string.Empty,
@@ -326,13 +429,13 @@ internal static class ModelMapper
         Link.Field_Nullable_Enum enumField => new MemberValue("field", enumField.ID, enumField.EnumType,
             JsonValue.Create(enumField.Value)),
         Link.Field field => new MemberValue("field", field.ID, field.ValueType.FullName,
-            JsonSerializer.SerializeToNode(field.BoxedValue, field.BoxedValue?.GetType() ?? typeof(object))),
+            JsonSerializer.SerializeToNode(field.BoxedValue, field.BoxedValue?.GetType() ?? typeof(object), JsonOptions)),
         Link.Reference reference => new MemberValue("reference", reference.ID, TargetId: reference.TargetID, TargetType: reference.TargetType),
         Link.SyncObject syncObject => new MemberValue("syncObject", syncObject.ID,
             Members: (syncObject.Members ?? []).ToDictionary(x => x.Key, x => MapMember(x.Value))),
         Link.SyncList list => new MemberValue("list", list.ID, Elements: (list.Elements ?? []).Select(MapMember).ToArray()),
         Link.EmptyElement empty => new MemberValue("empty", empty.ID),
-        _ => new MemberValue(member.GetType().Name, member.ID, Value: JsonSerializer.SerializeToNode(member, member.GetType()))
+        _ => new MemberValue(member.GetType().Name, member.ID, Value: JsonSerializer.SerializeToNode(member, member.GetType(), JsonOptions))
     };
 
     public static MemberDefinitionInfo MapMemberDefinition(string name, Link.MemberDefinition definition) => definition switch
@@ -362,9 +465,11 @@ internal static class ModelMapper
 public static class ValueCodec
 {
     public static async Task<Link.Member> ParseAsync(Link.LinkInterface link, Link.MemberDefinition definition, string raw,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, TimeSpan? requestTimeout = null,
+        Action<string, double>? requestCompleted = null)
     {
         if (definition is Link.ReferenceDefinition) return new Link.Reference { TargetID = raw.Equals("null", StringComparison.OrdinalIgnoreCase) ? null : raw };
+        if (definition is Link.ListDefinition list) return await ParseListAsync(link, list, raw, cancellationToken, requestTimeout, requestCompleted);
         if (definition is not Link.FieldDefinition field)
             throw new RLoopException("MEMBER_TYPE_UNSUPPORTED", $"Setting {definition.GetType().Name} members is not supported in v0.1.", ExitCodes.ValidationFailed);
 
@@ -392,7 +497,8 @@ public static class ValueCodec
                 "float4" => Float4(raw),
                 "floatq" or "quaternion" => FloatQ(raw),
                 "color" => Color(raw),
-                _ => await ParseEnumOrThrow(link, type, raw, cancellationToken)
+                "colorx" => ColorX(raw),
+                _ => await ParseEnumOrThrow(link, type, raw, cancellationToken, requestTimeout, requestCompleted)
             };
         }
         catch (RLoopException) { throw; }
@@ -403,12 +509,48 @@ public static class ValueCodec
         }
     }
 
-    private static async Task<Link.Member> ParseEnumOrThrow(Link.LinkInterface link, string type, string raw, CancellationToken cancellationToken)
+    private static async Task<Link.SyncList> ParseListAsync(Link.LinkInterface link, Link.ListDefinition definition,
+        string raw, CancellationToken cancellationToken, TimeSpan? requestTimeout, Action<string, double>? requestCompleted)
     {
-        var typeResponse = await link.GetTypeDefinition(type).WaitAsync(cancellationToken);
+        if (definition.ElementDefinition is null)
+            throw new RLoopException("LIST_ELEMENT_TYPE_MISSING", "The runtime list definition did not include an element type.", ExitCodes.ValidationFailed);
+
+        IReadOnlyList<string> values;
+        var trimmed = raw.Trim();
+        if (trimmed.StartsWith("[", StringComparison.Ordinal))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(trimmed);
+                if (document.RootElement.ValueKind != JsonValueKind.Array) throw new JsonException("Expected an array.");
+                values = document.RootElement.EnumerateArray().Select(element => element.ValueKind == JsonValueKind.String
+                    ? element.GetString() ?? string.Empty
+                    : element.GetRawText()).ToArray();
+            }
+            catch (JsonException ex)
+            {
+                throw new RLoopException("LIST_VALUE_INVALID", $"Cannot parse '{raw}' as a JSON array.", ExitCodes.ValidationFailed,
+                    suggestions: ["Pass a JSON array such as [\"Reso_1\",\"Reso_2\"]."], innerException: ex);
+            }
+        }
+        else
+        {
+            values = string.IsNullOrWhiteSpace(trimmed) ? [] : [trimmed];
+        }
+
+        var elements = new List<Link.Member>(values.Count);
+        foreach (var value in values)
+            elements.Add(await ParseAsync(link, definition.ElementDefinition, value, cancellationToken, requestTimeout, requestCompleted));
+        return new Link.SyncList { Elements = elements };
+    }
+
+    private static async Task<Link.Member> ParseEnumOrThrow(Link.LinkInterface link, string type, string raw,
+        CancellationToken cancellationToken, TimeSpan? requestTimeout, Action<string, double>? requestCompleted)
+    {
+        var typeResponse = await WaitValueRequest(link.GetTypeDefinition(type), "type.get", requestTimeout, cancellationToken, requestCompleted);
         if (typeResponse.Success && typeResponse.Definition.IsEnum)
         {
-            var enumResponse = await link.GetEnumDefinition(type).WaitAsync(cancellationToken);
+            var enumResponse = await WaitValueRequest(link.GetEnumDefinition(type), "enum.get", requestTimeout, cancellationToken, requestCompleted);
             if (!enumResponse.Success) throw new RLoopException("ENUM_DESCRIBE_FAILED", enumResponse.ErrorInfo, ExitCodes.OperationFailed);
             var values = enumResponse.Definition.Values;
             var requested = raw.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
@@ -422,11 +564,35 @@ public static class ValueCodec
             suggestions: ["Use rloop type describe to confirm the runtime type, then open an issue with this type."]);
     }
 
+    private static async Task<T> WaitValueRequest<T>(Task<T> task, string operation, TimeSpan? timeout,
+        CancellationToken cancellationToken, Action<string, double>? requestCompleted)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            return timeout is { } value
+                ? await task.WaitAsync(value, cancellationToken).ConfigureAwait(false)
+                : await task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (TimeoutException ex)
+        {
+            throw new RLoopException("REQUEST_TIMEOUT", $"ResoniteLink request '{operation}' timed out after {timeout!.Value.TotalSeconds:0.#} seconds.",
+                ExitCodes.Timeout, new Dictionary<string, object?> { ["operation"] = operation, ["timeoutSeconds"] = timeout.Value.TotalSeconds },
+                ["Retry after checking Resonite responsiveness; apply checkpoints make retry safe."], ex);
+        }
+        finally
+        {
+            stopwatch.Stop();
+            requestCompleted?.Invoke(operation, stopwatch.Elapsed.TotalMilliseconds);
+        }
+    }
+
     private static Link.Member Float2(string raw) { var v = Parts(raw, 2); return new Link.Field_float2 { Value = new Link.float2 { x = v[0], y = v[1] } }; }
     private static Link.Member Float3(string raw) { var v = Parts(raw, 3); return new Link.Field_float3 { Value = new Link.float3 { x = v[0], y = v[1], z = v[2] } }; }
     private static Link.Member Float4(string raw) { var v = Parts(raw, 4); return new Link.Field_float4 { Value = new Link.float4 { x = v[0], y = v[1], z = v[2], w = v[3] } }; }
     private static Link.Member FloatQ(string raw) { var v = Parts(raw, 4); return new Link.Field_floatQ { Value = new Link.floatQ { x = v[0], y = v[1], z = v[2], w = v[3] } }; }
     private static Link.Member Color(string raw) { var v = Parts(raw, 4); return new Link.Field_color { Value = new Link.color { r = v[0], g = v[1], b = v[2], a = v[3] } }; }
+    private static Link.Member ColorX(string raw) { var v = Parts(raw, 4); return new Link.Field_colorX { Value = new Link.colorX { r = v[0], g = v[1], b = v[2], a = v[3] } }; }
 
     private static float[] Parts(string raw, int count)
     {

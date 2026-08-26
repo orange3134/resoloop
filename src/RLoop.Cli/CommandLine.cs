@@ -6,7 +6,8 @@ public sealed class ParsedArguments
 {
     private static readonly HashSet<string> BooleanOptions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "json", "verbose", "help", "exact", "include-components", "members", "yes", "full-errors"
+        "json", "verbose", "help", "exact", "include-components", "members", "yes", "full-errors",
+        "strict", "adopt", "profile", "ndjson-progress", "quiet"
     };
     private readonly Dictionary<string, List<string>> _options;
 

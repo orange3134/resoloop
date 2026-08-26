@@ -13,12 +13,20 @@ public interface IResoniteClient : IAsyncDisposable
         IReadOnlyDictionary<string, string> fields, CancellationToken cancellationToken = default);
     Task SetComponentMemberAsync(string componentId, string member, string rawValue,
         CancellationToken cancellationToken = default);
+    Task SetComponentMembersAsync(string componentId, string componentType,
+        IReadOnlyDictionary<string, string> fields, CancellationToken cancellationToken = default);
     Task RemoveComponentAsync(string componentId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<string>> SearchComponentTypesAsync(string query, int limit,
         CancellationToken cancellationToken = default);
     Task<ComponentTypeInfo> DescribeComponentTypeAsync(string type,
         CancellationToken cancellationToken = default);
     Task<TypeInfo> DescribeTypeAsync(string type, CancellationToken cancellationToken = default);
+}
+
+public interface IResoniteClientDiagnostics
+{
+    void ResetMetrics();
+    ClientMetrics SnapshotMetrics();
 }
 
 public interface IFluxTool

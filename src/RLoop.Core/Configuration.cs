@@ -5,6 +5,7 @@ namespace RLoop.Core;
 public sealed record RLoopConfig(
     string? ResoniteLinkUrl = null,
     int TimeoutSeconds = 0,
+    int CommandTimeoutSeconds = 0,
     string? FluxExecutable = null,
     string? FluxDeployerPath = null,
     string? ResoniteManagedDataPath = null,
@@ -26,7 +27,7 @@ public static class ConfigResolver
         userProfile ??= Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
         var userPath = Path.Combine(userProfile, ".rloop", "config.json");
-        var projectPath = FindProjectConfig(startDirectory);
+        var projectPath = FindProjectConfigPath(startDirectory);
         var user = ReadConfig(userPath);
         var project = ReadConfig(projectPath);
         var sources = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -78,7 +79,21 @@ public static class ConfigResolver
             sources["timeoutSeconds"] = "environment:RLOOP_TIMEOUT_SECONDS";
         }
 
-        return new ConfigResolution(new RLoopConfig(url, timeout, flux, helper, managed, logs), sources);
+        var commandTimeout = project.CommandTimeoutSeconds > 0 ? project.CommandTimeoutSeconds :
+            user.CommandTimeoutSeconds > 0 ? user.CommandTimeoutSeconds : 900;
+        if (cli.TryGetValue("command-timeout", out var commandTimeoutText) && !string.IsNullOrWhiteSpace(commandTimeoutText))
+        {
+            if (!int.TryParse(commandTimeoutText, out commandTimeout) || commandTimeout <= 0)
+                throw new RLoopException("INVALID_COMMAND_TIMEOUT", $"Command timeout must be a positive number of seconds, got '{commandTimeoutText}'.", ExitCodes.InvalidArguments);
+            sources["commandTimeoutSeconds"] = "cli";
+        }
+        else if (int.TryParse(getEnvironment("RLOOP_COMMAND_TIMEOUT_SECONDS"), out var envCommandTimeout) && envCommandTimeout > 0)
+        {
+            commandTimeout = envCommandTimeout;
+            sources["commandTimeoutSeconds"] = "environment:RLOOP_COMMAND_TIMEOUT_SECONDS";
+        }
+
+        return new ConfigResolution(new RLoopConfig(url, timeout, commandTimeout, flux, helper, managed, logs), sources);
     }
 
     public static Uri RequireUrl(RLoopConfig config)
@@ -94,7 +109,7 @@ public static class ConfigResolver
         return uri;
     }
 
-    private static string? FindProjectConfig(string start)
+    public static string? FindProjectConfigPath(string start)
     {
         var directory = new DirectoryInfo(Path.GetFullPath(start));
         while (directory is not null)

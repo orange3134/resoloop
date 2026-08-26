@@ -35,6 +35,18 @@ public sealed class OutputWriter(bool json)
         }
     }
 
+    public void Progress(ApplyProgress progress, bool ndjson)
+    {
+        if (ndjson)
+        {
+            Console.Error.WriteLine(JsonSerializer.Serialize(new { eventType = "progress", data = progress }, Compact));
+            return;
+        }
+        var amount = progress.Total > 0 ? $"[{progress.Current}/{progress.Total}] " : string.Empty;
+        var target = string.IsNullOrWhiteSpace(progress.Path) ? string.Empty : $" {progress.Path}";
+        Console.Error.WriteLine($"{amount}{progress.Stage}: {progress.Message}{target}");
+    }
+
     public static void Hierarchy(TextWriter writer, SlotInfo root)
     {
         void Walk(SlotInfo slot, string prefix, bool last)
@@ -52,6 +64,7 @@ public sealed class OutputWriter(bool json)
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
         WriteIndented = indented
     };
 }
