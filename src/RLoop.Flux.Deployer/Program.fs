@@ -2,6 +2,7 @@ namespace RLoop.Flux.Deployer
 
 open System
 open System.IO
+open System.Collections.Generic
 open System.Threading
 open System.Threading.Tasks
 open FluxSDK.Build.Incremental
@@ -46,7 +47,18 @@ type FluxSdkDeployer() =
                                 | None -> return failwith $"Parent slot '{request.ParentSlotId}' was not found."
                             }
 
-                        let target = Loader.DeployTarget.Bare(parentSlot)
+                        let inputMap : IReadOnlyDictionary<string, string> =
+                            match Option.ofObj request.InputMap with
+                            | Some mappings -> mappings
+                            | None -> Dictionary<string, string>() :> IReadOnlyDictionary<string, string>
+                        let outputMap : IReadOnlyDictionary<string, string> =
+                            match Option.ofObj request.OutputMap with
+                            | Some mappings -> mappings
+                            | None -> Dictionary<string, string>() :> IReadOnlyDictionary<string, string>
+                        let target : Loader.DeployTarget =
+                            { ParentSlot = parentSlot
+                              InputMap = inputMap
+                              OutputMap = outputMap }
                         let! result = Step.runStepAsync (Loader.replace config request.Module target) store
                         match result with
                         | Ok slotId ->

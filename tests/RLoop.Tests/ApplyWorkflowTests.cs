@@ -328,6 +328,81 @@ public sealed class ApplyWorkflowTests : IDisposable
         Assert.Contains(test.Assertions, assertion => assertion.Phase == "after" && !assertion.Evaluated);
     }
 
+    [Fact]
+    public async Task SetMemberProbePollsTemporaryValueAndAlwaysRestoresOriginal()
+    {
+        var path = Path.Combine(_root, "transactional-probe.json");
+        File.WriteAllText(path, """
+            {
+              "schemaVersion":"1",
+              "ownership":{"key":"transactional-probe"},
+              "slot":{"key":"root","name":"Managed","parent":"Root"},
+              "components":[{"key":"target","type":"Test.Target","fields":{"Enabled":false}}],
+              "tests":[{
+                "name":"temporary toggle",
+                "assertions":[
+                  {"target":"$component:target.Enabled","expected":false},
+                  {"target":"$component:target.Enabled","expected":true,"phase":"after"}
+                ],
+                "probe":{
+                  "kind":"set-member",
+                  "target":"$component:target.Enabled",
+                  "value":true,
+                  "restore":true,
+                  "safe":true
+                }
+              }]
+            }
+            """);
+        var document = ApplyDocument.Load(path);
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "transactional-probe.state.json");
+        await service.ApplyAsync(document, new ApplyOptions(state));
+        client.ResetWriteCounts();
+
+        var report = await service.TestAsync(document, new ApplyOptions(state), allowProbe: true);
+
+        Assert.True(report.Passed);
+        Assert.False(report.StructuralOnly);
+        var test = Assert.Single(report.Tests);
+        Assert.True(test.ProbeExecuted);
+        Assert.All(test.Assertions, assertion => Assert.True(assertion.Passed));
+        Assert.Equal(2, client.Writes);
+        var component = Assert.Single(Assert.Single(client.Root.Children).Components);
+        Assert.False(component.Members["Enabled"].Value!.GetValue<bool>());
+    }
+
+    [Fact]
+    public async Task SetMemberProbeRestoresOriginalWhenAfterAssertionFails()
+    {
+        var path = Path.Combine(_root, "failing-transactional-probe.json");
+        File.WriteAllText(path, """
+            {
+              "schemaVersion":"1", "ownership":{"key":"failing-probe"},
+              "slot":{"key":"root","name":"Managed","parent":"Root"},
+              "components":[{"key":"target","type":"Test.Target","fields":{"Enabled":false}}],
+              "tests":[{
+                "name":"intentional mismatch",
+                "assertions":[{"target":"$component:target.Enabled","expected":false,"phase":"after"}],
+                "probe":{"kind":"set-member","target":"$component:target.Enabled","value":true,"restore":true,"safe":true},
+                "timeoutMs":10, "pollMs":10
+              }]
+            }
+            """);
+        var document = ApplyDocument.Load(path);
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "failing-transactional-probe.state.json");
+        await service.ApplyAsync(document, new ApplyOptions(state));
+
+        var report = await service.TestAsync(document, new ApplyOptions(state), allowProbe: true);
+
+        Assert.False(report.Passed);
+        var component = Assert.Single(Assert.Single(client.Root.Children).Components);
+        Assert.False(component.Members["Enabled"].Value!.GetValue<bool>());
+    }
+
     private ApplyDocument Document(string ownership, string components, string name = "Managed")
     {
         var path = Path.Combine(_root, ownership + ".json");

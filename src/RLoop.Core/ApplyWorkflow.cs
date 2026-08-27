@@ -87,9 +87,12 @@ public sealed record ApplyAssertionSpec(
 
 public sealed record ApplyProbeSpec(
     string Target,
-    string Method,
+    string? Method = null,
     IReadOnlyDictionary<string, JsonElement>? Arguments = null,
-    bool Safe = false);
+    bool Safe = false,
+    string Kind = "method",
+    JsonElement? Value = null,
+    bool Restore = true);
 
 public sealed record ApplySlotSpec(
     string Name,
@@ -169,6 +172,35 @@ public static class ApplyDocumentValidator
                 Issue("CAPTURE_CAMERA_INVALID", "Camera position and target require three numbers.", path);
             if (camera.Value.Width is < 64 or > 8192 || camera.Value.Height is < 64 or > 8192)
                 Issue("CAPTURE_RESOLUTION_INVALID", "Camera width and height must be between 64 and 8192.", path);
+        }
+
+        for (var i = 0; i < (document.Tests?.Count ?? 0); i++)
+        {
+            var test = document.Tests![i];
+            var path = $"$.tests[{i}]";
+            if (string.IsNullOrWhiteSpace(test.Name)) Issue("APPLY_TEST_NAME_MISSING", "Test name is required.", path + ".name");
+            if (test.Assertions.Count == 0) Issue("APPLY_TEST_ASSERTIONS_MISSING", "A test requires at least one assertion.", path + ".assertions");
+            if (test.Probe is not { } probe) continue;
+            if (!probe.Safe) Issue("UNSAFE_PROBE_REJECTED", "A probe must declare safe=true.", path + ".probe.safe");
+            switch (probe.Kind?.ToLowerInvariant())
+            {
+                case "method":
+                    if (string.IsNullOrWhiteSpace(probe.Method))
+                        Issue("PROBE_METHOD_MISSING", "A method probe requires method.", path + ".probe.method");
+                    break;
+                case "set-member":
+                    if (!(probe.Target.StartsWith("$component:", StringComparison.Ordinal) ||
+                          probe.Target.StartsWith("$member:", StringComparison.Ordinal)) ||
+                        probe.Target[(probe.Target.IndexOf(':') + 1)..].LastIndexOf('.') <= 0)
+                        Issue("PROBE_MEMBER_TARGET_REQUIRED",
+                            "A set-member probe target must use $component:key.MemberName or $member:key.MemberName.", path + ".probe.target");
+                    if (probe.Value is null) Issue("PROBE_VALUE_MISSING", "A set-member probe requires value.", path + ".probe.value");
+                    if (!probe.Restore) Issue("PROBE_RESTORE_REQUIRED", "A set-member probe requires restore=true.", path + ".probe.restore");
+                    break;
+                default:
+                    Issue("PROBE_KIND_UNSUPPORTED", "Probe kind must be 'method' or 'set-member'.", path + ".probe.kind");
+                    break;
+            }
         }
 
         void ScanValue(JsonElement value, string path)

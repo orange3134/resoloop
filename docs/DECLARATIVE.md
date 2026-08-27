@@ -88,6 +88,22 @@ ResoniteLink 0.13.1にframebuffer/screenshot APIはないため、`capture`は�
 
 通常の`test`はField/Reference構造だけを検証します。probeはmanifestで `safe: true`、CLIで `--probe --yes` の両方が必要です。公開Reflectionにmethodがなければ呼び出さず、`structuralOnly: true`と未評価のafter assertionを明示します。methodが利用可能ならpublic SyncMethod APIで呼び、after assertionをtimeoutまでpollします。
 
+公開methodを使わず、fieldの一時状態だけを検証する場合はtransactional probeを使えます。
+
+~~~json
+{
+  "probe": {
+    "kind": "set-member",
+    "target": "$component:button.Enabled",
+    "value": false,
+    "restore": true,
+    "safe": true
+  }
+}
+~~~
+
+`set-member`はfieldだけを対象とし、変更中にafter assertionをpollした後、成功・失敗・cancelのいずれでも元の値を復元して再読取確認します。`restore: false` は拒否されます。従来のmethod probeは `kind` 省略時の既定値です。
+
 ## Diff、rename、prune、recovery
 
 ~~~powershell
@@ -110,4 +126,18 @@ rloop flux deploy-manifest examples/flux/rloop.flux.json --json
 rloop flux watch examples/flux/rloop.flux.json --json
 ~~~
 
-parentに `$slot:key` を使う場合は`worldState`または`--state`が必要です。現在sessionなら保存IDを検証し、sessionが変わっていれば保存pathから再解決します。deploy stateはsourceとtransitive dependencyのhash、置換後Slot IDを保存し、no-op/updateと非atomic recoveryを報告します。watchは変更を検出して全moduleをbuildし、成功したmoduleだけを検証済みparentへ再deployします。
+parentに `$slot:key` を使う場合は`worldState`または`--state`が必要です。現在sessionなら保存IDを検証し、sessionが変わっていれば保存pathから再解決します。module input/outputは次のようにstable bindingとして宣言できます。
+
+~~~json
+{
+  "name": "controller",
+  "source": "Controller.pg",
+  "module": "Controller",
+  "bindings": {
+    "TargetSlot": { "target": "$slot:root", "mode": "source" },
+    "Enabled": { "target": "$member:renderer.Enabled", "mode": "drive" }
+  }
+}
+~~~
+
+`source`はFlux moduleの `in` 名、`drive`は `out` 名をkeyにします。source targetはslot/component/member、drive targetはmemberだけです。rloopはworld stateから現在のIDを再解決し、Flux-SDKのInputMap/OutputMapへ渡します。binding宣言と解決結果が一致しない場合はdeployしません。deploy stateはsource、binding、transitive dependencyのhash、置換後Slot IDを保存し、no-op/updateと非atomic recoveryを報告します。watchは変更を検出して成功buildだけを検証済みparentへ再deployします。

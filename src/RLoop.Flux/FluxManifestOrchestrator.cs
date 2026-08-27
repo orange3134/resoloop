@@ -5,18 +5,32 @@ using RLoop.Core;
 
 namespace RLoop.Flux;
 
-public sealed record FluxModuleSpec(string Name, string Source, string Module, IReadOnlyList<string>? DependsOn = null);
+public sealed record FluxBindingSpec(string Target, string Mode);
+public sealed record FluxResolvedBinding(string Name, string Mode, string Selector, string TargetId,
+    string TargetKind, string? TargetType);
+public sealed record FluxResolvedModuleBindings(IReadOnlyList<FluxResolvedBinding> Bindings)
+{
+    public IReadOnlyDictionary<string, string> InputMap => Bindings.Where(binding => binding.Mode == "source")
+        .ToDictionary(binding => binding.Name, binding => binding.TargetId, StringComparer.Ordinal);
+    public IReadOnlyDictionary<string, string> OutputMap => Bindings.Where(binding => binding.Mode == "drive")
+        .ToDictionary(binding => binding.Name, binding => binding.TargetId, StringComparer.Ordinal);
+}
+public sealed record FluxModuleSpec(string Name, string Source, string Module, IReadOnlyList<string>? DependsOn = null,
+    IReadOnlyDictionary<string, FluxBindingSpec>? Bindings = null);
 public sealed record FluxModuleManifest(string? SchemaVersion, IReadOnlyList<FluxModuleSpec> Modules, string? ProjectDirectory = null,
     string? Parent = null, string? WorldState = null, string? DeployState = null);
 public sealed record FluxModuleDeployment(string Name, string Action, string Reason, bool BuildSucceeded,
-    bool Deployed, string? BeforeSlotId, string? AfterSlotId, string? Error = null);
+    bool Deployed, string? BeforeSlotId, string? AfterSlotId, string? Error = null,
+    IReadOnlyList<FluxResolvedBinding>? Bindings = null);
 public sealed record FluxManifestResult(bool Success, string Manifest, string ParentSlotId,
     IReadOnlyList<FluxModuleDeployment> Modules, bool Atomic, string Recovery, bool WatchStopped = false);
 
 public sealed class FluxManifestOrchestrator(IFluxTool flux)
 {
     public async Task<FluxManifestResult> DeployAsync(string manifestPath, string parentSlotId, Uri url,
-        string? libraryPath, string? helperPath, string? sessionId = null, CancellationToken cancellationToken = default)
+        string? libraryPath, string? helperPath, string? sessionId = null,
+        IReadOnlyDictionary<string, FluxResolvedModuleBindings>? resolvedBindings = null,
+        CancellationToken cancellationToken = default)
     {
         var loaded = Load(manifestPath);
         var statePath = ResolveStatePath(loaded.Manifest, loaded.Path);
@@ -26,13 +40,16 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
         foreach (var module in Topological(loaded.Manifest.Modules))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var hash = hashes[module.Name];
             state.Modules.TryGetValue(module.Name, out var previous);
+            FluxResolvedModuleBindings? moduleBindings = null;
+            _ = resolvedBindings?.TryGetValue(module.Name, out moduleBindings);
+            ValidateResolvedBindings(module, moduleBindings);
+            var hash = EffectiveHash(hashes[module.Name], moduleBindings);
             if (previous?.Hash == hash && !string.IsNullOrWhiteSpace(previous.SlotId) &&
                 state.ParentSlotId == parentSlotId && state.SessionId == sessionId)
             {
                 results.Add(new FluxModuleDeployment(module.Name, "no-op", "source and transitive dependency hashes match deploy state",
-                    true, false, previous.SlotId, previous.SlotId));
+                    true, false, previous.SlotId, previous.SlotId, Bindings: moduleBindings?.Bindings));
                 continue;
             }
             var source = Path.GetFullPath(module.Source, loaded.Directory);
@@ -40,14 +57,15 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
             if (!build.Success)
             {
                 results.Add(new FluxModuleDeployment(module.Name, previous is null ? "create" : "update", "build failed; deploy was skipped",
-                    false, false, previous?.SlotId, null, build.StandardError));
+                    false, false, previous?.SlotId, null, build.StandardError, moduleBindings?.Bindings));
                 return Report(false);
             }
-            var deploy = await flux.DeployAsync(new FluxDeployRequest(loaded.ProjectDirectory, module.Module, parentSlotId, url, libraryPath, helperPath), cancellationToken);
+            var deploy = await flux.DeployAsync(new FluxDeployRequest(loaded.ProjectDirectory, module.Module, parentSlotId, url,
+                libraryPath, helperPath, moduleBindings?.InputMap, moduleBindings?.OutputMap), cancellationToken);
             if (!deploy.Success)
             {
                 results.Add(new FluxModuleDeployment(module.Name, previous is null ? "create" : "update", "deploy failed after successful build",
-                    true, false, previous?.SlotId, null, deploy.StandardError));
+                    true, false, previous?.SlotId, null, deploy.StandardError, moduleBindings?.Bindings));
                 return Report(false);
             }
             state.Modules[module.Name] = new ModuleState(hash, deploy.OutputPath);
@@ -56,7 +74,7 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
             SaveState(statePath, state);
             results.Add(new FluxModuleDeployment(module.Name, previous is null ? "create" : "update",
                 previous is null ? "module has no deploy state" : "source or transitive dependency changed",
-                true, true, previous?.SlotId, deploy.OutputPath));
+                true, true, previous?.SlotId, deploy.OutputPath, Bindings: moduleBindings?.Bindings));
         }
         return Report(true);
 
@@ -66,6 +84,7 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
 
     public async Task<FluxManifestResult> WatchAsync(string manifestPath, string parentSlotId, Uri url,
         string? libraryPath, string? helperPath, string? sessionId, TimeSpan pollInterval,
+        IReadOnlyDictionary<string, FluxResolvedModuleBindings>? resolvedBindings = null,
         CancellationToken cancellationToken = default)
     {
         FluxManifestResult? last = null;
@@ -79,7 +98,8 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
                 var current = Fingerprint(loaded);
                 if (current != fingerprint)
                 {
-                    last = await DeployAsync(manifestPath, parentSlotId, url, libraryPath, helperPath, sessionId, cancellationToken);
+                    last = await DeployAsync(manifestPath, parentSlotId, url, libraryPath, helperPath, sessionId,
+                        resolvedBindings, cancellationToken);
                     fingerprint = current;
                 }
                 await Task.Delay(pollInterval, cancellationToken);
@@ -92,6 +112,36 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
     }
 
     public static FluxModuleManifest Inspect(string manifestPath) => Load(manifestPath).Manifest;
+
+    private static void ValidateResolvedBindings(FluxModuleSpec module, FluxResolvedModuleBindings? resolved)
+    {
+        var declared = module.Bindings ?? new Dictionary<string, FluxBindingSpec>();
+        if (declared.Count == 0) return;
+        if (resolved is null)
+            throw new RLoopException("FLUX_BINDINGS_UNRESOLVED",
+                $"Module '{module.Name}' declares bindings, but no resolved world targets were supplied.",
+                ExitCodes.ValidationFailed);
+
+        var byName = resolved.Bindings.ToDictionary(binding => binding.Name, StringComparer.Ordinal);
+        var missing = declared.Keys.Where(name => !byName.ContainsKey(name)).ToArray();
+        var extra = byName.Keys.Where(name => !declared.ContainsKey(name)).ToArray();
+        var mismatched = declared.Where(pair => byName.TryGetValue(pair.Key, out var binding) &&
+                (!string.Equals(pair.Value.Mode, binding.Mode, StringComparison.Ordinal) ||
+                 !string.Equals(pair.Value.Target, binding.Selector, StringComparison.Ordinal)))
+            .Select(pair => pair.Key).ToArray();
+        if (missing.Length == 0 && extra.Length == 0 && mismatched.Length == 0) return;
+
+        throw new RLoopException("FLUX_BINDINGS_UNRESOLVED",
+            $"Resolved bindings for module '{module.Name}' do not match its manifest declaration.",
+            ExitCodes.ValidationFailed,
+            new Dictionary<string, object?>
+            {
+                ["module"] = module.Name,
+                ["missing"] = missing,
+                ["extra"] = extra,
+                ["mismatched"] = mismatched
+            });
+    }
 
     private static LoadedManifest Load(string manifestPath)
     {
@@ -111,6 +161,23 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
             if (!File.Exists(Path.GetFullPath(module.Source, directory))) throw new RLoopException("FLUX_SOURCE_NOT_FOUND", $"Module '{module.Name}' source '{module.Source}' does not exist.", ExitCodes.NotFound);
             foreach (var dependency in module.DependsOn ?? [])
                 if (!manifest.Modules.Any(x => x.Name == dependency)) throw new RLoopException("FLUX_DEPENDENCY_NOT_FOUND", $"Module '{module.Name}' depends on unknown module '{dependency}'.", ExitCodes.ValidationFailed);
+            foreach (var binding in module.Bindings ?? new Dictionary<string, FluxBindingSpec>())
+            {
+                if (string.IsNullOrWhiteSpace(binding.Key))
+                    throw new RLoopException("FLUX_BINDING_NAME_MISSING", $"Module '{module.Name}' contains an empty binding name.", ExitCodes.ValidationFailed);
+                if (binding.Value.Mode is not ("source" or "drive"))
+                    throw new RLoopException("FLUX_BINDING_MODE_INVALID",
+                        $"Binding '{module.Name}.{binding.Key}' mode must be 'source' or 'drive'.", ExitCodes.ValidationFailed);
+                if (string.IsNullOrWhiteSpace(binding.Value.Target) ||
+                    !(binding.Value.Target.StartsWith("$slot:", StringComparison.Ordinal) ||
+                      binding.Value.Target.StartsWith("$component:", StringComparison.Ordinal) ||
+                      binding.Value.Target.StartsWith("$member:", StringComparison.Ordinal)))
+                    throw new RLoopException("FLUX_BINDING_TARGET_INVALID",
+                        $"Binding '{module.Name}.{binding.Key}' requires a stable $slot:, $component:, or $member: target.", ExitCodes.ValidationFailed);
+                if (binding.Value.Mode == "drive" && !binding.Value.Target.StartsWith("$member:", StringComparison.Ordinal))
+                    throw new RLoopException("FLUX_BINDING_DRIVE_REQUIRES_MEMBER",
+                        $"Drive binding '{module.Name}.{binding.Key}' must target $member:key.MemberName.", ExitCodes.ValidationFailed);
+            }
         }
         _ = Topological(manifest.Modules);
         return new LoadedManifest(path, directory, project, manifest);
@@ -141,10 +208,21 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
         {
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             hash.AppendData(File.ReadAllBytes(Path.GetFullPath(module.Source, directory)));
+            hash.AppendData(JsonSerializer.SerializeToUtf8Bytes(module.Bindings ?? new Dictionary<string, FluxBindingSpec>(), JsonOptions));
             foreach (var dependency in module.DependsOn ?? []) hash.AppendData(Encoding.UTF8.GetBytes(result[dependency]));
             result[module.Name] = Convert.ToHexString(hash.GetHashAndReset());
         }
         return result;
+    }
+
+    private static string EffectiveHash(string sourceHash, FluxResolvedModuleBindings? bindings)
+    {
+        if (bindings is null || bindings.Bindings.Count == 0) return sourceHash;
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        hash.AppendData(Encoding.UTF8.GetBytes(sourceHash));
+        foreach (var binding in bindings.Bindings.OrderBy(binding => binding.Name, StringComparer.Ordinal))
+            hash.AppendData(JsonSerializer.SerializeToUtf8Bytes(binding, JsonOptions));
+        return Convert.ToHexString(hash.GetHashAndReset());
     }
 
     private static string Fingerprint(LoadedManifest loaded)

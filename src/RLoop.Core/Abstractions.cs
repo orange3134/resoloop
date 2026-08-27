@@ -63,7 +63,9 @@ public sealed record FluxDeployRequest(
     string ParentSlotId,
     Uri Url,
     string? LibraryPath,
-    string? HelperPath);
+    string? HelperPath,
+    IReadOnlyDictionary<string, string>? InputMap = null,
+    IReadOnlyDictionary<string, string>? OutputMap = null);
 
 public sealed record FluxDiagnostic(
     string? File,

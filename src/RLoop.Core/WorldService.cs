@@ -126,6 +126,71 @@ public sealed class WorldService(IResoniteClient client)
         return result;
     }
 
+    public async Task<ResolvedWorldReference> ResolveStableReferenceAsync(string stateFile, string selector,
+        string? currentConnectionId, CancellationToken cancellationToken = default)
+    {
+        if (selector.StartsWith("$slot:", StringComparison.Ordinal))
+        {
+            var stable = StableReferenceResolver.ResolveSlot(stateFile, selector);
+            string id;
+            if (stable.SessionId == currentConnectionId && !string.IsNullOrWhiteSpace(stable.Id))
+            {
+                try { id = (await client.GetSlotAsync(stable.Id, 0, false, cancellationToken)).Id; }
+                catch (RLoopException ex) when (ex.Code is "SLOT_NOT_FOUND" or "RESONITE_OPERATION_FAILED")
+                { id = await ResolveSlotIdAsync(stable.Path, cancellationToken); }
+            }
+            else id = await ResolveSlotIdAsync(stable.Path, cancellationToken);
+            return new ResolvedWorldReference(selector, id, "slot", "[FrooxEngine]FrooxEngine.Slot", stable.Path);
+        }
+
+        var memberPrefix = selector.StartsWith("$member:", StringComparison.Ordinal);
+        var componentSelector = selector;
+        string? memberName = null;
+        if (memberPrefix)
+        {
+            var body = selector[8..];
+            var separator = body.LastIndexOf('.');
+            if (separator <= 0)
+                throw new RLoopException("FLUX_BINDING_MEMBER_INVALID", $"Binding target '{selector}' must use $member:key.MemberName.", ExitCodes.ValidationFailed);
+            componentSelector = "$component:" + body[..separator];
+            memberName = body[(separator + 1)..];
+        }
+        else if (!selector.StartsWith("$component:", StringComparison.Ordinal))
+            throw new RLoopException("FLUX_BINDING_TARGET_UNSTABLE",
+                $"Binding target '{selector}' is not a stable world reference.", ExitCodes.ValidationFailed,
+                suggestions: ["Use $slot:key, $component:key, or $member:key.MemberName from the configured worldState."]);
+
+        var stableComponent = StableReferenceResolver.ResolveComponent(stateFile, componentSelector);
+        ComponentInfo? component = null;
+        if (stableComponent.SessionId == currentConnectionId && !string.IsNullOrWhiteSpace(stableComponent.Id))
+        {
+            try { component = await client.GetComponentAsync(stableComponent.Id, cancellationToken); }
+            catch (RLoopException ex) when (ex.Code is "COMPONENT_NOT_FOUND" or "RESONITE_OPERATION_FAILED") { }
+        }
+        if (component is null)
+        {
+            var stableSlot = StableReferenceResolver.ResolveSlot(stateFile, "$slot:" + stableComponent.SlotKey);
+            var slotId = await ResolveSlotIdAsync(stableSlot.Path, cancellationToken);
+            var slot = await client.GetSlotAsync(slotId, 0, false, cancellationToken);
+            var matching = slot.Components.Where(summary => TypeNamesEquivalent(summary.Type, stableComponent.Type)).ToArray();
+            if (stableComponent.TypeOrdinal < 0 || stableComponent.TypeOrdinal >= matching.Length)
+                throw new RLoopException("FLUX_BINDING_COMPONENT_NOT_FOUND",
+                    $"Stable component '{stableComponent.Key}' could not be re-resolved on '{stableSlot.Path}'.", ExitCodes.NotFound,
+                    new Dictionary<string, object?> { ["selector"] = selector, ["slotPath"] = stableSlot.Path,
+                        ["type"] = stableComponent.Type, ["typeOrdinal"] = stableComponent.TypeOrdinal });
+            component = await client.GetComponentAsync(matching[stableComponent.TypeOrdinal].Id, cancellationToken);
+        }
+
+        if (memberName is null)
+            return new ResolvedWorldReference(selector, component.Id, "component", component.Type);
+        var member = component.Members.FirstOrDefault(pair => pair.Key.Equals(memberName, StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrWhiteSpace(member.Key) || string.IsNullOrWhiteSpace(member.Value.Id))
+            throw new RLoopException("FLUX_BINDING_MEMBER_NOT_FOUND",
+                $"Member '{memberName}' was not found on stable component '{stableComponent.Key}'.", ExitCodes.NotFound,
+                suggestions: component.Members.Keys.Take(30).ToArray());
+        return new ResolvedWorldReference(selector, member.Value.Id!, "member", member.Value.Type ?? member.Value.TargetType);
+    }
+
     public Task<ApplyValidationResult> ValidateApplyAsync(ApplyDocument document, bool strict,
         CancellationToken cancellationToken = default) =>
         ApplyDocumentValidator.ValidateAsync(document, strict ? client : null, cancellationToken);
@@ -378,55 +443,107 @@ public sealed class WorldService(IResoniteClient client)
             var probeExecuted = false;
             var structuralOnly = test.Probe is null;
             var capability = test.Probe is null ? "No interaction probe declared; field/reference structure was verified." : string.Empty;
-            if (test.Probe is { } probe)
+            Func<Task>? restoreProbe = null;
+            try
             {
-                if (!probe.Safe)
-                    throw new RLoopException("UNSAFE_PROBE_REJECTED", $"Test '{test.Name}' probe must declare safe=true.", ExitCodes.ValidationFailed);
-                if (!allowProbe)
+                if (test.Probe is { } probe)
                 {
-                    structuralOnly = true;
-                    capability = "Probe was not executed. Re-run with --probe --yes after confirming the method is safe.";
-                }
-                else
-                {
-                    var key = SymbolKey(probe.Target);
-                    if (!byKey.TryGetValue(key, out var target) || target.Existing is null)
-                        throw UnknownApplyReference(probe.Target, byKey.Keys);
-                    var definition = await client.DescribeComponentTypeAsync(target.Existing.Type, cancellationToken);
-                    if (definition.Methods?.Any(x => x.Name == probe.Method && !x.IsStatic) != true)
+                    if (!probe.Safe)
+                        throw new RLoopException("UNSAFE_PROBE_REJECTED", $"Test '{test.Name}' probe must declare safe=true.", ExitCodes.ValidationFailed);
+                    if (!allowProbe)
                     {
                         structuralOnly = true;
-                        capability = $"Runtime method '{probe.Method}' is not exposed by public Reflection; structural assertions only.";
+                        capability = "Probe was not executed. Re-run with --probe --yes after confirming the operation is safe.";
                     }
                     else
                     {
-                        var call = await client.CallComponentMethodAsync(target.Existing.Id, probe.Method, probe.Arguments, cancellationToken);
-                        if (!call.Success)
-                            throw new RLoopException("PROBE_FAILED", call.Error ?? $"Probe '{probe.Method}' failed.", ExitCodes.OperationFailed);
-                        probeExecuted = true;
-                        capability = "Probe executed through the public ResoniteLink SyncMethod API; after assertions were polled.";
+                        var key = SymbolKey(probe.Target);
+                        if (!byKey.TryGetValue(key, out var target) || target.Existing is null)
+                            throw UnknownApplyReference(probe.Target, byKey.Keys);
+                        switch (probe.Kind?.ToLowerInvariant())
+                        {
+                            case "method":
+                            {
+                                if (string.IsNullOrWhiteSpace(probe.Method))
+                                    throw new RLoopException("PROBE_METHOD_MISSING", $"Test '{test.Name}' method probe requires method.", ExitCodes.ValidationFailed);
+                                var definition = await client.DescribeComponentTypeAsync(target.Existing.Type, cancellationToken);
+                                if (definition.Methods?.Any(x => x.Name == probe.Method && !x.IsStatic) != true)
+                                {
+                                    structuralOnly = true;
+                                    capability = $"Runtime method '{probe.Method}' is not exposed by public Reflection; structural assertions only.";
+                                }
+                                else
+                                {
+                                    var call = await client.CallComponentMethodAsync(target.Existing.Id, probe.Method, probe.Arguments, cancellationToken);
+                                    if (!call.Success)
+                                        throw new RLoopException("PROBE_FAILED", call.Error ?? $"Probe '{probe.Method}' failed.", ExitCodes.OperationFailed);
+                                    probeExecuted = true;
+                                    capability = "Probe executed through the public ResoniteLink SyncMethod API; after assertions were polled.";
+                                }
+                                break;
+                            }
+                            case "set-member":
+                            {
+                                if (!probe.Restore)
+                                    throw new RLoopException("PROBE_RESTORE_REQUIRED", $"Test '{test.Name}' set-member probe requires restore=true.", ExitCodes.ValidationFailed);
+                                if (probe.Value is not { } value)
+                                    throw new RLoopException("PROBE_VALUE_MISSING", $"Test '{test.Name}' set-member probe requires value.", ExitCodes.ValidationFailed);
+                                var selector = probe.Target[(probe.Target.IndexOf(':') + 1)..];
+                                var separator = selector.LastIndexOf('.');
+                                if (separator <= 0)
+                                    throw new RLoopException("PROBE_MEMBER_TARGET_REQUIRED",
+                                        $"Test '{test.Name}' set-member target must use $component:key.MemberName or $member:key.MemberName.", ExitCodes.ValidationFailed);
+                                var memberName = selector[(separator + 1)..];
+                                var current = await client.GetComponentAsync(target.Existing.Id, cancellationToken);
+                                if (!current.Members.TryGetValue(memberName, out var original))
+                                    throw new RLoopException("PROBE_MEMBER_NOT_FOUND", $"Probe member '{probe.Target}' was not found.", ExitCodes.NotFound);
+                                if (original.Kind != "field")
+                                    throw new RLoopException("PROBE_MEMBER_KIND_UNSUPPORTED",
+                                        $"Transactional probes currently support field members; '{probe.Target}' is '{original.Kind}'.", ExitCodes.ValidationFailed);
+                                var originalRaw = MemberRaw(original);
+                                var temporaryRaw = await ResolveValueAsync(value, byKey, slotsByKey, assetUrls, cancellationToken);
+                                restoreProbe = async () =>
+                                {
+                                    await client.SetComponentMemberAsync(target.Existing.Id, memberName, originalRaw, CancellationToken.None);
+                                    var restored = await client.GetComponentAsync(target.Existing.Id, CancellationToken.None);
+                                    if (!restored.Members.TryGetValue(memberName, out var restoredMember) || !MemberMatchesRaw(restoredMember, originalRaw))
+                                        throw new RLoopException("PROBE_RESTORE_FAILED", $"Probe member '{probe.Target}' could not be restored.", ExitCodes.OperationFailed);
+                                };
+                                await client.SetComponentMemberAsync(target.Existing.Id, memberName, temporaryRaw, cancellationToken);
+                                probeExecuted = true;
+                                capability = "Transactional field probe executed; after assertions were polled and the original value was restored.";
+                                break;
+                            }
+                            default:
+                                throw new RLoopException("PROBE_KIND_UNSUPPORTED", $"Probe kind '{probe.Kind}' is not supported.", ExitCodes.ValidationFailed,
+                                    suggestions: ["Use kind 'method' or 'set-member'."]);
+                        }
                     }
                 }
-            }
 
-            foreach (var assertion in test.Assertions.Where(x => string.Equals(x.Phase, "after", StringComparison.OrdinalIgnoreCase)))
-            {
-                if (!probeExecuted)
+                foreach (var assertion in test.Assertions.Where(x => string.Equals(x.Phase, "after", StringComparison.OrdinalIgnoreCase)))
                 {
-                    assertions.Add(new ApplyAssertionResult(test.Name, assertion.Target, "after", true,
-                        assertion.Expected is { } skippedExpected ? JsonNode.Parse(skippedExpected.GetRawText()) : null, null,
-                        "After assertion was not evaluated because the runtime probe was unavailable or not authorized.", false));
-                    continue;
+                    if (!probeExecuted)
+                    {
+                        assertions.Add(new ApplyAssertionResult(test.Name, assertion.Target, "after", true,
+                            assertion.Expected is { } skippedExpected ? JsonNode.Parse(skippedExpected.GetRawText()) : null, null,
+                            "After assertion was not evaluated because the runtime probe was unavailable or not authorized.", false));
+                        continue;
+                    }
+                    ApplyAssertionResult evaluated;
+                    var deadline = Stopwatch.StartNew();
+                    do
+                    {
+                        evaluated = await EvaluateAssertion(test.Name, assertion, "after", byKey, slotsByKey, assetUrls, cancellationToken, refresh: true);
+                        if (evaluated.Passed) break;
+                        await Task.Delay(Math.Clamp(test.PollMs, 10, 5000), cancellationToken);
+                    } while (deadline.ElapsedMilliseconds < Math.Clamp(test.TimeoutMs, 10, 60_000));
+                    assertions.Add(evaluated);
                 }
-                ApplyAssertionResult evaluated;
-                var deadline = Stopwatch.StartNew();
-                do
-                {
-                    evaluated = await EvaluateAssertion(test.Name, assertion, "after", byKey, slotsByKey, assetUrls, cancellationToken, refresh: true);
-                    if (evaluated.Passed) break;
-                    await Task.Delay(Math.Clamp(test.PollMs, 10, 5000), cancellationToken);
-                } while (deadline.ElapsedMilliseconds < Math.Clamp(test.TimeoutMs, 10, 60_000));
-                assertions.Add(evaluated);
+            }
+            finally
+            {
+                if (restoreProbe is not null) await restoreProbe();
             }
             results.Add(new ApplyTestCaseResult(test.Name, assertions.All(x => x.Passed), structuralOnly,
                 probeExecuted, capability, assertions));
@@ -479,6 +596,21 @@ public sealed class WorldService(IResoniteClient client)
         "empty" => null,
         _ => NormalizeNode(member.Value)
     };
+
+    private static string MemberRaw(MemberValue member)
+    {
+        if (member.Kind == "reference") return member.TargetId ?? "null";
+        if (member.Value is JsonValue value && value.TryGetValue<string>(out var text)) return text;
+        if (member.Value is JsonObject obj)
+        {
+            var coordinates = obj.ContainsKey("x") ? new[] { "x", "y", "z", "w" } :
+                obj.ContainsKey("r") ? new[] { "r", "g", "b", "a" } : [];
+            var present = coordinates.TakeWhile(obj.ContainsKey).ToArray();
+            if (present.Length is >= 2 and <= 4)
+                return string.Join(',', present.Select(key => obj[key]?.ToJsonString() ?? "0"));
+        }
+        return member.Value?.ToJsonString() ?? "null";
+    }
 
     private static string SymbolKey(string value) => value[(value.IndexOf(':') + 1)..].Split('.')[0];
 

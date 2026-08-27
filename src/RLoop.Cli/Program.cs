@@ -505,29 +505,42 @@ public static class Program
             var world = new WorldService(client);
             var currentSession = await client.GetSessionInfoAsync(ct);
             var parentSelector = args.Option("parent") ?? manifest.Parent ?? "Root";
+            var stateSetting = args.Option("state") ?? manifest.WorldState;
+            var statePath = string.IsNullOrWhiteSpace(stateSetting) ? null :
+                Path.GetFullPath(stateSetting, Path.GetDirectoryName(manifestPath)!);
             string parentId;
             if (parentSelector.StartsWith("$slot:", StringComparison.Ordinal))
             {
-                var statePath = args.Option("state") ?? manifest.WorldState;
                 if (string.IsNullOrWhiteSpace(statePath))
                     throw new RLoopException("FLUX_WORLD_STATE_REQUIRED", "A Flux parent using $slot:key requires worldState in the manifest or --state.", ExitCodes.ValidationFailed);
-                statePath = Path.GetFullPath(statePath, Path.GetDirectoryName(manifestPath)!);
-                var stable = StableReferenceResolver.ResolveSlot(statePath, parentSelector);
-                if (stable.SessionId == currentSession.UniqueSessionId && !string.IsNullOrWhiteSpace(stable.Id))
-                {
-                    _ = await client.GetSlotAsync(stable.Id, 0, false, ct);
-                    parentId = stable.Id;
-                }
-                else parentId = await world.ResolveSlotIdAsync(stable.Path, ct);
+                parentId = (await world.ResolveStableReferenceAsync(statePath, parentSelector,
+                    currentSession.UniqueSessionId, ct)).Id;
             }
             else parentId = await world.ResolveSlotIdAsync(parentSelector, ct);
+
+            var resolvedBindings = new Dictionary<string, FluxResolvedModuleBindings>(StringComparer.Ordinal);
+            foreach (var module in manifest.Modules.Where(module => module.Bindings is { Count: > 0 }))
+            {
+                if (string.IsNullOrWhiteSpace(statePath))
+                    throw new RLoopException("FLUX_WORLD_STATE_REQUIRED",
+                        $"Module '{module.Name}' declares bindings and requires worldState in the manifest or --state.", ExitCodes.ValidationFailed);
+                var bindings = new List<FluxResolvedBinding>();
+                foreach (var binding in module.Bindings!)
+                {
+                    var target = await world.ResolveStableReferenceAsync(statePath, binding.Value.Target,
+                        currentSession.UniqueSessionId, ct);
+                    bindings.Add(new FluxResolvedBinding(binding.Key, binding.Value.Mode, binding.Value.Target,
+                        target.Id, target.Kind, target.Type));
+                }
+                resolvedBindings[module.Name] = new FluxResolvedModuleBindings(bindings);
+            }
             var orchestrator = new FluxManifestOrchestrator(flux);
             var report = sub == "watch"
                 ? await orchestrator.WatchAsync(manifestPath, parentId, uri, args.Option("library-path") ?? config.ResoniteManagedDataPath,
                     config.FluxDeployerPath, currentSession.UniqueSessionId,
-                    TimeSpan.FromMilliseconds(args.IntOption("poll-ms", 500, 100, 10000)), ct)
+                    TimeSpan.FromMilliseconds(args.IntOption("poll-ms", 500, 100, 10000)), resolvedBindings, ct)
                 : await orchestrator.DeployAsync(manifestPath, parentId, uri, args.Option("library-path") ?? config.ResoniteManagedDataPath,
-                    config.FluxDeployerPath, currentSession.UniqueSessionId, ct);
+                    config.FluxDeployerPath, currentSession.UniqueSessionId, resolvedBindings, ct);
             if (!report.Success)
                 throw new RLoopException("FLUX_MANIFEST_DEPLOY_FAILED", "One or more Flux modules failed; successful modules were checkpointed.", ExitCodes.ExternalToolFailed,
                     new Dictionary<string, object?> { ["report"] = report }, [report.Recovery]);

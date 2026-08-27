@@ -190,7 +190,7 @@ rloop flux deploy-manifest examples/flux/rloop.flux.json --json
 rloop flux watch examples/flux/rloop.flux.json --json
 ~~~
 
-`.pg`に対するbuild/check/watchは既存Flux-SDK CLIをラップします。JSON module manifestに対するwatchは依存順に成功buildだけを再deployします。`$slot:key` parentはworld stateから現在session向けに検証・再解決されます。deployはFlux-SDK 1.9のLoader.replaceを利用し、moduleごとのbefore/after ID、構造差分、checkpoint recoveryを返します。
+`.pg`に対するbuild/check/watchは既存Flux-SDK CLIをラップします。JSON module manifestに対するwatchは依存順に成功buildだけを再deployします。`$slot:key` parentはworld stateから現在session向けに検証・再解決されます。moduleの `bindings` ではFlux input名を `mode: "source"`、output名を `mode: "drive"` として `$slot:key` / `$component:key` / `$member:key.MemberName` へ接続できます。driveはmember targetだけを受け付けます。IDはworld stateのkey・path・type ordinalから接続ごとに再解決され、未解決またはmanifestと不一致のbindingはdeploy前に構造化エラーになります。deployはFlux-SDK 1.9のLoader.replaceを利用し、moduleごとのbefore/after ID、解決済みbinding、checkpoint recoveryを返します。
 
 ## Codex Skills
 
@@ -247,7 +247,8 @@ rloop logs --tail 200 --json
 - List更新は公開API上whole-member replacementです。`diff`は要素added/removedを表示してから一括更新します。SyncObject要素は子memberを含む構造値へ正規化して比較します。
 - ResoniteLink 0.13.1にscreenshot APIがないため、captureは決定的なcamera-space SVGで、最終レンダリング画像ではありません。結果は `screenshotAvailable: false` を明示します。
 - logsはLink protocolからのstreamではなく、明示されたローカルlog fileのtailです。
-- runtime probeはpublic Reflectionに公開されたSyncMethodだけを明示許可付きで呼びます。公開されないinteractionはstructural-onlyです。
+- runtime probeは `safe: true` と `--probe --yes` の二重許可が必要です。public Reflectionに公開されたSyncMethodを呼ぶ `method` probeに加え、fieldを一時変更してafter assertionをpollし、`finally`で元の値へ戻して復元確認する `set-member` probeを利用できます。公開されないinteractionはstructural-onlyです。
+- Flux-SDK 1.9.0ではinterface型のglobal input（実機で確認した `IButton global` など）が参照配線後に `Invalid component type` を返し、部分的なmoduleを残す場合があります。rloopはこのupstream errorを成功扱いせず、checkpoint recoveryを返します。`Slot element` inputの配線は正常動作を確認しています。
 
 ## License and upstream notes
 

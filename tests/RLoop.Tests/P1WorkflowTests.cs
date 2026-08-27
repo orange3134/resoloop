@@ -103,6 +103,68 @@ public sealed class P1WorkflowTests : IDisposable
         Assert.False(first.Atomic);
     }
 
+    [Fact]
+    public async Task FluxManifestPassesResolvedInputAndOutputBindingsToDeployer()
+    {
+        File.WriteAllText(Path.Combine(_root, "binding.pg"), "module Binding where { 1->display }");
+        var manifest = Path.Combine(_root, "binding-flux.json");
+        File.WriteAllText(manifest, """
+            { "schemaVersion":"1", "modules":[{
+              "name":"binding", "source":"binding.pg", "module":"Binding",
+              "bindings":{
+                "Source":{"target":"$slot:root","mode":"source"},
+                "Result":{"target":"$member:target.Enabled","mode":"drive"}
+              }
+            }] }
+            """);
+        var fake = new FakeFluxTool();
+        var orchestrator = new FluxManifestOrchestrator(fake);
+        var resolved = new Dictionary<string, FluxResolvedModuleBindings>
+        {
+            ["binding"] = new([
+                new("Source", "source", "$slot:root", "Reso_Slot", "slot", "Slot"),
+                new("Result", "drive", "$member:target.Enabled", "Reso_Member", "member", "bool")
+            ])
+        };
+
+        var result = await orchestrator.DeployAsync(manifest, "Reso_Parent", new Uri("ws://localhost:12449"),
+            null, null, resolvedBindings: resolved);
+
+        Assert.True(result.Success);
+        var request = Assert.Single(fake.Requests);
+        Assert.Equal("Reso_Slot", request.InputMap!["Source"]);
+        Assert.Equal("Reso_Member", request.OutputMap!["Result"]);
+        Assert.Equal(2, Assert.Single(result.Modules).Bindings!.Count);
+
+        resolved["binding"] = new([
+            new("Source", "source", "$slot:root", "Reso_RecreatedSlot", "slot", "Slot"),
+            new("Result", "drive", "$member:target.Enabled", "Reso_Member", "member", "bool")
+        ]);
+        var rebound = await orchestrator.DeployAsync(manifest, "Reso_Parent", new Uri("ws://localhost:12449"),
+            null, null, resolvedBindings: resolved);
+
+        Assert.True(Assert.Single(rebound.Modules).Deployed);
+        Assert.Equal("Reso_RecreatedSlot", fake.Requests[1].InputMap!["Source"]);
+    }
+
+    [Fact]
+    public async Task FluxManifestRejectsDeclaredBindingsThatWereNotResolved()
+    {
+        File.WriteAllText(Path.Combine(_root, "unresolved.pg"), "module Unresolved where { 1->display }");
+        var manifest = Path.Combine(_root, "unresolved-flux.json");
+        File.WriteAllText(manifest, """
+            { "schemaVersion":"1", "modules":[{
+              "name":"unresolved", "source":"unresolved.pg", "module":"Unresolved",
+              "bindings":{"Source":{"target":"$slot:root","mode":"source"}}
+            }] }
+            """);
+
+        var error = await Assert.ThrowsAsync<RLoopException>(() => new FluxManifestOrchestrator(new FakeFluxTool())
+            .DeployAsync(manifest, "Reso_Parent", new Uri("ws://localhost:12449"), null, null));
+
+        Assert.Equal("FLUX_BINDINGS_UNRESOLVED", error.Code);
+    }
+
     [Theory]
     [InlineData("1.9.0", true)]
     [InlineData("1.9.3-preview", true)]
@@ -135,12 +197,14 @@ public sealed class P1WorkflowTests : IDisposable
     private sealed class FakeFluxTool : IFluxTool
     {
         public List<string> Deployed { get; } = [];
+        public List<FluxDeployRequest> Requests { get; } = [];
         public Task<FluxResult> BuildAsync(FluxBuildRequest request, CancellationToken cancellationToken = default) => Task.FromResult(new FluxResult(true, 0, "", ""));
         public Task<FluxResult> CheckAsync(FluxBuildRequest request, CancellationToken cancellationToken = default) => BuildAsync(request, cancellationToken);
         public Task<FluxResult> WatchAsync(FluxBuildRequest request, CancellationToken cancellationToken = default) => BuildAsync(request, cancellationToken);
         public Task<FluxResult> DeployAsync(FluxDeployRequest request, CancellationToken cancellationToken = default)
         {
             Deployed.Add(request.Module);
+            Requests.Add(request);
             return Task.FromResult(new FluxResult(true, 0, "", "", "Reso_" + request.Module));
         }
         public Task<FluxToolStatus> GetStatusAsync(CancellationToken cancellationToken = default) => Task.FromResult(new FluxToolStatus(true, "fake", "1.9.0"));
