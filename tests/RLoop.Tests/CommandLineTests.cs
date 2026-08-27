@@ -36,4 +36,13 @@ public sealed class CommandLineTests
         Assert.Equal(new Vector3Value(1, 2.5f, -3), Vector3Value.Parse("1,2.5,-3", "--position"));
         Assert.Throws<RLoopException>(() => Vector3Value.Parse("1,2", "--position"));
     }
+
+    [Fact]
+    public void SpecializesAssemblyQualifiedOpenGenericWithCSharpAliases()
+    {
+        Assert.Equal("[FrooxEngine]FrooxEngine.DynamicValueVariable<string>",
+            GenericTypeName.Specialize("[FrooxEngine]FrooxEngine.DynamicValueVariable<>", ["System.String"]));
+        Assert.Equal("GENERIC_TYPE_ASSEMBLY_REQUIRED", Assert.Throws<RLoopException>(() =>
+            GenericTypeName.Specialize("FrooxEngine.DynamicValueVariable<>", ["string"])).Code);
+    }
 }

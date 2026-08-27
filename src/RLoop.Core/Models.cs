@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 
 namespace RLoop.Core;
 
@@ -36,6 +37,34 @@ internal static class NumberList
         }
 
         return parts.Select(p => float.Parse(p, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+    }
+}
+
+public static class GenericTypeName
+{
+    private static readonly IReadOnlyDictionary<string, string> Aliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["System.Boolean"] = "bool", ["boolean"] = "bool", ["System.Byte"] = "byte",
+        ["System.Int16"] = "short", ["System.UInt16"] = "ushort", ["System.Int32"] = "int",
+        ["System.UInt32"] = "uint", ["System.Int64"] = "long", ["System.UInt64"] = "ulong",
+        ["System.Single"] = "float", ["single"] = "float", ["System.Double"] = "double",
+        ["System.String"] = "string", ["System.Object"] = "object"
+    };
+
+    public static string Specialize(string openGeneric, IReadOnlyList<string> arguments)
+    {
+        var open = openGeneric.LastIndexOf('<');
+        if (open < 0 || !openGeneric.EndsWith('>'))
+            throw new RLoopException("GENERIC_TYPE_OPEN_REQUIRED", $"'{openGeneric}' is not an open generic type.", ExitCodes.InvalidArguments,
+                suggestions: ["Pass the exact open generic returned by rloop type search, such as [FrooxEngine]FrooxEngine.DynamicValueVariable<>."]);
+        if (!openGeneric.StartsWith("[", StringComparison.Ordinal))
+            throw new RLoopException("GENERIC_TYPE_ASSEMBLY_REQUIRED", "Generic specialization requires the assembly-prefixed runtime type returned by type search.", ExitCodes.ValidationFailed,
+                suggestions: ["Run rloop type search and pass its full [Assembly]Namespace.Type<> result."]);
+        var arity = openGeneric[(open + 1)..^1].Count(character => character == ',') + 1;
+        if (arguments.Count != arity)
+            throw new RLoopException("GENERIC_TYPE_ARITY_MISMATCH", $"'{openGeneric}' requires {arity} type argument(s), but received {arguments.Count}.", ExitCodes.InvalidArguments);
+        var normalized = arguments.Select(argument => Aliases.GetValueOrDefault(argument, argument)).ToArray();
+        return openGeneric[..open] + "<" + string.Join(',', normalized) + ">";
     }
 }
 
@@ -86,6 +115,16 @@ public sealed record SlotMatch(
     string Name,
     string Path,
     IReadOnlyList<ComponentSummary> Components);
+
+public sealed record FindOptions(
+    string? Under = null,
+    bool DirectChildren = false,
+    bool ExcludeReferenceOnly = false);
+
+public sealed record InspectedComponent(
+    string SlotId,
+    string SlotPath,
+    ComponentInfo Component);
 
 public sealed record SlotCreateRequest(
     string ParentId,
@@ -162,14 +201,18 @@ public sealed record ApplyResult(
     int SlotsUnchanged = 0,
     int ComponentsUnchanged = 0,
     string? StateFile = null,
-    string? SessionId = null,
+    [property: JsonIgnore] string? SessionId = null,
     ApplyProfile? Profile = null,
     int ComponentsDeleted = 0,
     int SlotsDeleted = 0,
     bool Atomic = false,
     string? Recovery = null,
     int AssetsImported = 0,
-    int AssetsUnchanged = 0);
+    int AssetsUnchanged = 0)
+{
+    public string? ConnectionId => SessionId;
+    public string ConnectionIdScope => "ResoniteLink connection; stable keys and paths are used across connections";
+}
 
 public sealed record ClientOperationMetric(string Operation, int Requests, double ElapsedMs);
 
@@ -213,7 +256,7 @@ public sealed record ApplyPlanResult(
     string SchemaVersion,
     string OwnershipKey,
     string StateFile,
-    string? SessionId,
+    [property: JsonIgnore] string? SessionId,
     IReadOnlyList<ApplyPlanEntry> Operations,
     int Creates,
     int Updates,
@@ -221,7 +264,12 @@ public sealed record ApplyPlanResult(
     int Renames = 0,
     int Deletes = 0,
     bool Atomic = false,
-    string? Recovery = null);
+    string? Recovery = null)
+{
+    public string? ConnectionId => SessionId;
+    public string ConnectionIdScope => "ResoniteLink connection; stable keys and paths are used across connections";
+    public IReadOnlyList<ApplyPlanEntry> Changes => Operations.Where(operation => operation.Action != "no-op").ToArray();
+}
 
 public sealed record ApplyValidationIssue(
     string Code,

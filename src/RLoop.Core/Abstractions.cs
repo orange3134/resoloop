@@ -65,7 +65,21 @@ public sealed record FluxDeployRequest(
     string? LibraryPath,
     string? HelperPath);
 
+public sealed record FluxDiagnostic(
+    string? File,
+    int? StartLine,
+    int? StartColumn,
+    int? EndLine,
+    int? EndColumn,
+    string Severity,
+    string Message,
+    string Channel,
+    string Category,
+    bool IsPrimary);
+
 public sealed record FluxResult(bool Success, int ExitCode, string StandardOutput, string StandardError,
-    string? OutputPath = null);
+    string? OutputPath = null,
+    IReadOnlyList<FluxDiagnostic>? Diagnostics = null,
+    IReadOnlyList<FluxDiagnostic>? PrimaryDiagnostics = null);
 
 public sealed record FluxToolStatus(bool Available, string Executable, string? Version);

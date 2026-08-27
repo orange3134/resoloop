@@ -1,6 +1,27 @@
 # rloop development roadmap
 
-このロードマップは、小さな家ワールドを `rloop apply` で実際に構築した結果を基準にしています。優先順位は、短い反復時間、安全に再実行できること、結果を自動検証できること、表現力の順です。
+このロードマップは、小さな家ワールドとブロック崩しを `rloop apply` / Flux deployで実際に構築した結果を基準にしています。優先順位は、差分の収束、安全に再実行できること、結果を自動検証できること、反復時の観測量、表現力の順です。
+
+## 2026-08-28 ブロック崩しフィードバックの改善計画
+
+### 今回実装
+
+- [x] SyncObjectを要素に持つListを子member込みの構造値へ正規化し、宣言値と一致する場合に差分を収束させる。実worldの `Slider.SnapPositions` で偽差分が消えることを確認した。
+- [x] plan/diffのJSONに `changes` を常設し、`--changes-only`、`--creates-only`、`--deletes-only`、`--summary` を追加する。
+- [x] `find --under` / `--direct-children` / `--exclude-reference-only` と、`inspect --component` / `--member` / `--components-only` を追加する。
+- [x] Flux-SDKの位置付き診断を配列化し、stdout/stderr channel、parse/type/cascade分類、`primaryDiagnostics` を返す。
+- [x] statusのIDを `connectionId` として返し、安定world identityではないことを明示する。
+- [x] assembly付きopen genericからclosed generic名を作る `type specialize` と、事故に関係するサブコマンドhelpを追加する。
+
+### 次の実装候補
+
+- [ ] Flux manifestのglobal/element/source/drive bindingを設計し、stable keyからdeploy後に再結線する。Flux-SDK 1.9.0の生成構造と型互換性APIをupstream/public Reflectionで確認してから着手する。
+- [ ] Dynamic Impulse、value/reference付きImpulse、CallInputを、一度限り・明示許可・復元付きで実行するinteraction probeを追加する。
+- [ ] Flux deployの返却値と実module childを分離し、`parentSlotId`、`moduleSlotIdBefore`、`moduleSlotIdAfter` を再観測結果から返す。
+- [ ] `managedFields` / transform preservation、stable key migration、親Slot単位の安全なprune最適化を設計する。
+- [ ] doctorで「managed-data未設定」と「Flux-SDKの自動発見成功/解決不能」をbuild probeにより区別する。
+
+Flux bindingとinteraction probeは、型名・member名・メッセージを推測するとworldを壊す領域なので、pinned upstream確認、オフライン契約テスト、専用 `RLoop_Test*` live fixtureの順で進める。
 
 ## 実践で確認できたこと
 
@@ -131,4 +152,4 @@
 5. screenshot/scene assertion/interaction probeで結果の検証ループを閉じる。
 6. 再利用構文、型・asset、ProtoFlux、配布基盤を順次広げる。
 
-P0とP1は完了しました。ResoniteLinkにtransaction、framebuffer、汎用event APIがない制約は、非atomic checkpoint recovery、決定的SVG、structural-only capabilityとして明示しています。引き続きrloopが管理する専用の `RLoop_Test*` Slotから導入し、`validate --strict` と `diff` を先に実行する運用を推奨します。
+旧house-world由来のP0/P1は完了しています。ブロック崩し由来の次期P0はFlux bindingと安全なinteraction probeです。ResoniteLinkにtransaction、framebuffer、汎用event APIがない制約は、非atomic checkpoint recovery、決定的SVG、structural-only capabilityとして明示しています。引き続きrloopが管理する専用の `RLoop_Test*` Slotから導入し、`validate --strict` と `diff --changes-only` を先に実行する運用を推奨します。

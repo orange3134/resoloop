@@ -20,7 +20,7 @@ public static class Program
         {
             if (parsed.Positionals.Count == 0 || parsed.Has("help") || parsed.Positionals[0] is "help" or "-h")
             {
-                PrintHelp(Console.Out);
+                PrintHelp(Console.Out, parsed.Positionals.Count > 1 ? parsed.Positionals[1] : null);
                 return ExitCodes.Success;
             }
 
@@ -67,6 +67,17 @@ public static class Program
                     ApplyDocument.Load(parsed.Positional(1, "Apply file")), cancellationToken: commandToken);
                 ApplyDocumentValidator.ThrowIfInvalid(validation);
                 output.Success(validation);
+                return ExitCodes.Success;
+            }
+            if (parsed.Positionals[0].Equals("type", StringComparison.OrdinalIgnoreCase) &&
+                parsed.Positional(1, "type subcommand").Equals("specialize", StringComparison.OrdinalIgnoreCase))
+            {
+                var openGeneric = parsed.Positional(2, "Open generic type");
+                if (parsed.Positionals.Count < 4)
+                    throw new RLoopException("ARGUMENT_REQUIRED", "At least one generic type argument is required.", ExitCodes.InvalidArguments);
+                var typeArguments = parsed.Positionals.Skip(3).ToArray();
+                var specialized = GenericTypeName.Specialize(openGeneric, typeArguments);
+                output.Success(new { openGeneric, arguments = typeArguments, specialized }, writer => writer.WriteLine(specialized));
                 return ExitCodes.Success;
             }
             if (parsed.Positionals[0].Equals("scene", StringComparison.OrdinalIgnoreCase))
@@ -185,9 +196,11 @@ public static class Program
             }
         }
 
+        FluxToolStatus? fluxStatus = null;
         try
         {
             var status = await flux.GetStatusAsync(cancellationToken);
+            fluxStatus = status;
             if (!status.Available)
                 checks.Add(new DoctorCheck("flux-sdk", "warning", false, $"'{status.Executable}' is not available.",
                     "Install Papaltine.FluxSDK 1.9.0 when ProtoFlux development is needed."));
@@ -203,8 +216,7 @@ public static class Program
                 "Check RLOOP_FLUX_EXECUTABLE or install Papaltine.FluxSDK 1.9.0."));
         }
 
-        checks.Add(PathCheck("resonite-managed-data", config.ResoniteManagedDataPath,
-            "Set RESONITE_MANAGED_DATA_PATH when ProtoFlux Reflection or compilation is needed."));
+        checks.Add(ManagedDataCheck(config.ResoniteManagedDataPath, fluxStatus));
         checks.Add(PathCheck("resonite-log", config.ResoniteLogPath,
             "Set RESONITE_LOG_PATH when rloop logs is needed."));
 
@@ -242,6 +254,20 @@ public static class Program
         }
     }
 
+    private static DoctorCheck ManagedDataCheck(string? path, FluxToolStatus? fluxStatus)
+    {
+        if (!string.IsNullOrWhiteSpace(path))
+            return PathCheck("resonite-managed-data", path,
+                "Correct RESONITE_MANAGED_DATA_PATH or omit it to let Flux-SDK attempt auto-discovery.");
+        return fluxStatus?.Available == true
+            ? new DoctorCheck("resonite-managed-data", "info", false,
+                "Not explicitly configured; Flux-SDK is available and may auto-discover Resonite managed data during check/build.",
+                "Run rloop flux check on the project to verify actual library resolution.")
+            : new DoctorCheck("resonite-managed-data", "warning", false,
+                "Not configured, and Flux-SDK availability was not confirmed.",
+                "Install Flux-SDK or set RESONITE_MANAGED_DATA_PATH before ProtoFlux work.");
+    }
+
     private static async Task RunResonite(ParsedArguments args, OutputWriter output, IResoniteClient client,
         WorldService world, CancellationToken cancellationToken)
     {
@@ -254,7 +280,9 @@ public static class Program
                 var sw = Stopwatch.StartNew();
                 var info = await client.GetSessionInfoAsync(cancellationToken);
                 sw.Stop();
-                var data = new { info.Url, info.Connected, info.ResoniteVersion, info.ResoniteLinkVersion, info.UniqueSessionId, latencyMs = sw.Elapsed.TotalMilliseconds };
+                var data = new { info.Url, info.Connected, info.ResoniteVersion, info.ResoniteLinkVersion,
+                    connectionId = info.UniqueSessionId, connectionIdScope = "ResoniteLink connection; do not use as a stable world identity",
+                    latencyMs = sw.Elapsed.TotalMilliseconds };
                 output.Success(data, w => w.WriteLine($"connected {info.Url} | Resonite {info.ResoniteVersion} | Link {info.ResoniteLinkVersion} | {sw.Elapsed.TotalMilliseconds:0.0} ms"));
                 break;
             }
@@ -268,14 +296,32 @@ public static class Program
             case "find":
             {
                 var matches = await world.FindAsync(args.Option("name"), args.Has("exact"), args.Option("component"),
-                    args.IntOption("depth", 8, -1, 64), cancellationToken);
+                    args.IntOption("depth", 8, -1, 64), cancellationToken,
+                    new FindOptions(args.Option("under"), args.Has("direct-children"), args.Has("exclude-reference-only")));
                 output.Success(matches, w => { foreach (var x in matches) w.WriteLine($"{x.Id}\t{x.Path}\t{string.Join(", ", x.Components.Select(c => c.Type))}"); });
                 break;
             }
             case "inspect":
             {
-                var slot = await world.InspectAsync(args.Positional(1, "Slot ID or path"), args.IntOption("depth", 1, 0, 64), args.Has("members"), cancellationToken);
-                output.Success(slot);
+                var componentFilter = args.Option("component");
+                var memberFilter = args.Option("member");
+                if (args.Has("components-only") || componentFilter is not null || memberFilter is not null)
+                {
+                    var components = await world.InspectComponentsAsync(args.Positional(1, "Slot ID or path"),
+                        args.IntOption("depth", 1, 0, 64), componentFilter, memberFilter,
+                        args.Has("exclude-reference-only"), cancellationToken);
+                    output.Success(new { count = components.Count, components }, writer =>
+                    {
+                        foreach (var item in components) writer.WriteLine($"{item.Component.Id}\t{item.SlotPath}\t{item.Component.Type}");
+                    });
+                }
+                else
+                {
+                    var slot = await world.InspectAsync(args.Positional(1, "Slot ID or path"),
+                        args.IntOption("depth", 1, 0, 64), args.Has("members"), cancellationToken,
+                        args.Has("exclude-reference-only"));
+                    output.Success(slot);
+                }
                 break;
             }
             case "slot": await RunSlot(args, output, client, world, cancellationToken); break;
@@ -293,9 +339,25 @@ public static class Program
             {
                 var result = await world.PlanApplyAsync(ApplyDocument.Load(args.Positional(1, "Apply file")),
                     ApplyOptionsFrom(args, output), cancellationToken);
-                output.Success(result, w =>
+                var filters = new[] { "changes-only", "creates-only", "deletes-only", "summary" }.Where(args.Has).ToArray();
+                if (filters.Length > 1)
+                    throw new RLoopException("PLAN_FILTER_CONFLICT", "Use only one plan output filter at a time.", ExitCodes.InvalidArguments,
+                        new Dictionary<string, object?> { ["filters"] = filters });
+                var displayed = args.Has("summary") ? [] : args.Has("changes-only") ? result.Changes :
+                    args.Has("creates-only") ? result.Operations.Where(operation => operation.Action == "create").ToArray() :
+                    args.Has("deletes-only") ? result.Operations.Where(operation => operation.Action == "delete").ToArray() : result.Operations;
+                var response = new
                 {
-                    foreach (var operation in result.Operations)
+                    result.Valid, result.SchemaVersion, result.OwnershipKey, result.StateFile,
+                    connectionId = result.SessionId,
+                    connectionIdScope = "ResoniteLink connection; stable keys and paths are used across connections",
+                    operations = displayed,
+                    changes = result.Changes,
+                    result.Creates, result.Updates, result.NoOps, result.Renames, result.Deletes, result.Atomic, result.Recovery
+                };
+                output.Success(response, w =>
+                {
+                    foreach (var operation in displayed)
                         w.WriteLine($"{operation.Action,-7} {operation.Kind,-9} {operation.Path}");
                     w.WriteLine($"creates={result.Creates} updates={result.Updates} renames={result.Renames} deletes={result.Deletes} no-ops={result.NoOps}");
                     w.WriteLine($"atomic={result.Atomic}; recovery={result.Recovery}");
@@ -417,6 +479,14 @@ public static class Program
                 catch (RLoopException ex) when (ex.Code == "COMPONENT_TYPE_NOT_FOUND") { output.Success(await client.DescribeTypeAsync(query, ct)); }
                 break;
             }
+            case "specialize":
+            {
+                if (args.Positionals.Count < 4)
+                    throw new RLoopException("ARGUMENT_REQUIRED", "At least one generic type argument is required.", ExitCodes.InvalidArguments);
+                var specialized = GenericTypeName.Specialize(query, args.Positionals.Skip(3).ToArray());
+                output.Success(new { openGeneric = query, arguments = args.Positionals.Skip(3).ToArray(), specialized }, writer => writer.WriteLine(specialized));
+                break;
+            }
             default: throw UnknownCommand($"type {sub}");
         }
     }
@@ -494,9 +564,20 @@ public static class Program
         else throw UnknownCommand($"flux {sub}");
 
         if (!result.Success)
+        {
+            var diagnosticChannels = (result.Diagnostics ?? []).Select(diagnostic => diagnostic.Channel).Distinct().ToArray();
             throw new RLoopException("FLUX_COMMAND_FAILED", $"Flux-SDK {sub} failed with exit code {result.ExitCode}.", ExitCodes.ExternalToolFailed,
-                new Dictionary<string, object?> { ["exitCode"] = result.ExitCode, ["stdout"] = result.StandardOutput, ["stderr"] = result.StandardError },
-                ["Inspect the compiler diagnostics in error.context.stderr."]);
+                new Dictionary<string, object?>
+                {
+                    ["exitCode"] = result.ExitCode, ["diagnostics"] = result.Diagnostics ?? [],
+                    ["primaryDiagnostics"] = result.PrimaryDiagnostics ?? [],
+                    ["diagnosticChannels"] = diagnosticChannels,
+                    ["stdout"] = result.StandardOutput, ["stderr"] = result.StandardError
+                },
+                diagnosticChannels.Length == 0
+                    ? ["Inspect error.context.stdout and error.context.stderr for raw Flux-SDK output."]
+                    : [$"Fix primaryDiagnostics first; parsed diagnostics came from {string.Join(" and ", diagnosticChannels)}."]);
+        }
         output.Success(result, w => { if (!string.IsNullOrWhiteSpace(result.StandardOutput)) w.Write(result.StandardOutput); if (!string.IsNullOrWhiteSpace(result.StandardError)) w.Write(result.StandardError); });
         return ExitCodes.Success;
     }
@@ -543,7 +624,38 @@ public static class Program
     private static RLoopException UnknownCommand(string command) => new("UNKNOWN_COMMAND", $"Unknown command '{command}'.", ExitCodes.InvalidArguments,
         suggestions: ["Run rloop help to list commands."]);
 
-    private static void PrintHelp(TextWriter writer) => writer.WriteLine("""
+    private static void PrintHelp(TextWriter writer, string? command = null)
+    {
+        var detail = command?.ToLowerInvariant() switch
+        {
+            "apply" => """
+rloop apply FILE.json [--state FILE] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
+
+Validates and plans the complete document before mutation. State checkpoints make a failed non-atomic apply resumable.
+--adopt binds one verified existing root. --prune deletes stale owned targets and always requires --yes.
+""",
+            "plan" or "diff" => """
+rloop plan|diff FILE.json [--state FILE] [--adopt]
+  [--changes-only | --creates-only | --deletes-only | --summary]
+
+Never changes the world. JSON output always includes a separate changes array; output filters affect only operations.
+Review --deletes-only before apply --prune --yes.
+""",
+            "find" => """
+rloop find (--name TEXT [--exact] | --component TYPE) [--under SLOT] [--direct-children]
+  [--exclude-reference-only] [--depth 8] [--json]
+""",
+            "inspect" => """
+rloop inspect SLOT [--depth 1] [--members] [--json]
+rloop inspect SLOT [--component TYPE] [--member NAME] [--components-only]
+  [--exclude-reference-only] [--depth 1] [--json]
+
+Component/member filters return a bounded flat component view with count and Slot paths.
+""",
+            _ => null
+        };
+        if (detail is not null) { writer.WriteLine(detail); return; }
+        writer.WriteLine("""
 rloop 0.1 - agent-first Resonite CLI loop
 
 Project setup:
@@ -553,8 +665,8 @@ Project setup:
 Connection and observation:
   rloop status|ping [--url ws://localhost:PORT] [--json]
   rloop hierarchy [--depth 2] [--include-components] [--json]
-  rloop find (--name TEXT [--exact] | --component TYPE) [--depth 8] [--json]
-  rloop inspect SLOT [--depth 1] [--members] [--json]
+  rloop find (--name TEXT [--exact] | --component TYPE) [--under SLOT] [--direct-children] [--depth 8] [--json]
+  rloop inspect SLOT [--depth 1] [--members] [--component TYPE] [--member NAME] [--components-only] [--json]
   rloop scene summary FILE.json [--output summary.json]
   rloop capture FILE.json --camera BOOKMARK [--output capture.svg] [--width 1280 --height 720]
 
@@ -569,8 +681,9 @@ Editing:
   rloop component remove COMPONENT_ID --yes
   rloop type search QUERY [--limit 50]
   rloop type describe TYPE
+  rloop type specialize OPEN_GENERIC TYPE_ARGUMENT [...]
   rloop validate FILE.json [--strict]
-  rloop plan|diff FILE.json [--state FILE] [--adopt]
+  rloop plan|diff FILE.json [--state FILE] [--adopt] [--changes-only|--creates-only|--deletes-only|--summary]
   rloop apply FILE.json [--state FILE] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
   rloop test FILE.json [--state FILE] [--probe --yes]
 
@@ -589,4 +702,5 @@ Global options: --url, --timeout SECONDS, --command-timeout SECONDS, --json, --v
 Configuration priority: CLI > environment > .rloop.json > ~/.rloop/config.json
 Environment: RESONITE_LINK_URL, RLOOP_TIMEOUT_SECONDS, RLOOP_COMMAND_TIMEOUT_SECONDS, RESONITE_MANAGED_DATA_PATH, RESONITE_LOG_PATH
 """);
+    }
 }

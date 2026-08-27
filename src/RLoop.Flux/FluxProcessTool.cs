@@ -79,7 +79,11 @@ public sealed class FluxProcessTool(string executable, IFluxDeployer deployer) :
             }
             var outIndex = args.Select((value, index) => (value, index)).FirstOrDefault(x => x.value == "--out").index;
             var outputPath = args.Contains("--out") && outIndex + 1 < args.Count ? args[outIndex + 1] : null;
-            return new FluxResult(process.ExitCode == 0, process.ExitCode, await stdout, await stderr, outputPath);
+            var standardOutput = await stdout;
+            var standardError = await stderr;
+            var diagnostics = FluxDiagnostics.Parse(standardOutput, standardError);
+            return new FluxResult(process.ExitCode == 0, process.ExitCode, standardOutput, standardError, outputPath,
+                diagnostics, diagnostics.Where(diagnostic => diagnostic.IsPrimary).ToArray());
         }
         catch (System.ComponentModel.Win32Exception ex)
         {
@@ -88,4 +92,64 @@ public sealed class FluxProcessTool(string executable, IFluxDeployer deployer) :
                 ["Install with: dotnet tool install --global Papaltine.FluxSDK --version 1.9.0", "Or configure RLOOP_FLUX_EXECUTABLE."], ex);
         }
     }
+}
+
+public static partial class FluxDiagnostics
+{
+    private static readonly Regex Location = new(
+        @"^(?<file>.+?)\((?<sl>\d+),(?<sc>\d+),(?<el>\d+),(?<ec>\d+)\):\s*(?<severity>error|warning|hint):\s*(?<message>.*)$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    public static IReadOnlyList<FluxDiagnostic> Parse(string standardOutput, string standardError)
+    {
+        var diagnostics = new List<FluxDiagnostic>();
+        ParseChannel(standardOutput, "stdout", diagnostics);
+        ParseChannel(standardError, "stderr", diagnostics);
+        return diagnostics;
+    }
+
+    private static void ParseChannel(string text, string channel, List<FluxDiagnostic> diagnostics)
+    {
+        FluxDiagnostic? current = null;
+        foreach (var line in text.Replace("\r\n", "\n").Split('\n'))
+        {
+            var match = Location.Match(line);
+            if (match.Success)
+            {
+                if (current is not null) diagnostics.Add(current);
+                var severity = match.Groups["severity"].Value.ToLowerInvariant();
+                var message = match.Groups["message"].Value;
+                var category = Classify(message, severity);
+                current = new FluxDiagnostic(match.Groups["file"].Value,
+                    int.Parse(match.Groups["sl"].Value), int.Parse(match.Groups["sc"].Value),
+                    int.Parse(match.Groups["el"].Value), int.Parse(match.Groups["ec"].Value),
+                    severity, message, channel, category, IsPrimary(severity, message, category));
+            }
+            else if (current is not null && string.IsNullOrWhiteSpace(line))
+            {
+                diagnostics.Add(current);
+                current = null;
+            }
+            else if (current is not null)
+                current = current with { Message = current.Message + "\n" + line };
+        }
+        if (current is not null) diagnostics.Add(current);
+    }
+
+    private static string Classify(string message, string severity)
+    {
+        if (message.Contains("bottom value", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("Skipping node generation", StringComparison.OrdinalIgnoreCase)) return "cascade";
+        if (message.Contains("parse", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("Expecting:", StringComparison.OrdinalIgnoreCase) ||
+            message.StartsWith("Error in ", StringComparison.OrdinalIgnoreCase)) return "parse";
+        if (message.Contains("type", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("constraint", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("unif", StringComparison.OrdinalIgnoreCase)) return "type";
+        return severity == "hint" ? "hint" : "compiler";
+    }
+
+    private static bool IsPrimary(string severity, string message, string category) =>
+        severity == "error" && category != "cascade" &&
+        !message.StartsWith("Error in ", StringComparison.OrdinalIgnoreCase);
 }

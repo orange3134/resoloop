@@ -111,6 +111,25 @@ public sealed class P1WorkflowTests : IDisposable
     public void FluxSdkCompatibilityIsExplicit(string? version, bool expected) =>
         Assert.Equal(expected, FluxCompatibility.Check(version).Compatible);
 
+    [Fact]
+    public void FluxDiagnosticsParseStdoutLocationsAndSeparatePrimaryFromCascade()
+    {
+        const string stdout = """
+            C:/project/Main.pg(3,3,3,4): error: Unable to parse expression inside a context sequence:
+            Expecting: Expression
+            C:/project/Main.pg(3,3,3,4): warning: Found a bottom value. Skipping node generation for it and its children.
+            """;
+
+        var diagnostics = FluxDiagnostics.Parse(stdout, "");
+
+        Assert.Equal(2, diagnostics.Count);
+        Assert.Equal("stdout", diagnostics[0].Channel);
+        Assert.Equal("parse", diagnostics[0].Category);
+        Assert.True(diagnostics[0].IsPrimary);
+        Assert.Equal("cascade", diagnostics[1].Category);
+        Assert.False(diagnostics[1].IsPrimary);
+    }
+
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, true); }
 
     private sealed class FakeFluxTool : IFluxTool

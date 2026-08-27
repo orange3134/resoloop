@@ -92,10 +92,12 @@ ResoniteLink 0.13.1にframebuffer/screenshot APIはないため、`capture`は�
 
 ~~~powershell
 rloop diff content/main.json --json
+rloop diff content/main.json --changes-only --json
+rloop diff content/main.json --deletes-only --json
 rloop apply content/main.json --prune --yes --json
 ~~~
 
-`diff`はcreate/update/rename/delete/no-op、理由、list要素のadded/removedを返し、worldを変更しません。renameはstable keyで同一Slotを追跡してnameを更新します。delete候補はstateに記録されたownership root内の対象だけです。通常applyは削除せず、`--prune --yes`を同時指定した場合だけComponent、深いSlotの順に削除します。
+`diff`はcreate/update/rename/delete/no-op、理由、list要素のadded/removedを返し、worldを変更しません。JSONの `changes` にはno-op以外が常に入り、`--changes-only` / `--creates-only` / `--deletes-only` / `--summary` は `operations` の表示だけを絞ります。SyncObject listは子memberを構造値へ正規化して比較します。renameはstable keyで同一Slotを追跡してnameを更新します。delete候補はstateに記録されたownership root内の対象だけです。通常applyは削除せず、`--prune --yes`を同時指定した場合だけComponent、深いSlotの順に削除します。
 
 ResoniteLinkのoperationはtransactionではありません。結果は常に `atomic: false` とcheckpoint pathを含む復旧手順を返します。途中失敗後は原因を直し、同じapplyを再実行して収束させます。
 

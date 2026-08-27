@@ -51,22 +51,33 @@ public sealed class WorldService(IResoniteClient client)
     }
 
     public async Task<SlotInfo> InspectAsync(string selector, int depth, bool includeComponentData,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, bool excludeReferenceOnly = false)
     {
         var id = await ResolveSlotIdAsync(selector, cancellationToken);
         var slot = await client.GetSlotAsync(id, depth, includeComponentData, cancellationToken);
-        return AddPaths(slot, selector.Contains('/') ? NormalizePath(selector) : slot.Name);
+        var withPaths = AddPaths(slot, selector.Contains('/') ? NormalizePath(selector) : slot.Name);
+        return excludeReferenceOnly ? RemoveReferenceOnlyChildren(withPaths) : withPaths;
     }
 
     public async Task<IReadOnlyList<SlotMatch>> FindAsync(string? name, bool exact, string? componentType,
-        int depth, CancellationToken cancellationToken = default)
+        int depth, CancellationToken cancellationToken = default, FindOptions? options = null)
     {
+        options ??= new FindOptions();
         if (string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(componentType))
             throw new RLoopException("FIND_FILTER_MISSING", "find requires --name or --component.", ExitCodes.InvalidArguments);
-        var root = await client.GetSlotAsync("Root", depth, false, cancellationToken);
+        var rootId = string.IsNullOrWhiteSpace(options.Under)
+            ? "Root"
+            : await ResolveSlotIdAsync(options.Under, cancellationToken);
+        var requestedDepth = options.DirectChildren ? 1 : depth;
+        var root = await client.GetSlotAsync(rootId, requestedDepth, false, cancellationToken);
+        var rootPath = string.IsNullOrWhiteSpace(options.Under)
+            ? "Root"
+            : options.Under!.Contains('/') ? NormalizePath(options.Under) : root.Name;
         var results = new List<SlotMatch>();
-        Visit(root, "Root", slot =>
+        Visit(root, rootPath, slot =>
         {
+            if (options.DirectChildren && slot.Id == root.Id) return;
+            if (options.ExcludeReferenceOnly && slot.IsReferenceOnly) return;
             var nameMatches = string.IsNullOrWhiteSpace(name) || (exact
                 ? slot.Name.Equals(name, StringComparison.Ordinal)
                 : slot.Name.Contains(name, StringComparison.OrdinalIgnoreCase));
@@ -74,6 +85,34 @@ public sealed class WorldService(IResoniteClient client)
                 c.Type.Contains(componentType, StringComparison.OrdinalIgnoreCase));
             if (nameMatches && componentMatches)
                 results.Add(new SlotMatch(slot.Id, slot.Name, slot.Path!, slot.Components));
+        });
+        return results;
+    }
+
+    public async Task<IReadOnlyList<InspectedComponent>> InspectComponentsAsync(string selector, int depth,
+        string? componentType = null, string? memberName = null, bool excludeReferenceOnly = false,
+        CancellationToken cancellationToken = default)
+    {
+        var slot = await InspectAsync(selector, depth, true, cancellationToken);
+        var results = new List<InspectedComponent>();
+        Visit(slot, slot.Path ?? slot.Name, current =>
+        {
+            if (excludeReferenceOnly && current.IsReferenceOnly) return;
+            foreach (var summary in current.Components)
+            {
+                if (!string.IsNullOrWhiteSpace(componentType) &&
+                    !summary.Type.Contains(componentType, StringComparison.OrdinalIgnoreCase)) continue;
+                var members = summary.Members ?? new Dictionary<string, MemberValue>();
+                if (!string.IsNullOrWhiteSpace(memberName))
+                {
+                    var matches = members.Where(pair => pair.Key.Equals(memberName, StringComparison.OrdinalIgnoreCase))
+                        .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+                    if (matches.Count == 0) continue;
+                    members = matches;
+                }
+                results.Add(new InspectedComponent(current.Id, current.Path ?? current.Name,
+                    new ComponentInfo(summary.Id, summary.Type, members)));
+            }
         });
         return results;
     }
@@ -434,7 +473,11 @@ public sealed class WorldService(IResoniteClient client)
     {
         "reference" => JsonValue.Create(member.TargetId),
         "list" => new JsonArray((member.Elements ?? []).Select(MemberActual).ToArray()),
-        _ => member.Value?.DeepClone()
+        "syncObject" or "dictionary" => new JsonObject((member.Members ?? new Dictionary<string, MemberValue>())
+            .Select(pair => KeyValuePair.Create<string, JsonNode?>(pair.Key, MemberActual(pair.Value)))),
+        "field" => NormalizeNode(member.Value),
+        "empty" => null,
+        _ => NormalizeNode(member.Value)
     };
 
     private static string SymbolKey(string value) => value[(value.IndexOf(':') + 1)..].Split('.')[0];
@@ -829,7 +872,7 @@ public sealed class WorldService(IResoniteClient client)
             if (desired is not JsonArray desiredArray || member.Elements is null || desiredArray.Count != member.Elements.Count) return false;
             for (var i = 0; i < desiredArray.Count; i++)
             {
-                var current = member.Elements[i].Kind == "reference" ? JsonValue.Create(member.Elements[i].TargetId) : NormalizeNode(member.Elements[i].Value);
+                var current = MemberActual(member.Elements[i]);
                 if (!JsonEquivalent(current, desiredArray[i])) return false;
             }
             return true;
@@ -955,6 +998,10 @@ public sealed class WorldService(IResoniteClient client)
         var children = slot.Children.Select(c => AddPaths(c, path.TrimEnd('/') + "/" + c.Name)).ToArray();
         return slot with { Path = path, Children = children };
     }
+    private static SlotInfo RemoveReferenceOnlyChildren(SlotInfo slot) => slot with
+    {
+        Children = slot.Children.Where(child => !child.IsReferenceOnly).Select(RemoveReferenceOnlyChildren).ToArray()
+    };
     private static void Visit(SlotInfo slot, string path, Action<SlotInfo> visitor)
     {
         var withPath = slot with { Path = path };

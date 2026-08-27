@@ -91,6 +91,8 @@ rloop status --json
 rloop hierarchy --depth 2 --json
 rloop find --name Cube --json
 rloop inspect Root/MyObject --members --json
+rloop find --name Status --under Root/RLoop_Test_Game --direct-children --json
+rloop inspect Root/RLoop_Test_Game --component Slider --member SnapPositions --depth 4 --json
 rloop type search Grabbable --json
 rloop type describe FrooxEngine.Grabbable --json
 
@@ -135,7 +137,7 @@ Exit codeは、2=引数、3=設定、4=接続、5=not found、6=validation、7=�
 | Flux | flux status/check/build/watch/deploy/deploy-manifest |
 | Diagnostics | doctor, logs |
 
-全オプションは rloop help で確認できます。hierarchyのdefault depthは2、findは8です。depth -1は全階層なので大規模worldでは避けてください。削除は --yes 必須で、Root削除は常に拒否されます。IDはResoniteLink session内だけで安定し、world再読込後には再取得が必要です。
+全オプションは `rloop help`、事故に関係する詳細は `rloop help apply` / `rloop help diff` で確認できます。hierarchyのdefault depthは2、findは8です。大規模worldでは `find --under` / `--direct-children` と `inspect --component` / `--member` を優先し、depth -1は避けてください。削除は --yes 必須で、Root削除は常に拒否されます。statusの `connectionId` はResoniteLink接続ごとのIDで、安定したworld identityではありません。保存済みIDは接続変更後にpath/keyから再解決されます。
 
 ## Declarative apply
 
@@ -164,6 +166,8 @@ include、parameter/variable、prototype/instance、repeat、asset、camera、as
 
 ~~~powershell
 rloop plan content/main.json --json
+rloop diff content/main.json --changes-only --json
+rloop diff content/main.json --deletes-only --json
 rloop apply content/main.json --profile --json
 rloop diff content/main.json --json
 rloop scene summary content/main.json --output artifacts/scene.json --json
@@ -171,7 +175,7 @@ rloop capture content/main.json --camera main --output artifacts/main.svg --json
 rloop test content/main.json --json
 ~~~
 
-applyの最終JSONはstdout、進捗はstderrへ分離されます。機械処理できる進捗が必要なら `--ndjson-progress`、表示を抑えるなら `--quiet` を使います。`--timeout` は各ResoniteLink request、`--command-timeout` はcommand全体のdeadlineです。Ctrl+Cやdeadlineで中断した場合はstate fileと完了件数が報告され、同じapplyで再開できます。
+applyの最終JSONはstdout、進捗はstderrへ分離されます。plan/diffのJSONは常に全変更を `changes` 配列へ分離し、`--changes-only` / `--creates-only` / `--deletes-only` / `--summary` は `operations` の表示量だけを絞ります。機械処理できる進捗が必要なら `--ndjson-progress`、表示を抑えるなら `--quiet` を使います。`--timeout` は各ResoniteLink request、`--command-timeout` はcommand全体のdeadlineです。Ctrl+Cやdeadlineで中断した場合はstate fileと完了件数が報告され、同じapplyで再開できます。
 
 ## Flux-SDK
 
@@ -230,6 +234,7 @@ rloop logs --tail 200 --json
 
 - CONNECTION_FAILED: ResoniteLinkがworldで有効か、画面上のportとURLが同じか確認
 - COMPONENT_TYPE_NOT_FOUND: type searchの完全な結果を使う
+- open generic: `rloop type specialize '[FrooxEngine]FrooxEngine.DynamicValueVariable<>' string` でclosed genericを生成する
 - COMPONENT_MEMBER_NOT_FOUND: type describeでflattened memberを確認
 - VALUE_CONVERSION_FAILED: vectorsはcomma区切り、quaternion/colorは4要素
 - FLUX_SDK_NOT_FOUND: flux-sdkをglobal toolとして導入、またはRLOOP_FLUX_EXECUTABLEを設定
@@ -239,7 +244,7 @@ rloop logs --tail 200 --json
 
 - ResoniteLink 0.13.1自体がBetaで、breaking changeの可能性があります。
 - applyはschema v1のJSONのみです。operationは非atomicでrollbackはできませんが、操作単位のcheckpointと再実行手順を返します。
-- List更新は公開API上whole-member replacementです。`diff`は要素added/removedを表示してから一括更新します。
+- List更新は公開API上whole-member replacementです。`diff`は要素added/removedを表示してから一括更新します。SyncObject要素は子memberを含む構造値へ正規化して比較します。
 - ResoniteLink 0.13.1にscreenshot APIがないため、captureは決定的なcamera-space SVGで、最終レンダリング画像ではありません。結果は `screenshotAvailable: false` を明示します。
 - logsはLink protocolからのstreamではなく、明示されたローカルlog fileのtailです。
 - runtime probeはpublic Reflectionに公開されたSyncMethodだけを明示許可付きで呼びます。公開されないinteractionはstructural-onlyです。

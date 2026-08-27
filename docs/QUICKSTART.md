@@ -77,7 +77,7 @@ rloop inspect $slotId --members --json
 rloop validate content/main.json --json
 rloop plan content/main.json --json
 rloop apply content/main.json --profile --json
-rloop diff content/main.json --json
+rloop diff content/main.json --changes-only --json
 rloop inspect $slotId --members --json
 ~~~
 
@@ -132,7 +132,7 @@ rloop inspect $slotId --depth 2 --members --json
 
 `flux deploy` は指定parent配下の同名moduleだけを置換します。module manifestでは複数moduleと依存順を宣言でき、world apply stateの `$slot:key` をparentにできます。watchは成功buildだけを再deployします。
 
-宣言から対象を取り除いた場合、まず`diff`でownership内のdelete候補を確認します。通常applyは削除しません。意図した候補だけだと確認した場合に限り、`rloop apply content/main.json --prune --yes --json`で収束させます。処理は非atomicなので、失敗時は結果のcheckpoint pathを保持して同じapplyを再実行します。
+宣言から対象を取り除いた場合、まず`rloop diff content/main.json --deletes-only --json`でownership内のdelete候補だけを確認します。通常applyは削除しません。意図した候補だけだと確認した場合に限り、`rloop apply content/main.json --prune --yes --json`で収束させます。処理は非atomicなので、失敗時は結果のcheckpoint pathを保持して同じapplyを再実行します。
 
 ## 6. AIエージェントと反復する
 

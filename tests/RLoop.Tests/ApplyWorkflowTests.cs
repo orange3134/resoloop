@@ -63,6 +63,39 @@ public sealed class ApplyWorkflowTests : IDisposable
     }
 
     [Fact]
+    public async Task SyncObjectListConvergesWhenRuntimeMembersMatchDeclaredStructure()
+    {
+        var client = new FakeResoniteClient();
+        var service = new WorldService(client);
+        var document = Document("sync-list", """
+            [{ "key": "slider", "type": "Test.Slider", "fields": {
+              "SnapPositions": [{ "Position": [0, 1.14, -0.1], "MaxDistance": 10.0 }]
+            } }]
+            """);
+        var state = Path.Combine(_root, "sync-list.state.json");
+
+        await service.ApplyAsync(document, new ApplyOptions(state));
+        var component = Assert.Single(Assert.Single(client.Root.Children).Components);
+        component.Members["SnapPositions"] = new MemberValue("list", Elements:
+        [
+            new MemberValue("syncObject", Members: new Dictionary<string, MemberValue>
+            {
+                ["Position"] = new("field", Type: "ResoniteLink.float3", Value: JsonNode.Parse("{\"x\":0,\"y\":1.14,\"z\":-0.1}")),
+                ["MaxDistance"] = new("field", Type: "System.Single", Value: JsonValue.Create(10f))
+            })
+        ]);
+        client.ResetWriteCounts();
+
+        var plan = await service.PlanApplyAsync(document, new ApplyOptions(state));
+        var applied = await service.ApplyAsync(document, new ApplyOptions(state));
+
+        Assert.DoesNotContain(plan.Changes, operation => operation.Key == "slider");
+        Assert.Equal("no-op", Assert.Single(plan.Operations, operation => operation.Kind == "component").Action);
+        Assert.Equal(0, applied.ComponentsUpdated);
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Fact]
     public async Task ExistingRootRequiresExplicitAdoption()
     {
         var client = new FakeResoniteClient();
@@ -338,6 +371,7 @@ public sealed class ApplyWorkflowTests : IDisposable
             _slots[Root.Id] = Root;
             _knownMembers["Test.Source"] = ["Target"];
             _knownMembers["Test.Target"] = ["Enabled"];
+            _knownMembers["Test.Slider"] = ["SnapPositions"];
             if (definitions is not null) RegisterDefinitions(definitions);
         }
 
