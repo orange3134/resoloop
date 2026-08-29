@@ -35,9 +35,11 @@ Safe interaction probe:
 
 ### 次の実装候補
 
-- [ ] Flux deployの返却値と実module childを分離し、`parentSlotId`、`moduleSlotIdBefore`、`moduleSlotIdAfter` を再観測結果から返す。
-- [ ] `managedFields` / transform preservation、stable key migration、親Slot単位の安全なprune最適化を設計する。
-- [ ] doctorで「managed-data未設定」と「Flux-SDKの自動発見成功/解決不能」をbuild probeにより区別する。
+- [x] Flux deployの返却値と実module childを分離し、`parentSlotId`、`moduleSlotIdBefore`、`moduleSlotIdAfter` を再観測結果から返す。
+- [x] `managedFields` と `preserveWorldTransform` により、既存Slotのtransform管理範囲を宣言できるようにする。
+- [x] Slot / Componentのstable keyを `migrateFrom` で移行し、world objectを作り直さずstateを更新する。
+- [x] staleな親Slot配下のpruneを1回の親Slot削除へ集約し、配下のstateをまとめてcheckpointする。
+- [x] doctorで「managed-data未設定」と「Flux-SDKの自動発見成功/解決不能」をbuild probeにより区別する。
 
 Flux bindingとinteraction probeは、型名・member名・メッセージを推測するとworldを壊す領域なので、pinned upstream確認、オフライン契約テスト、専用 `RLoop_Test*` live fixtureの順で進める。
 
@@ -170,4 +172,4 @@ Flux bindingとinteraction probeは、型名・member名・メッセージを推
 5. screenshot/scene assertion/interaction probeで結果の検証ループを閉じる。
 6. 再利用構文、型・asset、ProtoFlux、配布基盤を順次広げる。
 
-旧house-world由来のP0/P1は完了しています。ブロック崩し由来の次期P0では、stable Flux binding基盤とtransactional `set-member` probeまで完了しました。残件はFlux-SDK 1.9.0のglobal input型解決、binding型互換性・未結線検査、Dynamic Impulse、CallInputです。ResoniteLinkにtransaction、framebuffer、汎用event APIがない制約は、非atomic checkpoint recovery、決定的SVG、structural-only capabilityとして明示しています。引き続きrloopが管理する専用の `RLoop_Test*` Slotから導入し、`validate --strict` と `diff --changes-only` を先に実行する運用を推奨します。
+旧house-world由来のP0/P1は完了しています。ブロック崩し由来の次期P0では、stable Flux binding基盤、transactional `set-member` probe、実module child IDの再観測、transform管理ポリシー、stable key migration、親Slot prune集約、managed-data build probeまで完了しました。残件はFlux-SDK 1.9.0のglobal input型解決、binding型互換性・未結線検査、Dynamic Impulse、CallInputです。ResoniteLinkにtransaction、framebuffer、汎用event APIがない制約は、非atomic checkpoint recovery、決定的SVG、structural-only capabilityとして明示しています。引き続きrloopが管理する専用の `RLoop_Test*` Slotから導入し、`validate --strict` と `diff --changes-only` を先に実行する運用を推奨します。

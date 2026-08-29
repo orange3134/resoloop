@@ -41,6 +41,32 @@ includeは記述順に読み込まれ、`children`、`components`、`tests`を�
 
 forward referenceを利用できます。全参照が宣言され、strict modeではComponent/memberがruntime Reflectionに存在すると確認されてからmutationを始めます。closed generic Component typeも文字列を変形せずReflectionへ渡します。
 
+## Transform管理とstable key migration
+
+既存Slotの配置を宣言へ取り込むときは、rloopが管理するtransformを明示的に狭められます。
+
+~~~json
+{
+  "slot": {
+    "key": "panel-v2",
+    "migrateFrom": "panel",
+    "name": "Panel",
+    "position": [0, 1, 2],
+    "scale": [1, 1, 1],
+    "managedFields": ["scale"]
+  },
+  "components": [{
+    "key": "grabbable-v2",
+    "migrateFrom": "grabbable",
+    "type": "FrooxEngine.Grabbable"
+  }]
+}
+~~~
+
+`managedFields`に指定できるのは`position`、`rotation`、`scale`です。省略時は、宣言されたtransformをすべて管理します。既存Slotで`preserveWorldTransform: true`を指定すると、この3値を更新しません。新規Slotの作成時は初期値として宣言値を適用します。ResoniteLinkが公開するSlot transform値を保持する機能であり、座標系を変換してworld-spaceを再計算するものではありません。`preserveWorldTransform`と`managedFields`を併記した場合は保持を優先します。Slot名はどちらの設定にも関係なく管理されます。
+
+Slot / Componentの明示keyを変更する場合は、新key側へ`migrateFrom`で旧keyを1つ指定できます。stateだけを移行するため、対応するworld objectを削除・再作成しません。旧keyと新keyの両方がstateにある場合、旧keyを同じ宣言内に残した場合、移行元を複数箇所で使った場合は曖昧な移行としてvalidationまたはplanで拒否します。移行を適用してcheckpointされた後は`migrateFrom`を削除できます。
+
 ## Asset
 
 ~~~json
@@ -113,7 +139,7 @@ rloop diff content/main.json --deletes-only --json
 rloop apply content/main.json --prune --yes --json
 ~~~
 
-`diff`はcreate/update/rename/delete/no-op、理由、list要素のadded/removedを返し、worldを変更しません。JSONの `changes` にはno-op以外が常に入り、`--changes-only` / `--creates-only` / `--deletes-only` / `--summary` は `operations` の表示だけを絞ります。SyncObject listは子memberを構造値へ正規化して比較します。renameはstable keyで同一Slotを追跡してnameを更新します。delete候補はstateに記録されたownership root内の対象だけです。通常applyは削除せず、`--prune --yes`を同時指定した場合だけComponent、深いSlotの順に削除します。
+`diff`はcreate/update/rename/delete/no-op、理由、list要素のadded/removedを返し、worldを変更しません。JSONの `changes` にはno-op以外が常に入り、`--changes-only` / `--creates-only` / `--deletes-only` / `--summary` は `operations` の表示だけを絞ります。SyncObject listは子memberを構造値へ正規化して比較します。renameはstable keyで同一Slotを追跡してnameを更新します。delete候補はstateに記録されたownership root内の対象だけです。通常applyは削除しません。`--prune --yes`では、staleな親Slotがある場合は配下のSlot / Componentを個別削除せず、最上位のstale親Slotを1回削除して対応するstateをまとめてcheckpointします。親に含まれないstale Componentだけは個別に削除します。
 
 ResoniteLinkのoperationはtransactionではありません。結果は常に `atomic: false` とcheckpoint pathを含む復旧手順を返します。途中失敗後は原因を直し、同じapplyを再実行して収束させます。
 
@@ -140,4 +166,4 @@ parentに `$slot:key` を使う場合は`worldState`または`--state`が必要�
 }
 ~~~
 
-`source`はFlux moduleの `in` 名、`drive`は `out` 名をkeyにします。source targetはslot/component/member、drive targetはmemberだけです。rloopはworld stateから現在のIDを再解決し、Flux-SDKのInputMap/OutputMapへ渡します。binding宣言と解決結果が一致しない場合はdeployしません。deploy stateはsource、binding、transitive dependencyのhash、置換後Slot IDを保存し、no-op/updateと非atomic recoveryを報告します。watchは変更を検出して成功buildだけを検証済みparentへ再deployします。
+`source`はFlux moduleの `in` 名、`drive`は `out` 名をkeyにします。source targetはslot/component/member、drive targetはmemberだけです。rloopはworld stateから現在のIDを再解決し、Flux-SDKのInputMap/OutputMapへ渡します。binding宣言と解決結果が一致しない場合はdeployしません。deploy stateはsource、binding、transitive dependencyのhash、置換後module child IDを保存し、no-op/updateと非atomic recoveryを報告します。結果の`parentSlotId`はdeploy先、各moduleの`moduleSlotIdBefore` / `moduleSlotIdAfter`はparent直下を再観測した実module childです。接続が変わっても再観測したchildとhashが一致すればno-opになります。watchは変更を検出して成功buildだけを検証済みparentへ再deployします。

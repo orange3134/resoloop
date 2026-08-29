@@ -351,9 +351,10 @@ public sealed class WorldService(IResoniteClient client)
                     if (deletion.Id.Equals("Root", StringComparison.OrdinalIgnoreCase))
                         throw new RLoopException("DELETE_ROOT_FORBIDDEN", "The Root Slot can never be pruned.", ExitCodes.ValidationFailed);
                     await client.DeleteSlotAsync(deletion.Id, cancellationToken);
-                    prepared.State.Slots.Remove(deletion.Key);
-                    foreach (var componentKey in prepared.State.Components.Where(x => x.Value.SlotKey == deletion.Key).Select(x => x.Key).ToArray())
+                    foreach (var componentKey in deletion.CoveredComponentKeys ?? [])
                         prepared.State.Components.Remove(componentKey);
+                    foreach (var slotKey in deletion.CoveredSlotKeys ?? [deletion.Key])
+                        prepared.State.Slots.Remove(slotKey);
                     counts.SlotsDeleted++;
                     Checkpoint(prepared);
                     options.Progress?.Invoke(new ApplyProgress("prune", counts.ComponentsDeleted + counts.SlotsDeleted,
@@ -623,11 +624,13 @@ public sealed class WorldService(IResoniteClient client)
         var session = await client.GetSessionInfoAsync(cancellationToken);
         var sameSession = !string.IsNullOrWhiteSpace(session.UniqueSessionId) && session.UniqueSessionId == state.SessionId;
         state.SessionId = session.UniqueSessionId;
+        var migrations = ApplyStateMigrations(document, state);
         var parentSelector = string.IsNullOrWhiteSpace(document.Slot!.Parent) ? "Root" : document.Slot.Parent;
         var parentId = await ResolveSlotIdAsync(parentSelector, cancellationToken);
         var stateDepth = state.Slots.Values.Select(x => x.Path.Count(ch => ch == '/')).DefaultIfEmpty(0).Max();
         var parent = await client.GetSlotAsync(parentId, Math.Clamp(Math.Max(MaxDepth(document.Children) + 1, stateDepth), 0, 64), true, cancellationToken);
-        var prepared = new PreparedApply(document, options, state, statePath, session, parentId, sameSession);
+        var prepared = new PreparedApply(document, options, state, statePath, session, parentId, sameSession,
+            migrations.Slots, migrations.Components);
         var rootSpec = new ApplyNodeSpec(document.Slot, document.Components, document.Children);
         BuildNode(prepared, rootSpec, null, parent, NormalizeParentPath(parentSelector), true);
         BuildAssetPlans(prepared);
@@ -657,10 +660,12 @@ public sealed class WorldService(IResoniteClient client)
         var node = new NodeRuntime(spec.Slot, spec.Components ?? [], parentRuntime, existing, stableKey, path, action);
         prepared.Nodes.Add(node);
         var planAction = action == "update" && existing?.Name != spec.Slot.Name ? "rename" : action;
+        var migratedFrom = prepared.SlotMigrations.GetValueOrDefault(stableKey);
         prepared.Entries.Add(new ApplyPlanEntry(planAction, "slot", path, stableKey,
             Reason: action == "create" ? "managed Slot does not exist" : planAction == "rename" ?
                 $"stable key '{stableKey}' preserves identity while the name changes from '{existing!.Name}' to '{spec.Slot.Name}'" :
-                action == "update" ? "transform differs" : "Slot already matches"));
+                action == "update" ? "one or more managed transforms differ" : migratedFrom is not null ?
+                $"stable key migrated from '{migratedFrom}' without recreating the Slot" : "Slot already matches"));
 
         var childParent = existing ?? new SlotInfo("", spec.Slot.Name, null, null, null, null, null, null, null, false, [], []);
         for (var i = 0; i < (spec.Children?.Count ?? 0); i++)
@@ -713,8 +718,12 @@ public sealed class WorldService(IResoniteClient client)
                     }
                 }
             }
+            var migratedFrom = prepared.ComponentMigrations.GetValueOrDefault(component.StableKey);
             prepared.Entries.Add(new ApplyPlanEntry(action, "component", component.Path, component.StableKey,
                 component.Spec.Type, component.Spec.Fields?.Keys.ToArray(), reason, diffs));
+            if (action == "no-op" && migratedFrom is not null)
+                prepared.Entries[^1] = prepared.Entries[^1] with
+                { Reason = $"stable key migrated from '{migratedFrom}' without recreating the Component" };
         }
     }
 
@@ -778,7 +787,24 @@ public sealed class WorldService(IResoniteClient client)
         }
         VisitSnapshot(parentSnapshot, NormalizeParentPath(prepared.Document.Slot!.Parent ?? "Root"));
 
-        foreach (var stateComponent in prepared.State.Components.Where(x => !liveComponentKeys.Contains(x.Key)).ToArray())
+        var staleSlots = new List<(string Key, ApplyStateSlot State, SlotInfo Slot, string Path)>();
+        foreach (var stateSlot in prepared.State.Slots.Where(x => !liveSlotKeys.Contains(x.Key)).ToArray())
+        {
+            if (!stateSlot.Value.Path.StartsWith(rootPath + "/", StringComparison.Ordinal)) continue;
+            var slot = snapshots.FirstOrDefault(x => prepared.SameSession && x.Slot.Id == stateSlot.Value.Id || x.Path == stateSlot.Value.Path);
+            if (slot.Slot is null || slot.Slot.Id.Equals("Root", StringComparison.OrdinalIgnoreCase)) continue;
+            staleSlots.Add((stateSlot.Key, stateSlot.Value, slot.Slot, slot.Path));
+        }
+        var parentSlotDeletions = staleSlots.OrderBy(x => x.Path.Count(ch => ch == '/'))
+            .Where(candidate => !staleSlots.Any(other => other.Path.Length < candidate.Path.Length &&
+                candidate.Path.StartsWith(other.Path + "/", StringComparison.Ordinal)))
+            .ToArray();
+        var coveredSlotKeys = staleSlots.Where(stateSlot => parentSlotDeletions.Any(deletion =>
+                stateSlot.Path == deletion.Path || stateSlot.Path.StartsWith(deletion.Path + "/", StringComparison.Ordinal)))
+            .Select(stateSlot => stateSlot.Key).ToHashSet(StringComparer.Ordinal);
+
+        foreach (var stateComponent in prepared.State.Components.Where(x => !liveComponentKeys.Contains(x.Key) &&
+                     !coveredSlotKeys.Contains(x.Value.SlotKey)).ToArray())
         {
             if (!prepared.State.Slots.TryGetValue(stateComponent.Value.SlotKey, out var stateSlot)) continue;
             var slot = snapshots.FirstOrDefault(x => prepared.SameSession && x.Slot.Id == stateSlot.Id || x.Path == stateSlot.Path);
@@ -794,13 +820,17 @@ public sealed class WorldService(IResoniteClient client)
                 component.Type, Reason: deletion.Reason));
         }
 
-        foreach (var stateSlot in prepared.State.Slots.Where(x => !liveSlotKeys.Contains(x.Key)).ToArray())
+        foreach (var staleSlot in parentSlotDeletions)
         {
-            if (!stateSlot.Value.Path.StartsWith(rootPath + "/", StringComparison.Ordinal)) continue;
-            var slot = snapshots.FirstOrDefault(x => prepared.SameSession && x.Slot.Id == stateSlot.Value.Id || x.Path == stateSlot.Value.Path);
-            if (slot.Slot is null || slot.Slot.Id.Equals("Root", StringComparison.OrdinalIgnoreCase)) continue;
-            var deletion = new DeletionRuntime("slot", stateSlot.Key, slot.Slot.Id, slot.Path,
-                "stable key is no longer declared inside the owned boundary");
+            var removedSlotKeys = staleSlots.Where(stateSlot => stateSlot.Path == staleSlot.Path ||
+                    stateSlot.Path.StartsWith(staleSlot.Path + "/", StringComparison.Ordinal))
+                .Select(stateSlot => stateSlot.Key).ToArray();
+            var removedComponentKeys = prepared.State.Components.Where(component => !liveComponentKeys.Contains(component.Key) &&
+                    removedSlotKeys.Contains(component.Value.SlotKey, StringComparer.Ordinal))
+                .Select(component => component.Key).ToArray();
+            var deletion = new DeletionRuntime("slot", staleSlot.Key, staleSlot.Slot.Id, staleSlot.Path,
+                $"stable parent Slot is no longer declared; one Slot delete covers {removedSlotKeys.Length} managed Slot(s) and {removedComponentKeys.Length} Component(s)",
+                removedSlotKeys, removedComponentKeys);
             prepared.Deletions.Add(deletion);
             prepared.Entries.Add(new ApplyPlanEntry("delete", deletion.Kind, deletion.Path, deletion.Key,
                 Reason: deletion.Reason));
@@ -1087,18 +1117,68 @@ public sealed class WorldService(IResoniteClient client)
     }
 
     private static bool SlotNeedsUpdate(SlotInfo existing, ApplySlotSpec desired) =>
-        existing.Name != desired.Name || desired.Position is not null && !VectorEquals(existing.Position, desired.Position) ||
-        desired.Rotation is not null && !QuaternionEquals(existing.Rotation, desired.Rotation) ||
-        desired.Scale is not null && !VectorEquals(existing.Scale, desired.Scale);
+        existing.Name != desired.Name ||
+        ManagesTransform(desired, "position") && desired.Position is not null && !VectorEquals(existing.Position, desired.Position) ||
+        ManagesTransform(desired, "rotation") && desired.Rotation is not null && !QuaternionEquals(existing.Rotation, desired.Rotation) ||
+        ManagesTransform(desired, "scale") && desired.Scale is not null && !VectorEquals(existing.Scale, desired.Scale);
 
     private static SlotUpdateRequest CreateSlotUpdate(NodeRuntime node)
     {
         var existing = node.Existing!;
         return new SlotUpdateRequest(existing.Id,
             existing.Name == node.Spec.Name ? null : node.Spec.Name,
-            node.Spec.Position is not null && !VectorEquals(existing.Position, node.Spec.Position) ? node.Spec.Position.ToVector3("position") : null,
-            node.Spec.Rotation is not null && !QuaternionEquals(existing.Rotation, node.Spec.Rotation) ? node.Spec.Rotation.ToQuaternion("rotation") : null,
-            node.Spec.Scale is not null && !VectorEquals(existing.Scale, node.Spec.Scale) ? node.Spec.Scale.ToVector3("scale") : null);
+            ManagesTransform(node.Spec, "position") && node.Spec.Position is not null && !VectorEquals(existing.Position, node.Spec.Position) ? node.Spec.Position.ToVector3("position") : null,
+            ManagesTransform(node.Spec, "rotation") && node.Spec.Rotation is not null && !QuaternionEquals(existing.Rotation, node.Spec.Rotation) ? node.Spec.Rotation.ToQuaternion("rotation") : null,
+            ManagesTransform(node.Spec, "scale") && node.Spec.Scale is not null && !VectorEquals(existing.Scale, node.Spec.Scale) ? node.Spec.Scale.ToVector3("scale") : null);
+    }
+
+    private static bool ManagesTransform(ApplySlotSpec slot, string field) =>
+        !slot.PreserveWorldTransform && (slot.ManagedFields is null || slot.ManagedFields.Contains(field, StringComparer.Ordinal));
+
+    private static StateMigrations ApplyStateMigrations(ApplyDocument document, ApplyState state)
+    {
+        var slotMigrations = new Dictionary<string, string>(StringComparer.Ordinal);
+        var componentMigrations = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        void MigrateSlot(ApplySlotSpec slot)
+        {
+            if (!string.IsNullOrWhiteSpace(slot.Key) && !string.IsNullOrWhiteSpace(slot.MigrateFrom))
+            {
+                if (state.Slots.ContainsKey(slot.Key) && state.Slots.ContainsKey(slot.MigrateFrom))
+                    throw new RLoopException("APPLY_STATE_MIGRATION_CONFLICT",
+                        $"State contains both Slot keys '{slot.MigrateFrom}' and '{slot.Key}'.",
+                        ExitCodes.ValidationFailed);
+                if (!state.Slots.ContainsKey(slot.Key) && state.Slots.Remove(slot.MigrateFrom, out var migrated))
+                {
+                    state.Slots[slot.Key] = migrated;
+                    foreach (var component in state.Components.Where(component => component.Value.SlotKey == slot.MigrateFrom).ToArray())
+                        state.Components[component.Key] = component.Value with { SlotKey = slot.Key };
+                    slotMigrations[slot.Key] = slot.MigrateFrom;
+                }
+            }
+        }
+
+        void Visit(ApplySlotSpec slot, IReadOnlyList<ApplyComponentSpec>? components, IReadOnlyList<ApplyNodeSpec>? children)
+        {
+            MigrateSlot(slot);
+            foreach (var component in components ?? [])
+            {
+                if (string.IsNullOrWhiteSpace(component.Key) || string.IsNullOrWhiteSpace(component.MigrateFrom)) continue;
+                if (state.Components.ContainsKey(component.Key) && state.Components.ContainsKey(component.MigrateFrom))
+                    throw new RLoopException("APPLY_STATE_MIGRATION_CONFLICT",
+                        $"State contains both Component keys '{component.MigrateFrom}' and '{component.Key}'.",
+                        ExitCodes.ValidationFailed);
+                if (!state.Components.ContainsKey(component.Key) && state.Components.Remove(component.MigrateFrom, out var migrated))
+                {
+                    state.Components[component.Key] = migrated;
+                    componentMigrations[component.Key] = component.MigrateFrom;
+                }
+            }
+            foreach (var child in children ?? []) Visit(child.Slot, child.Components, child.Children);
+        }
+
+        Visit(document.Slot!, document.Components, document.Children);
+        return new StateMigrations(slotMigrations, componentMigrations);
     }
 
     private static bool VectorEquals(Vector3Value? current, float[] desired) => current is not null &&
@@ -1142,7 +1222,8 @@ public sealed class WorldService(IResoniteClient client)
     }
 
     private sealed class PreparedApply(ApplyDocument document, ApplyOptions options, ApplyState state,
-        string statePath, SessionInfo session, string parentId, bool sameSession)
+        string statePath, SessionInfo session, string parentId, bool sameSession,
+        IReadOnlyDictionary<string, string> slotMigrations, IReadOnlyDictionary<string, string> componentMigrations)
     {
         public ApplyDocument Document { get; } = document;
         public ApplyOptions Options { get; } = options;
@@ -1151,6 +1232,8 @@ public sealed class WorldService(IResoniteClient client)
         public SessionInfo Session { get; } = session;
         public string ParentId { get; } = parentId;
         public bool SameSession { get; } = sameSession;
+        public IReadOnlyDictionary<string, string> SlotMigrations { get; } = slotMigrations;
+        public IReadOnlyDictionary<string, string> ComponentMigrations { get; } = componentMigrations;
         public List<NodeRuntime> Nodes { get; } = [];
         public List<ComponentRuntime> Components { get; } = [];
         public List<ApplyPlanEntry> Entries { get; } = [];
@@ -1200,7 +1283,11 @@ public sealed class WorldService(IResoniteClient client)
         public int AssetsUnchanged { get; set; }
     }
 
-    private sealed record DeletionRuntime(string Kind, string Key, string Id, string Path, string Reason);
+    private sealed record StateMigrations(IReadOnlyDictionary<string, string> Slots,
+        IReadOnlyDictionary<string, string> Components);
+
+    private sealed record DeletionRuntime(string Kind, string Key, string Id, string Path, string Reason,
+        IReadOnlyList<string>? CoveredSlotKeys = null, IReadOnlyList<string>? CoveredComponentKeys = null);
 
     private sealed class AssetRuntime(string key, ApplyAssetSpec spec, string resolvedSource,
         string sourceHash, string? directUrl, string action)

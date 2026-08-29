@@ -158,7 +158,7 @@ rloop apply examples/house-world.json --json
 
 schema v1では、top-levelに `schemaVersion: "1"`、`ownership.key`、root `slot.key`が必要です。ownershipごとのstateは既定でproject内の `.rloop/state/<ownership>.json` に保存され、途中経過もcheckpointされます。このdirectoryは `rloop init` が生成するignore設定によりversion controlから除外されます。
 
-`children` でSlot階層を宣言できます。SlotとComponentの明示的 `key` はrenameやセッション変更後の再解決に使われます。同じSlotに同型Componentを複数宣言する場合は、それぞれにkeyが必要です。fieldから `$slot:key`、`$component:key`、`$member:key.MemberName`、`$asset:key` を参照でき、forward referenceも利用できます。旧 `$ref:key` も互換です。
+`children` でSlot階層を宣言できます。SlotとComponentの明示的 `key` はrenameやセッション変更後の再解決に使われます。同じSlotに同型Componentを複数宣言する場合は、それぞれにkeyが必要です。`managedFields`はrloopが収束させるposition/rotation/scaleを限定し、`preserveWorldTransform`は既存Slotの現在のtransform値を保持します。key変更時は`migrateFrom`でworld objectを作り直さずstateを移行できます。fieldから `$slot:key`、`$component:key`、`$member:key.MemberName`、`$asset:key` を参照でき、forward referenceも利用できます。旧 `$ref:key` も互換です。
 
 include、parameter/variable、prototype/instance、repeat、asset、camera、assertionの仕様は[docs/DECLARATIVE.md](docs/DECLARATIVE.md)にまとめています。house fixtureは3ファイルへ分割し、22個のboxと4本のtable legをprototype化しました。展開結果69 Slot・148 Componentを維持したまま、宣言量は46,178 byteから42,430 byteへ8.1%減っています。
 
@@ -175,7 +175,7 @@ rloop capture content/main.json --camera main --output artifacts/main.svg --json
 rloop test content/main.json --json
 ~~~
 
-applyの最終JSONはstdout、進捗はstderrへ分離されます。plan/diffのJSONは常に全変更を `changes` 配列へ分離し、`--changes-only` / `--creates-only` / `--deletes-only` / `--summary` は `operations` の表示量だけを絞ります。機械処理できる進捗が必要なら `--ndjson-progress`、表示を抑えるなら `--quiet` を使います。`--timeout` は各ResoniteLink request、`--command-timeout` はcommand全体のdeadlineです。Ctrl+Cやdeadlineで中断した場合はstate fileと完了件数が報告され、同じapplyで再開できます。
+applyの最終JSONはstdout、進捗はstderrへ分離されます。plan/diffのJSONは常に全変更を `changes` 配列へ分離し、`--changes-only` / `--creates-only` / `--deletes-only` / `--summary` は `operations` の表示量だけを絞ります。`--prune --yes`はstaleな親Slot配下を1回の親削除へ集約します。機械処理できる進捗が必要なら `--ndjson-progress`、表示を抑えるなら `--quiet` を使います。`--timeout` は各ResoniteLink request、`--command-timeout` はcommand全体のdeadlineです。Ctrl+Cやdeadlineで中断した場合はstate fileと完了件数が報告され、同じapplyで再開できます。
 
 ## Flux-SDK
 
@@ -190,7 +190,7 @@ rloop flux deploy-manifest examples/flux/rloop.flux.json --json
 rloop flux watch examples/flux/rloop.flux.json --json
 ~~~
 
-`.pg`に対するbuild/check/watchは既存Flux-SDK CLIをラップします。JSON module manifestに対するwatchは依存順に成功buildだけを再deployします。`$slot:key` parentはworld stateから現在session向けに検証・再解決されます。moduleの `bindings` ではFlux input名を `mode: "source"`、output名を `mode: "drive"` として `$slot:key` / `$component:key` / `$member:key.MemberName` へ接続できます。driveはmember targetだけを受け付けます。IDはworld stateのkey・path・type ordinalから接続ごとに再解決され、未解決またはmanifestと不一致のbindingはdeploy前に構造化エラーになります。deployはFlux-SDK 1.9のLoader.replaceを利用し、moduleごとのbefore/after ID、解決済みbinding、checkpoint recoveryを返します。
+`.pg`に対するbuild/check/watchは既存Flux-SDK CLIをラップします。JSON module manifestに対するwatchは依存順に成功buildだけを再deployします。`$slot:key` parentはworld stateから現在session向けに検証・再解決されます。moduleの `bindings` ではFlux input名を `mode: "source"`、output名を `mode: "drive"` として `$slot:key` / `$component:key` / `$member:key.MemberName` へ接続できます。driveはmember targetだけを受け付けます。IDはworld stateのkey・path・type ordinalから接続ごとに再解決され、未解決またはmanifestと不一致のbindingはdeploy前に構造化エラーになります。deployはFlux-SDK 1.9のLoader.replaceを利用し、deploy先の`parentSlotId`と、再観測した実module childの`moduleSlotIdBefore` / `moduleSlotIdAfter`、解決済みbinding、checkpoint recoveryを返します。`doctor`は最小check/build probeでmanaged-dataの明示pathまたは自動発見が実際に成功するか確認します。
 
 ## Codex Skills
 

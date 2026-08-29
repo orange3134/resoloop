@@ -17,10 +17,11 @@ public sealed record FluxResolvedModuleBindings(IReadOnlyList<FluxResolvedBindin
 }
 public sealed record FluxModuleSpec(string Name, string Source, string Module, IReadOnlyList<string>? DependsOn = null,
     IReadOnlyDictionary<string, FluxBindingSpec>? Bindings = null);
+public delegate Task<string?> FluxModuleSlotResolver(FluxModuleSpec module, CancellationToken cancellationToken);
 public sealed record FluxModuleManifest(string? SchemaVersion, IReadOnlyList<FluxModuleSpec> Modules, string? ProjectDirectory = null,
     string? Parent = null, string? WorldState = null, string? DeployState = null);
 public sealed record FluxModuleDeployment(string Name, string Action, string Reason, bool BuildSucceeded,
-    bool Deployed, string? BeforeSlotId, string? AfterSlotId, string? Error = null,
+    bool Deployed, string? ModuleSlotIdBefore, string? ModuleSlotIdAfter, string? Error = null,
     IReadOnlyList<FluxResolvedBinding>? Bindings = null);
 public sealed record FluxManifestResult(bool Success, string Manifest, string ParentSlotId,
     IReadOnlyList<FluxModuleDeployment> Modules, bool Atomic, string Recovery, bool WatchStopped = false);
@@ -30,6 +31,7 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
     public async Task<FluxManifestResult> DeployAsync(string manifestPath, string parentSlotId, Uri url,
         string? libraryPath, string? helperPath, string? sessionId = null,
         IReadOnlyDictionary<string, FluxResolvedModuleBindings>? resolvedBindings = null,
+        FluxModuleSlotResolver? resolveModuleSlot = null,
         CancellationToken cancellationToken = default)
     {
         var loaded = Load(manifestPath);
@@ -45,11 +47,19 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
             _ = resolvedBindings?.TryGetValue(module.Name, out moduleBindings);
             ValidateResolvedBindings(module, moduleBindings);
             var hash = EffectiveHash(hashes[module.Name], moduleBindings);
-            if (previous?.Hash == hash && !string.IsNullOrWhiteSpace(previous.SlotId) &&
-                state.ParentSlotId == parentSlotId && state.SessionId == sessionId)
+            var beforeSlotId = resolveModuleSlot is null
+                ? previous?.SlotId
+                : await resolveModuleSlot(module, cancellationToken);
+            if (previous?.Hash == hash && !string.IsNullOrWhiteSpace(beforeSlotId) &&
+                state.ParentSlotId == parentSlotId && (resolveModuleSlot is not null || state.SessionId == sessionId))
             {
+                if (previous.SlotId != beforeSlotId)
+                {
+                    state.Modules[module.Name] = new ModuleState(hash, beforeSlotId);
+                    SaveState(statePath, state);
+                }
                 results.Add(new FluxModuleDeployment(module.Name, "no-op", "source and transitive dependency hashes match deploy state",
-                    true, false, previous.SlotId, previous.SlotId, Bindings: moduleBindings?.Bindings));
+                    true, false, beforeSlotId, beforeSlotId, Bindings: moduleBindings?.Bindings));
                 continue;
             }
             var source = Path.GetFullPath(module.Source, loaded.Directory);
@@ -57,24 +67,37 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
             if (!build.Success)
             {
                 results.Add(new FluxModuleDeployment(module.Name, previous is null ? "create" : "update", "build failed; deploy was skipped",
-                    false, false, previous?.SlotId, null, build.StandardError, moduleBindings?.Bindings));
+                    false, false, beforeSlotId, beforeSlotId, build.StandardError, moduleBindings?.Bindings));
                 return Report(false);
             }
             var deploy = await flux.DeployAsync(new FluxDeployRequest(loaded.ProjectDirectory, module.Module, parentSlotId, url,
                 libraryPath, helperPath, moduleBindings?.InputMap, moduleBindings?.OutputMap), cancellationToken);
             if (!deploy.Success)
             {
+                var partialSlotId = resolveModuleSlot is null ? null : await resolveModuleSlot(module, cancellationToken);
                 results.Add(new FluxModuleDeployment(module.Name, previous is null ? "create" : "update", "deploy failed after successful build",
-                    true, false, previous?.SlotId, null, deploy.StandardError, moduleBindings?.Bindings));
+                    true, false, beforeSlotId, partialSlotId, deploy.StandardError, moduleBindings?.Bindings));
                 return Report(false);
             }
-            state.Modules[module.Name] = new ModuleState(hash, deploy.OutputPath);
+            var afterSlotId = resolveModuleSlot is null
+                ? deploy.OutputPath
+                : await resolveModuleSlot(module, cancellationToken);
+            if (string.IsNullOrWhiteSpace(afterSlotId))
+            {
+                results.Add(new FluxModuleDeployment(module.Name, previous is null ? "create" : "update",
+                    "Flux-SDK reported success, but the generated module child could not be re-observed",
+                    true, false, beforeSlotId, null,
+                    $"Module child '{module.Module}' was not found directly below parent '{parentSlotId}'.",
+                    moduleBindings?.Bindings));
+                return Report(false);
+            }
+            state.Modules[module.Name] = new ModuleState(hash, afterSlotId);
             state.ParentSlotId = parentSlotId;
             state.SessionId = sessionId;
             SaveState(statePath, state);
             results.Add(new FluxModuleDeployment(module.Name, previous is null ? "create" : "update",
                 previous is null ? "module has no deploy state" : "source or transitive dependency changed",
-                true, true, previous?.SlotId, deploy.OutputPath, Bindings: moduleBindings?.Bindings));
+                true, true, beforeSlotId, afterSlotId, Bindings: moduleBindings?.Bindings));
         }
         return Report(true);
 
@@ -85,6 +108,7 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
     public async Task<FluxManifestResult> WatchAsync(string manifestPath, string parentSlotId, Uri url,
         string? libraryPath, string? helperPath, string? sessionId, TimeSpan pollInterval,
         IReadOnlyDictionary<string, FluxResolvedModuleBindings>? resolvedBindings = null,
+        FluxModuleSlotResolver? resolveModuleSlot = null,
         CancellationToken cancellationToken = default)
     {
         FluxManifestResult? last = null;
@@ -99,7 +123,7 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
                 if (current != fingerprint)
                 {
                     last = await DeployAsync(manifestPath, parentSlotId, url, libraryPath, helperPath, sessionId,
-                        resolvedBindings, cancellationToken);
+                        resolvedBindings, resolveModuleSlot, cancellationToken);
                     fingerprint = current;
                 }
                 await Task.Delay(pollInterval, cancellationToken);

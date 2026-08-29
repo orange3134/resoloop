@@ -53,7 +53,7 @@ $env:RESONITE_LINK_URL="ws://localhost:<current-port>"
 rloop doctor
 ~~~
 
-`resonite-link-url` と `resonite-connection` が `pass` で、末尾が `ready` ならSlot/Component開発を開始できます。Flux SDK、managed data、log pathは任意機能なので、未設定でもcore開発は可能です。
+`resonite-link-url` と `resonite-connection` が `pass` で、末尾が `ready` ならSlot/Component開発を開始できます。Flux SDK、managed data、log pathは任意機能なので、未設定でもcore開発は可能です。Flux-SDKが利用可能な場合、`resonite-managed-data`は最小check/build probeを実行し、明示pathの解決成功、未設定時の自動発見成功、解決失敗を区別します。
 
 設定の優先順位は、CLI option、環境変数、カレントから親方向にある `.rloop.json`、ユーザー設定の順です。現在portのようなセッション依存値には環境変数か `--url` を推奨します。
 
@@ -72,6 +72,8 @@ rloop inspect $slotId --members --json
 ~~~
 
 `content/main.json` のposition、scale、Component fieldsなどを編集して、validateとplanを通してから同じapplyを再実行します。stateは `.rloop/state/` にcheckpointされ、変更なしの対象にはworld書き込みを行いません。
+
+既存の手動配置を保つSlotには`preserveWorldTransform: true`、一部のtransformだけをrloopに収束させる場合は`managedFields: ["scale"]`のように指定できます。stable keyを変更するときは新keyへ`migrateFrom: "old-key"`を一時的に追加すると、world objectを作り直さずstateを移行できます。
 
 ~~~powershell
 rloop validate content/main.json --json
@@ -130,9 +132,9 @@ rloop flux watch flux/rloop.flux.json --json
 rloop inspect $slotId --depth 2 --members --json
 ~~~
 
-`flux deploy` は指定parent配下の同名moduleだけを置換します。module manifestでは複数moduleと依存順を宣言でき、world apply stateの `$slot:key` をparentにできます。watchは成功buildだけを再deployします。
+`flux deploy` は指定parent配下の同名moduleだけを置換します。module manifestでは複数moduleと依存順を宣言でき、world apply stateの `$slot:key` をparentにできます。manifest結果の`parentSlotId`はdeploy先、`moduleSlotIdBefore` / `moduleSlotIdAfter`は再観測した実module childです。watchは成功buildだけを再deployします。
 
-宣言から対象を取り除いた場合、まず`rloop diff content/main.json --deletes-only --json`でownership内のdelete候補だけを確認します。通常applyは削除しません。意図した候補だけだと確認した場合に限り、`rloop apply content/main.json --prune --yes --json`で収束させます。処理は非atomicなので、失敗時は結果のcheckpoint pathを保持して同じapplyを再実行します。
+宣言から対象を取り除いた場合、まず`rloop diff content/main.json --deletes-only --json`でownership内のdelete候補だけを確認します。通常applyは削除しません。意図した候補だけだと確認した場合に限り、`rloop apply content/main.json --prune --yes --json`で収束させます。staleな親Slotは配下の管理対象を含む1回のSlot削除へ集約されます。処理は非atomicなので、失敗時は結果のcheckpoint pathを保持して同じapplyを再実行します。
 
 ## 6. AIエージェントと反復する
 

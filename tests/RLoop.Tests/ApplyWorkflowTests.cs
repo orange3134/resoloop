@@ -219,6 +219,114 @@ public sealed class ApplyWorkflowTests : IDisposable
     }
 
     [Fact]
+    public async Task PreserveWorldTransformKeepsAnExistingUserPlacement()
+    {
+        var path = Path.Combine(_root, "preserve-transform.json");
+        File.WriteAllText(path, """
+            { "schemaVersion":"1", "ownership":{"key":"preserve-transform"},
+              "slot":{"key":"root","name":"Managed","parent":"Root","position":[0,0,0],"preserveWorldTransform":true} }
+            """);
+        var document = ApplyDocument.Load(path);
+        var client = new FakeResoniteClient();
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "preserve-transform.state.json");
+        await service.ApplyAsync(document, new ApplyOptions(state));
+        var managed = Assert.Single(client.Root.Children);
+        managed.Position = new Vector3Value(5, 6, 7);
+        client.ResetWriteCounts();
+
+        var plan = await service.PlanApplyAsync(document, new ApplyOptions(state));
+        var applied = await service.ApplyAsync(document, new ApplyOptions(state));
+
+        Assert.Equal("no-op", Assert.Single(plan.Operations, operation => operation.Kind == "slot").Action);
+        Assert.Equal(new Vector3Value(5, 6, 7), managed.Position);
+        Assert.Equal(0, applied.SlotsUpdated);
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Fact]
+    public async Task ManagedFieldsUpdatesOnlySelectedTransforms()
+    {
+        var path = Path.Combine(_root, "managed-fields.json");
+        File.WriteAllText(path, """
+            { "schemaVersion":"1", "ownership":{"key":"managed-fields"},
+              "slot":{"key":"root","name":"Managed","parent":"Root","position":[0,0,0],"scale":[1,1,1],
+                      "managedFields":["scale"]} }
+            """);
+        var document = ApplyDocument.Load(path);
+        var client = new FakeResoniteClient();
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "managed-fields.state.json");
+        await service.ApplyAsync(document, new ApplyOptions(state));
+        var managed = Assert.Single(client.Root.Children);
+        managed.Position = new Vector3Value(5, 6, 7);
+        managed.Scale = new Vector3Value(2, 2, 2);
+        client.ResetWriteCounts();
+
+        var applied = await service.ApplyAsync(document, new ApplyOptions(state));
+
+        Assert.Equal(new Vector3Value(5, 6, 7), managed.Position);
+        Assert.Equal(new Vector3Value(1, 1, 1), managed.Scale);
+        Assert.Equal(1, applied.SlotsUpdated);
+        Assert.Equal(1, client.Writes);
+    }
+
+    [Fact]
+    public async Task ValidationRejectsUnknownManagedFieldsAndAmbiguousMigrationSources()
+    {
+        var path = Path.Combine(_root, "invalid-management-policy.json");
+        File.WriteAllText(path, """
+            { "schemaVersion":"1", "ownership":{"key":"invalid-management-policy"},
+              "slot":{"key":"root","name":"Managed","parent":"Root","managedFields":["name"]},
+              "children":[
+                {"slot":{"key":"old","name":"Old"}},
+                {"slot":{"key":"new","migrateFrom":"old","name":"New"}}
+              ] }
+            """);
+
+        var result = await ApplyDocumentValidator.ValidateAsync(ApplyDocument.Load(path));
+
+        Assert.False(result.Valid);
+        Assert.Contains(result.Issues, issue => issue.Code == "APPLY_MANAGED_FIELD_INVALID");
+        Assert.Contains(result.Issues, issue => issue.Code == "APPLY_MIGRATION_SOURCE_DECLARED");
+    }
+
+    [Fact]
+    public async Task MigrateFromRenamesStableSlotAndComponentKeysWithoutWorldWrites()
+    {
+        var initial = Path.Combine(_root, "migration-initial.json");
+        File.WriteAllText(initial, """
+            { "schemaVersion":"1", "ownership":{"key":"migration"},
+              "slot":{"key":"old-root","name":"Managed","parent":"Root"},
+              "components":[{"key":"old-target","type":"Test.Target","fields":{"Enabled":true}}] }
+            """);
+        var desired = Path.Combine(_root, "migration-desired.json");
+        File.WriteAllText(desired, """
+            { "schemaVersion":"1", "ownership":{"key":"migration"},
+              "slot":{"key":"new-root","migrateFrom":"old-root","name":"Managed","parent":"Root"},
+              "components":[{"key":"new-target","migrateFrom":"old-target","type":"Test.Target","fields":{"Enabled":true}}] }
+            """);
+        var client = new FakeResoniteClient(ApplyDocument.Load(initial));
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "migration.state.json");
+        await service.ApplyAsync(ApplyDocument.Load(initial), new ApplyOptions(state));
+        client.ResetWriteCounts();
+
+        var plan = await service.PlanApplyAsync(ApplyDocument.Load(desired), new ApplyOptions(state));
+        var applied = await service.ApplyAsync(ApplyDocument.Load(desired), new ApplyOptions(state));
+
+        Assert.DoesNotContain(plan.Operations, operation => operation.Action is "create" or "delete");
+        Assert.Contains(plan.Operations, operation => operation.Key == "new-root" && operation.Reason?.Contains("migrated from 'old-root'") == true);
+        Assert.Contains(plan.Operations, operation => operation.Key == "new-target" && operation.Reason?.Contains("migrated from 'old-target'") == true);
+        Assert.Equal(0, client.Writes);
+        Assert.Equal(0, applied.SlotsCreated);
+        using var checkpoint = JsonDocument.Parse(File.ReadAllText(state));
+        Assert.True(checkpoint.RootElement.GetProperty("slots").TryGetProperty("new-root", out _));
+        Assert.False(checkpoint.RootElement.GetProperty("slots").TryGetProperty("old-root", out _));
+        Assert.True(checkpoint.RootElement.GetProperty("components").TryGetProperty("new-target", out _));
+    }
+
+    [Fact]
     public async Task PruneRequiresConfirmationAndDeletesOnlyStaleOwnedTargets()
     {
         var state = Path.Combine(_root, "prune.state.json");
@@ -237,14 +345,55 @@ public sealed class ApplyWorkflowTests : IDisposable
 
         var plan = await service.PlanApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(state));
         Assert.Contains(plan.Operations, operation => operation.Action == "delete" && operation.Key == "old-slot");
+        Assert.DoesNotContain(plan.Operations, operation => operation.Action == "delete" && operation.Kind == "component");
         Assert.Single(Assert.Single(client.Root.Children).Children);
         await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(state, Prune: true)));
 
         var applied = await service.ApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(state, Prune: true, ConfirmDeletes: true));
         Assert.Equal(1, applied.SlotsDeleted);
+        Assert.Equal(0, applied.ComponentsDeleted);
         Assert.Empty(Assert.Single(client.Root.Children).Children);
         Assert.False(applied.Atomic);
         Assert.NotNull(applied.Recovery);
+    }
+
+    [Fact]
+    public async Task ParentPruneKeepsStateForAStableChildMovedOutOfTheDeletedParent()
+    {
+        var state = Path.Combine(_root, "prune-move.state.json");
+        var initialPath = Path.Combine(_root, "prune-move-initial.json");
+        File.WriteAllText(initialPath, """
+            { "schemaVersion":"1", "ownership":{"key":"prune-move"}, "slot":{"key":"root","name":"Managed","parent":"Root"},
+              "children":[{"slot":{"key":"old-parent","name":"OldParent"},"children":[
+                {"slot":{"key":"kept-child","name":"Kept"},"components":[
+                  {"key":"kept-component","type":"Test.Target","fields":{"Enabled":true}}
+                ]}
+              ]}] }
+            """);
+        var desiredPath = Path.Combine(_root, "prune-move-desired.json");
+        File.WriteAllText(desiredPath, """
+            { "schemaVersion":"1", "ownership":{"key":"prune-move"}, "slot":{"key":"root","name":"Managed","parent":"Root"},
+              "children":[{"slot":{"key":"kept-child","name":"Kept"},"components":[
+                {"key":"kept-component","type":"Test.Target","fields":{"Enabled":true}}
+              ]}] }
+            """);
+        var client = new FakeResoniteClient();
+        var service = new WorldService(client);
+        await service.ApplyAsync(ApplyDocument.Load(initialPath), new ApplyOptions(state));
+
+        var applied = await service.ApplyAsync(ApplyDocument.Load(desiredPath),
+            new ApplyOptions(state, Prune: true, ConfirmDeletes: true));
+        client.ResetWriteCounts();
+        var reapplied = await service.ApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(state));
+
+        Assert.Equal(1, applied.SlotsDeleted);
+        Assert.Single(Assert.Single(client.Root.Children).Children);
+        Assert.Equal(0, reapplied.SlotsCreated);
+        Assert.Equal(0, reapplied.ComponentsAdded);
+        Assert.Equal(0, client.Writes);
+        using var checkpoint = JsonDocument.Parse(File.ReadAllText(state));
+        Assert.True(checkpoint.RootElement.GetProperty("slots").TryGetProperty("kept-child", out _));
+        Assert.True(checkpoint.RootElement.GetProperty("components").TryGetProperty("kept-component", out _));
     }
 
     [Fact]

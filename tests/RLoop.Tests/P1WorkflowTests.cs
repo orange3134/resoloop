@@ -148,6 +148,34 @@ public sealed class P1WorkflowTests : IDisposable
     }
 
     [Fact]
+    public async Task FluxManifestReturnsReobservedModuleChildIdsInsteadOfSdkParentId()
+    {
+        File.WriteAllText(Path.Combine(_root, "ids.pg"), "module ActualModule where { 1->display }");
+        var manifest = Path.Combine(_root, "ids-flux.json");
+        File.WriteAllText(manifest, """
+            { "schemaVersion":"1", "modules":[{"name":"logical-name","source":"ids.pg","module":"ActualModule"}] }
+            """);
+        var observations = new Queue<string?>(["Reso_OldModule", "Reso_NewModule", "Reso_NewModule"]);
+        var fake = new FakeFluxTool();
+        var orchestrator = new FluxManifestOrchestrator(fake);
+
+        var result = await orchestrator.DeployAsync(manifest, "Reso_Parent", new Uri("ws://localhost:12449"),
+            null, null, resolveModuleSlot: (_, _) => Task.FromResult(observations.Dequeue()));
+
+        var deployment = Assert.Single(result.Modules);
+        Assert.Equal("Reso_OldModule", deployment.ModuleSlotIdBefore);
+        Assert.Equal("Reso_NewModule", deployment.ModuleSlotIdAfter);
+        Assert.NotEqual(result.ParentSlotId, deployment.ModuleSlotIdAfter);
+
+        var reconnected = await orchestrator.DeployAsync(manifest, "Reso_Parent", new Uri("ws://localhost:12449"),
+            null, null, sessionId: "connection-2",
+            resolveModuleSlot: (_, _) => Task.FromResult(observations.Dequeue()));
+
+        Assert.Equal("no-op", Assert.Single(reconnected.Modules).Action);
+        Assert.Single(fake.Requests);
+    }
+
+    [Fact]
     public async Task FluxManifestRejectsDeclaredBindingsThatWereNotResolved()
     {
         File.WriteAllText(Path.Combine(_root, "unresolved.pg"), "module Unresolved where { 1->display }");
@@ -192,13 +220,45 @@ public sealed class P1WorkflowTests : IDisposable
         Assert.False(diagnostics[1].IsPrimary);
     }
 
+    [Fact]
+    public async Task FluxManagedDataProbeDistinguishesSuccessfulAutoDiscoveryFromFailure()
+    {
+        var successTool = new FakeFluxTool
+        {
+            BuildResult = new FluxResult(true, 0, "Added Froox nodes: 3306\n", "")
+        };
+
+        var success = await FluxManagedDataProbe.RunAsync(successTool, null);
+
+        Assert.True(success.Success);
+        Assert.True(success.AutoDiscovery);
+        Assert.Equal(3306, success.LoadedNodes);
+        Assert.Null(Assert.Single(successTool.BuildRequests).LibraryPath);
+
+        var failureTool = new FakeFluxTool
+        {
+            BuildResult = new FluxResult(false, 1, "", "Could not find FrooxEngine assemblies")
+        };
+        var failure = await FluxManagedDataProbe.RunAsync(failureTool, "C:/missing-managed-data");
+
+        Assert.False(failure.Success);
+        Assert.False(failure.AutoDiscovery);
+        Assert.Contains("Could not find FrooxEngine assemblies", failure.Message);
+    }
+
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, true); }
 
     private sealed class FakeFluxTool : IFluxTool
     {
         public List<string> Deployed { get; } = [];
         public List<FluxDeployRequest> Requests { get; } = [];
-        public Task<FluxResult> BuildAsync(FluxBuildRequest request, CancellationToken cancellationToken = default) => Task.FromResult(new FluxResult(true, 0, "", ""));
+        public List<FluxBuildRequest> BuildRequests { get; } = [];
+        public FluxResult? BuildResult { get; init; }
+        public Task<FluxResult> BuildAsync(FluxBuildRequest request, CancellationToken cancellationToken = default)
+        {
+            BuildRequests.Add(request);
+            return Task.FromResult(BuildResult ?? new FluxResult(true, 0, "", ""));
+        }
         public Task<FluxResult> CheckAsync(FluxBuildRequest request, CancellationToken cancellationToken = default) => BuildAsync(request, cancellationToken);
         public Task<FluxResult> WatchAsync(FluxBuildRequest request, CancellationToken cancellationToken = default) => BuildAsync(request, cancellationToken);
         public Task<FluxResult> DeployAsync(FluxDeployRequest request, CancellationToken cancellationToken = default)

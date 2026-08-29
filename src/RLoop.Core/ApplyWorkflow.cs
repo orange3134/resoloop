@@ -100,12 +100,16 @@ public sealed record ApplySlotSpec(
     float[]? Position,
     float[]? Rotation,
     float[]? Scale,
-    string? Key = null);
+    string? Key = null,
+    IReadOnlyList<string>? ManagedFields = null,
+    bool PreserveWorldTransform = false,
+    string? MigrateFrom = null);
 
 public sealed record ApplyComponentSpec(
     string Type,
     IReadOnlyDictionary<string, JsonElement>? Fields,
-    string? Key = null);
+    string? Key = null,
+    string? MigrateFrom = null);
 
 public sealed record ApplyNodeSpec(
     ApplySlotSpec Slot,
@@ -135,6 +139,8 @@ public static class ApplyDocumentValidator
         var references = 0;
         var componentKeys = new Dictionary<string, (ApplyComponentSpec Spec, string Path)>(StringComparer.Ordinal);
         var slotKeys = new HashSet<string>(StringComparer.Ordinal);
+        var slotMigrations = new Dictionary<string, (string NewKey, string Path)>(StringComparer.Ordinal);
+        var componentMigrations = new Dictionary<string, (string NewKey, string Path)>(StringComparer.Ordinal);
         var componentPaths = new List<(ApplyComponentSpec Spec, string Path)>();
 
         void Issue(string code, string message, string path) => issues.Add(new ApplyValidationIssue(code, message, path));
@@ -243,6 +249,18 @@ public static class ApplyDocumentValidator
             if (slot.Scale is { Length: not 3 }) Issue("APPLY_VECTOR_INVALID", "scale requires exactly 3 numbers.", path + ".slot.scale");
             if (!string.IsNullOrWhiteSpace(slot.Key) && !slotKeys.Add(slot.Key))
                 Issue("APPLY_SLOT_KEY_DUPLICATE", $"Slot key '{slot.Key}' is duplicated.", path + ".slot.key");
+            foreach (var field in slot.ManagedFields ?? [])
+                if (field is not ("position" or "rotation" or "scale"))
+                    Issue("APPLY_MANAGED_FIELD_INVALID", $"Managed Slot field '{field}' is not supported.", path + ".slot.managedFields");
+            if (!string.IsNullOrWhiteSpace(slot.MigrateFrom))
+            {
+                if (string.IsNullOrWhiteSpace(slot.Key))
+                    Issue("APPLY_MIGRATION_KEY_REQUIRED", "slot.migrateFrom requires an explicit slot.key.", path + ".slot.migrateFrom");
+                else if (slot.MigrateFrom == slot.Key)
+                    Issue("APPLY_MIGRATION_SELF_REFERENCE", "slot.migrateFrom must differ from slot.key.", path + ".slot.migrateFrom");
+                else if (!slotMigrations.TryAdd(slot.MigrateFrom, (slot.Key, path)))
+                    Issue("APPLY_MIGRATION_SOURCE_DUPLICATE", $"Stable Slot key '{slot.MigrateFrom}' is used by multiple migrations.", path + ".slot.migrateFrom");
+            }
 
             var typeCounts = new Dictionary<string, int>(StringComparer.Ordinal);
             for (var i = 0; i < (nodeComponents?.Count ?? 0); i++)
@@ -263,6 +281,15 @@ public static class ApplyDocumentValidator
                 {
                     if (!componentKeys.TryAdd(component.Key, (component, componentPath)))
                         Issue("APPLY_KEY_DUPLICATE", $"Component key '{component.Key}' is duplicated.", componentPath + ".key");
+                }
+                if (!string.IsNullOrWhiteSpace(component.MigrateFrom))
+                {
+                    if (string.IsNullOrWhiteSpace(component.Key))
+                        Issue("APPLY_MIGRATION_KEY_REQUIRED", "component.migrateFrom requires an explicit component.key.", componentPath + ".migrateFrom");
+                    else if (component.MigrateFrom == component.Key)
+                        Issue("APPLY_MIGRATION_SELF_REFERENCE", "component.migrateFrom must differ from component.key.", componentPath + ".migrateFrom");
+                    else if (!componentMigrations.TryAdd(component.MigrateFrom, (component.Key, componentPath)))
+                        Issue("APPLY_MIGRATION_SOURCE_DUPLICATE", $"Stable Component key '{component.MigrateFrom}' is used by multiple migrations.", componentPath + ".migrateFrom");
                 }
                 foreach (var field in component.Fields ?? new Dictionary<string, JsonElement>())
                 {
@@ -286,6 +313,13 @@ public static class ApplyDocumentValidator
         }
 
         if (document.Slot is not null) Visit(document.Slot, document.Components, document.Children, "$");
+
+        foreach (var migration in slotMigrations.Where(migration => slotKeys.Contains(migration.Key)))
+            Issue("APPLY_MIGRATION_SOURCE_DECLARED",
+                $"Slot key '{migration.Key}' cannot be both declared and used as migrateFrom.", migration.Value.Path + ".slot.migrateFrom");
+        foreach (var migration in componentMigrations.Where(migration => componentKeys.ContainsKey(migration.Key)))
+            Issue("APPLY_MIGRATION_SOURCE_DECLARED",
+                $"Component key '{migration.Key}' cannot be both declared and used as migrateFrom.", migration.Value.Path + ".migrateFrom");
 
         foreach (var (component, componentPath) in componentPaths)
         {

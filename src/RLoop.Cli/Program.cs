@@ -216,7 +216,7 @@ public static class Program
                 "Check RLOOP_FLUX_EXECUTABLE or install Papaltine.FluxSDK 1.9.0."));
         }
 
-        checks.Add(ManagedDataCheck(config.ResoniteManagedDataPath, fluxStatus));
+        checks.Add(await ManagedDataCheckAsync(config.ResoniteManagedDataPath, fluxStatus, flux, cancellationToken));
         checks.Add(PathCheck("resonite-log", config.ResoniteLogPath,
             "Set RESONITE_LOG_PATH when rloop logs is needed."));
 
@@ -254,18 +254,38 @@ public static class Program
         }
     }
 
-    private static DoctorCheck ManagedDataCheck(string? path, FluxToolStatus? fluxStatus)
+    private static async Task<DoctorCheck> ManagedDataCheckAsync(string? path, FluxToolStatus? fluxStatus,
+        IFluxTool flux, CancellationToken cancellationToken)
     {
-        if (!string.IsNullOrWhiteSpace(path))
-            return PathCheck("resonite-managed-data", path,
-                "Correct RESONITE_MANAGED_DATA_PATH or omit it to let Flux-SDK attempt auto-discovery.");
-        return fluxStatus?.Available == true
-            ? new DoctorCheck("resonite-managed-data", "info", false,
-                "Not explicitly configured; Flux-SDK is available and may auto-discover Resonite managed data during check/build.",
-                "Run rloop flux check on the project to verify actual library resolution.")
-            : new DoctorCheck("resonite-managed-data", "warning", false,
-                "Not configured, and Flux-SDK availability was not confirmed.",
+        if (fluxStatus?.Available != true)
+            return new DoctorCheck("resonite-managed-data", "warning", false,
+                string.IsNullOrWhiteSpace(path)
+                    ? "Not configured, and Flux-SDK availability was not confirmed."
+                    : $"Configured path was not probed because Flux-SDK availability was not confirmed: {Path.GetFullPath(path)}.",
                 "Install Flux-SDK or set RESONITE_MANAGED_DATA_PATH before ProtoFlux work.");
+        try
+        {
+            var probe = await FluxManagedDataProbe.RunAsync(flux, path, cancellationToken);
+            if (probe.Success)
+                return new DoctorCheck("resonite-managed-data", "pass", false,
+                    probe.AutoDiscovery
+                        ? $"Not explicitly configured; Flux-SDK auto-discovery succeeded. {probe.Message}"
+                        : $"Configured path resolved successfully: {probe.LibraryPath}. {probe.Message}");
+            return new DoctorCheck("resonite-managed-data", "warning", false,
+                probe.AutoDiscovery
+                    ? $"Not explicitly configured; Flux-SDK auto-discovery failed: {probe.Message}"
+                    : $"Configured path failed the Flux-SDK check/build probe: {probe.LibraryPath}. {probe.Message}",
+                probe.AutoDiscovery
+                    ? "Set RESONITE_MANAGED_DATA_PATH or --library-path to the active Resonite managed DLL directory."
+                    : "Correct RESONITE_MANAGED_DATA_PATH or omit it to retry Flux-SDK auto-discovery.");
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            return new DoctorCheck("resonite-managed-data", "warning", false,
+                $"Flux-SDK check/build probe could not run: {ex.Message}",
+                "Check the Flux-SDK installation and RESONITE_MANAGED_DATA_PATH.");
+        }
     }
 
     private static async Task RunResonite(ParsedArguments args, OutputWriter output, IResoniteClient client,
@@ -535,12 +555,28 @@ public static class Program
                 resolvedBindings[module.Name] = new FluxResolvedModuleBindings(bindings);
             }
             var orchestrator = new FluxManifestOrchestrator(flux);
+            async Task<string?> ResolveModuleSlot(FluxModuleSpec module, CancellationToken cancellationToken)
+            {
+                var parent = await client.GetSlotAsync(parentId, 1, false, cancellationToken);
+                var names = new[]
+                {
+                    module.Module,
+                    module.Module.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault()
+                }.Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.Ordinal).ToArray();
+                var matches = parent.Children.Where(child => names.Contains(child.Name, StringComparer.Ordinal)).ToArray();
+                if (matches.Length > 1)
+                    throw new RLoopException("FLUX_MODULE_SLOT_AMBIGUOUS",
+                        $"Module '{module.Name}' matched multiple direct children below '{parentId}'.",
+                        ExitCodes.ValidationFailed,
+                        new Dictionary<string, object?> { ["module"] = module.Name, ["ids"] = matches.Select(match => match.Id).ToArray() });
+                return matches.SingleOrDefault()?.Id;
+            }
             var report = sub == "watch"
                 ? await orchestrator.WatchAsync(manifestPath, parentId, uri, args.Option("library-path") ?? config.ResoniteManagedDataPath,
                     config.FluxDeployerPath, currentSession.UniqueSessionId,
-                    TimeSpan.FromMilliseconds(args.IntOption("poll-ms", 500, 100, 10000)), resolvedBindings, ct)
+                    TimeSpan.FromMilliseconds(args.IntOption("poll-ms", 500, 100, 10000)), resolvedBindings, ResolveModuleSlot, ct)
                 : await orchestrator.DeployAsync(manifestPath, parentId, uri, args.Option("library-path") ?? config.ResoniteManagedDataPath,
-                    config.FluxDeployerPath, currentSession.UniqueSessionId, resolvedBindings, ct);
+                    config.FluxDeployerPath, currentSession.UniqueSessionId, resolvedBindings, ResolveModuleSlot, ct);
             if (!report.Success)
                 throw new RLoopException("FLUX_MANIFEST_DEPLOY_FAILED", "One or more Flux modules failed; successful modules were checkpointed.", ExitCodes.ExternalToolFailed,
                     new Dictionary<string, object?> { ["report"] = report }, [report.Recovery]);

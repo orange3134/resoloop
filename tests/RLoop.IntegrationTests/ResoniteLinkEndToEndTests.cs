@@ -87,4 +87,70 @@ public sealed class ResoniteLinkEndToEndTests
             if (Directory.Exists(directory)) Directory.Delete(directory, true);
         }
     }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task ApplyPreservesTransformMigratesKeysAndPrunesParentAsOneOperation()
+    {
+        if (Environment.GetEnvironmentVariable("RLOOP_RUN_INTEGRATION") != "1") return;
+        var url = Environment.GetEnvironmentVariable("RESONITE_LINK_URL")
+                  ?? throw new InvalidOperationException("RESONITE_LINK_URL is required.");
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var name = "RLoop_Test_Policy_" + suffix;
+        var directory = Path.Combine(Path.GetTempPath(), "rloop-live-policy-" + suffix);
+        Directory.CreateDirectory(directory);
+        var initialPath = Path.Combine(directory, "initial.json");
+        var desiredPath = Path.Combine(directory, "desired.json");
+        var statePath = Path.Combine(directory, "state.json");
+        await File.WriteAllTextAsync(initialPath, $$$"""
+            {
+              "schemaVersion":"1", "ownership":{"key":"live-policy-{{{suffix}}}"},
+              "slot":{"key":"old-root","name":"{{{name}}}","parent":"Root","position":[0,1,2]},
+              "components":[{"key":"old-grabbable","type":"FrooxEngine.Grabbable","fields":{"Scalable":true}}],
+              "children":[{
+                "slot":{"key":"obsolete-parent","name":"Obsolete"},
+                "components":[{"key":"obsolete-component","type":"FrooxEngine.Grabbable","fields":{"Scalable":true}}]
+              }]
+            }
+            """);
+        await File.WriteAllTextAsync(desiredPath, $$$"""
+            {
+              "schemaVersion":"1", "ownership":{"key":"live-policy-{{{suffix}}}"},
+              "slot":{"key":"new-root","migrateFrom":"old-root","name":"{{{name}}}","parent":"Root",
+                      "position":[0,1,2],"preserveWorldTransform":true},
+              "components":[{"key":"new-grabbable","migrateFrom":"old-grabbable","type":"FrooxEngine.Grabbable","fields":{"Scalable":true}}],
+              "children":[]
+            }
+            """);
+
+        await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(30));
+        await client.ConnectAsync(new Uri(url), TimeSpan.FromSeconds(30));
+        var world = new WorldService(client);
+        string? slotId = null;
+        try
+        {
+            var initial = await world.ApplyAsync(ApplyDocument.Load(initialPath), new ApplyOptions(statePath));
+            slotId = initial.SlotId;
+            await client.UpdateSlotAsync(new SlotUpdateRequest(slotId, Position: new Vector3Value(5, 6, 7)));
+
+            var plan = await world.PlanApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(statePath));
+            Assert.DoesNotContain(plan.Operations, operation => operation.Action == "create");
+            Assert.Single(plan.Operations, operation => operation.Action == "delete" && operation.Kind == "slot");
+            Assert.DoesNotContain(plan.Operations, operation => operation.Action == "delete" && operation.Kind == "component");
+
+            var applied = await world.ApplyAsync(ApplyDocument.Load(desiredPath),
+                new ApplyOptions(statePath, Prune: true, ConfirmDeletes: true));
+            var inspected = await client.GetSlotAsync(slotId, 1, false);
+            Assert.Equal(new Vector3Value(5, 6, 7), inspected.Position);
+            Assert.Empty(inspected.Children);
+            Assert.Equal(1, applied.SlotsDeleted);
+            Assert.Equal(0, applied.ComponentsDeleted);
+            Assert.Equal(slotId, applied.SlotId);
+        }
+        finally
+        {
+            if (slotId is not null) await client.DeleteSlotAsync(slotId);
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+    }
 }
