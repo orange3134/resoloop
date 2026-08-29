@@ -13,10 +13,28 @@
 - [x] statusのIDを `connectionId` として返し、安定world identityではないことを明示する。
 - [x] assembly付きopen genericからclosed generic名を作る `type specialize` と、事故に関係するサブコマンドhelpを追加する。
 
+### 次期P0の進捗
+
+Flux manifest binding:
+
+- [x] pinned Flux-SDK 1.9.0の公開 `DeployTarget.InputMap` / `OutputMap` と生成Slot・Component構造を確認する。
+- [x] moduleの `in` / `out` 名を `source` / `drive` として宣言し、`$slot:key`、`$component:key`、`$member:key.MemberName`へ接続するmanifest schemaを追加する。global/elementの生成方式はProtoGraph宣言に従う。
+- [x] world stateのkey・path・type ordinalから接続先IDを再解決し、Flux-SDKのInputMap/OutputMapへ渡す。解決先IDが変わった場合もhashを更新して再deployする。
+- [x] 未解決binding、manifestと解決結果の不一致、member以外を対象にしたdriveをdeploy前の構造化エラーとして拒否する。
+- [x] オフライン契約テストに加え、専用 `RLoop_Test*` live fixtureで `Slot element` の正常deployとglobal referenceのtarget配線を確認する。
+- [ ] Flux-SDK 1.9.0が `IButton global` の参照配線後に返す `Invalid component type` を解消し、PhysicalButtonへのglobal bindingをmodule全体の成功として完走させる。
+- [ ] Flux入出力の宣言型とworld targetの型互換性、未結線状態をdeploy前後に検証して構造化エラーにする。
+
+Safe interaction probe:
+
+- [x] `safe: true` とCLIの `--probe --yes` を必須にし、無許可probeを拒否する。
+- [x] fieldを一時変更し、after assertionをpollした後、成功・失敗・cancel時に元値を復元して再読取確認する `set-member` transactional probeを追加する。
+- [x] オフラインで成功時・assertion失敗時の復元を検証し、専用live fixtureでも一時変更と復元を確認する。
+- [ ] Dynamic Impulseとvalue/reference付きDynamic Impulseを、一度限り・明示許可付きで送信するprobeを追加する。
+- [ ] ProtoFluxのCallInputをReflectionで能力確認したうえで、安全に一度だけ起動するprobeを追加する。
+
 ### 次の実装候補
 
-- [ ] Flux manifestのglobal/element/source/drive bindingを設計し、stable keyからdeploy後に再結線する。Flux-SDK 1.9.0の生成構造と型互換性APIをupstream/public Reflectionで確認してから着手する。
-- [ ] Dynamic Impulse、value/reference付きImpulse、CallInputを、一度限り・明示許可・復元付きで実行するinteraction probeを追加する。
 - [ ] Flux deployの返却値と実module childを分離し、`parentSlotId`、`moduleSlotIdBefore`、`moduleSlotIdAfter` を再観測結果から返す。
 - [ ] `managedFields` / transform preservation、stable key migration、親Slot単位の安全なprune最適化を設計する。
 - [ ] doctorで「managed-data未設定」と「Flux-SDKの自動発見成功/解決不能」をbuild probeにより区別する。
@@ -152,4 +170,4 @@ Flux bindingとinteraction probeは、型名・member名・メッセージを推
 5. screenshot/scene assertion/interaction probeで結果の検証ループを閉じる。
 6. 再利用構文、型・asset、ProtoFlux、配布基盤を順次広げる。
 
-旧house-world由来のP0/P1は完了しています。ブロック崩し由来の次期P0はFlux bindingと安全なinteraction probeです。ResoniteLinkにtransaction、framebuffer、汎用event APIがない制約は、非atomic checkpoint recovery、決定的SVG、structural-only capabilityとして明示しています。引き続きrloopが管理する専用の `RLoop_Test*` Slotから導入し、`validate --strict` と `diff --changes-only` を先に実行する運用を推奨します。
+旧house-world由来のP0/P1は完了しています。ブロック崩し由来の次期P0では、stable Flux binding基盤とtransactional `set-member` probeまで完了しました。残件はFlux-SDK 1.9.0のglobal input型解決、binding型互換性・未結線検査、Dynamic Impulse、CallInputです。ResoniteLinkにtransaction、framebuffer、汎用event APIがない制約は、非atomic checkpoint recovery、決定的SVG、structural-only capabilityとして明示しています。引き続きrloopが管理する専用の `RLoop_Test*` Slotから導入し、`validate --strict` と `diff --changes-only` を先に実行する運用を推奨します。
