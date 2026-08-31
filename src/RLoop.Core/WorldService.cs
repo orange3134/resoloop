@@ -171,14 +171,27 @@ public sealed class WorldService(IResoniteClient client)
         {
             var stableSlot = StableReferenceResolver.ResolveSlot(stateFile, "$slot:" + stableComponent.SlotKey);
             var slotId = await ResolveSlotIdAsync(stableSlot.Path, cancellationToken);
-            var slot = await client.GetSlotAsync(slotId, 0, false, cancellationToken);
-            var matching = slot.Components.Where(summary => TypeNamesEquivalent(summary.Type, stableComponent.Type)).ToArray();
-            if (stableComponent.TypeOrdinal < 0 || stableComponent.TypeOrdinal >= matching.Length)
+            var slot = await client.GetSlotAsync(slotId, 0, true, cancellationToken);
+            var matching = StableComponentCandidates(slot.Components, stableComponent.Type, stableComponent.ComponentIndex,
+                stableComponent.MemberNames, stableComponent.IdentityValues);
+            if (matching.Length == 0 && stableComponent.MemberNames is null && stableComponent.IdentityValues is null)
+            {
+                var legacy = slot.Components.Where(summary => TypeNamesEquivalent(summary.Type, stableComponent.Type)).ToArray();
+                matching = stableComponent.TypeOrdinal >= 0 && stableComponent.TypeOrdinal < legacy.Length
+                    ? [legacy[stableComponent.TypeOrdinal]] : [];
+            }
+            if (matching.Length == 0)
                 throw new RLoopException("FLUX_BINDING_COMPONENT_NOT_FOUND",
                     $"Stable component '{stableComponent.Key}' could not be re-resolved on '{stableSlot.Path}'.", ExitCodes.NotFound,
                     new Dictionary<string, object?> { ["selector"] = selector, ["slotPath"] = stableSlot.Path,
                         ["type"] = stableComponent.Type, ["typeOrdinal"] = stableComponent.TypeOrdinal });
-            component = await client.GetComponentAsync(matching[stableComponent.TypeOrdinal].Id, cancellationToken);
+            if (matching.Length > 1)
+                throw new RLoopException("STABLE_COMPONENT_AMBIGUOUS",
+                    $"Stable component '{stableComponent.Key}' matches multiple Components on '{stableSlot.Path}'.",
+                    ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["selector"] = selector,
+                        ["slotPath"] = stableSlot.Path, ["candidateIds"] = matching.Select(candidate => candidate.Id).ToArray() },
+                    ["Add identityFields containing immutable managed values that uniquely identify this Component."]);
+            component = await client.GetComponentAsync(matching[0].Id, cancellationToken);
         }
 
         if (memberName is null)
@@ -189,6 +202,15 @@ public sealed class WorldService(IResoniteClient client)
                 $"Member '{memberName}' was not found on stable component '{stableComponent.Key}'.", ExitCodes.NotFound,
                 suggestions: component.Members.Keys.Take(30).ToArray());
         return new ResolvedWorldReference(selector, member.Value.Id!, "member", member.Value.Type ?? member.Value.TargetType);
+    }
+
+    public async Task<ItemAuditReport> AuditItemAsync(string selector, IReadOnlyCollection<string>? allowedExternalIds = null,
+        bool strict = false, CancellationToken cancellationToken = default)
+    {
+        var id = await ResolveSlotIdAsync(selector, cancellationToken);
+        var root = AddPaths(RemoveReferenceOnlyChildren(await client.GetSlotAsync(id, 64, true, cancellationToken)),
+            selector.StartsWith("Root", StringComparison.OrdinalIgnoreCase) ? NormalizePath(selector) : selector);
+        return ItemAuditService.Audit(root, allowedExternalIds, strict);
     }
 
     public Task<ApplyValidationResult> ValidateApplyAsync(ApplyDocument document, bool strict,
@@ -205,7 +227,7 @@ public sealed class WorldService(IResoniteClient client)
         return new ApplyPlanResult(true, document.SchemaVersion!, document.Ownership!.Key, prepared.StatePath,
             prepared.Session.UniqueSessionId, prepared.Entries,
             prepared.Entries.Count(x => x.Action == "create"),
-            prepared.Entries.Count(x => x.Action is "update" or "rename"),
+            prepared.Entries.Count(x => x.Action is "update" or "rename" or "relocate"),
             prepared.Entries.Count(x => x.Action == "no-op"),
             prepared.Entries.Count(x => x.Action == "rename"),
             prepared.Entries.Count(x => x.Action == "delete"), false,
@@ -258,8 +280,9 @@ public sealed class WorldService(IResoniteClient client)
                         counts.SlotsCreated++;
                         break;
                     case "update":
+                    case "relocate":
                         node.Id = node.Existing!.Id;
-                        await client.UpdateSlotAsync(CreateSlotUpdate(node), cancellationToken);
+                        await client.UpdateSlotAsync(CreateSlotUpdate(node, prepared.ParentId), cancellationToken);
                         counts.SlotsUpdated++;
                         break;
                     default:
@@ -287,13 +310,13 @@ public sealed class WorldService(IResoniteClient client)
                 else
                 {
                     IReadOnlyDictionary<string, string> initialFields = new Dictionary<string, string>();
-                    if (CanResolveAll(component.Spec.Fields, byKey, slotsByKey))
+                    var createFields = MergeCreateFields(component.Spec);
+                    if (CanResolveAll(createFields, byKey, slotsByKey))
                     {
-                        initialFields = await ResolveFieldsAsync(component.Spec.Fields, byKey, slotsByKey, assetUrls, cancellationToken);
+                        initialFields = await ResolveFieldsAsync(createFields, byKey, slotsByKey, assetUrls, cancellationToken);
                         component.AppliedOnCreate = initialFields;
                     }
-                    prepared.State.Components[component.StableKey] = new ApplyStateComponent(string.Empty,
-                        component.Node.StableKey, component.Spec.Type, component.TypeOrdinal);
+                    prepared.State.Components[component.StableKey] = CreateComponentState(component, string.Empty);
                     Checkpoint(prepared);
                     var created = await client.AddComponentAsync(component.Node.Id!, component.Spec.Type, initialFields, cancellationToken);
                     component.Id = created.Id;
@@ -301,8 +324,7 @@ public sealed class WorldService(IResoniteClient client)
                     counts.ComponentsAdded++;
                 }
                 if (!string.IsNullOrWhiteSpace(component.Spec.Key)) byKey[component.Spec.Key!] = component;
-                prepared.State.Components[component.StableKey] = new ApplyStateComponent(component.Id!, component.Node.StableKey,
-                    component.ResolvedType ?? component.Spec.Type, component.TypeOrdinal);
+                prepared.State.Components[component.StableKey] = CreateComponentState(component, component.Id!);
                 Checkpoint(prepared);
                 completed++;
                 options.Progress?.Invoke(new ApplyProgress("components", completed, total, component.Path,
@@ -312,7 +334,8 @@ public sealed class WorldService(IResoniteClient client)
             foreach (var component in prepared.Components)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var fields = await ResolveFieldsAsync(component.Spec.Fields, byKey, slotsByKey, assetUrls, cancellationToken);
+                var desiredFields = component.Existing is null ? MergeCreateFields(component.Spec) : component.Spec.Fields;
+                var fields = await ResolveFieldsAsync(desiredFields, byKey, slotsByKey, assetUrls, cancellationToken);
                 var changed = fields.Where(field => component.AppliedOnCreate is null ||
                                                     !component.AppliedOnCreate.TryGetValue(field.Key, out var applied) || applied != field.Value)
                     .Where(field => component.Existing?.Members is null ||
@@ -327,6 +350,13 @@ public sealed class WorldService(IResoniteClient client)
                 {
                     counts.ComponentsUnchanged++;
                 }
+                if (component.RelocationSource is not null && component.RelocationSource.Id != component.Id)
+                {
+                    await client.RemoveComponentAsync(component.RelocationSource.Id, cancellationToken);
+                    counts.ComponentsDeleted++;
+                    component.RelocationSource = null;
+                }
+                prepared.State.Components[component.StableKey] = CreateComponentState(component, component.Id!, fields);
                 Checkpoint(prepared);
                 completed++;
                 options.Progress?.Invoke(new ApplyProgress("fields", completed, total, component.Path,
@@ -438,7 +468,11 @@ public sealed class WorldService(IResoniteClient client)
         foreach (var test in document.Tests ?? [])
         {
             var assertions = new List<ApplyAssertionResult>();
-            foreach (var assertion in test.Assertions.Where(x => !string.Equals(x.Phase, "after", StringComparison.OrdinalIgnoreCase)))
+            var childCountBaselines = new Dictionary<ApplyAssertionSpec, int>();
+            foreach (var assertion in test.Assertions ?? [])
+                if (assertion.Kind.Equals("child-count", StringComparison.OrdinalIgnoreCase) && assertion.Delta is not null)
+                    childCountBaselines[assertion] = await CountChildren(assertion, slotsByKey, cancellationToken, refresh: true);
+            foreach (var assertion in (test.Assertions ?? []).Where(x => !string.Equals(x.Phase, "after", StringComparison.OrdinalIgnoreCase)))
                 assertions.Add(await EvaluateAssertion(test.Name, assertion, "before", byKey, slotsByKey, assetUrls, cancellationToken));
 
             var probeExecuted = false;
@@ -522,7 +556,7 @@ public sealed class WorldService(IResoniteClient client)
                     }
                 }
 
-                foreach (var assertion in test.Assertions.Where(x => string.Equals(x.Phase, "after", StringComparison.OrdinalIgnoreCase)))
+                foreach (var assertion in (test.Assertions ?? []).Where(x => string.Equals(x.Phase, "after", StringComparison.OrdinalIgnoreCase)))
                 {
                     if (!probeExecuted)
                     {
@@ -535,7 +569,8 @@ public sealed class WorldService(IResoniteClient client)
                     var deadline = Stopwatch.StartNew();
                     do
                     {
-                        evaluated = await EvaluateAssertion(test.Name, assertion, "after", byKey, slotsByKey, assetUrls, cancellationToken, refresh: true);
+                        evaluated = await EvaluateAssertion(test.Name, assertion, "after", byKey, slotsByKey, assetUrls, cancellationToken, refresh: true,
+                            childCountBaselines.GetValueOrDefault(assertion));
                         if (evaluated.Passed) break;
                         await Task.Delay(Math.Clamp(test.PollMs, 10, 5000), cancellationToken);
                     } while (deadline.ElapsedMilliseconds < Math.Clamp(test.TimeoutMs, 10, 60_000));
@@ -556,8 +591,16 @@ public sealed class WorldService(IResoniteClient client)
     private async Task<ApplyAssertionResult> EvaluateAssertion(string testName, ApplyAssertionSpec assertion, string phase,
         IReadOnlyDictionary<string, ComponentRuntime> components, IReadOnlyDictionary<string, NodeRuntime> slots,
         IReadOnlyDictionary<string, string> assets,
-        CancellationToken cancellationToken, bool refresh = false)
+        CancellationToken cancellationToken, bool refresh = false, int? childCountBaseline = null)
     {
+        if (assertion.Kind.Equals("child-count", StringComparison.OrdinalIgnoreCase))
+        {
+            var actualCount = await CountChildren(assertion, slots, cancellationToken, refresh);
+            var expectedCount = assertion.Delta is { } delta && childCountBaseline is { } baseline ? baseline + delta :
+                assertion.Count ?? (assertion.Expected is { } countElement && countElement.ValueKind == JsonValueKind.Number ? countElement.GetInt32() : actualCount);
+            return new ApplyAssertionResult(testName, assertion.Target, phase, actualCount == expectedCount,
+                JsonValue.Create(expectedCount), JsonValue.Create(actualCount), actualCount == expectedCount ? "Child count matched." : "Child count differed.");
+        }
         if (assertion.Target.StartsWith("$slot:", StringComparison.Ordinal))
         {
             var exists = slots.TryGetValue(assertion.Target[6..], out var slot) && (slot.Existing is not null || slot.Id is not null);
@@ -568,12 +611,20 @@ public sealed class WorldService(IResoniteClient client)
         var selector = assertion.Target.StartsWith("$member:", StringComparison.Ordinal) ? assertion.Target[8..] :
             assertion.Target.StartsWith("$component:", StringComparison.Ordinal) ? assertion.Target[11..] : assertion.Target;
         var separator = selector.LastIndexOf('.');
-        if (separator <= 0 || !components.TryGetValue(selector[..separator], out var runtime) || runtime.Existing is null)
+        if (separator <= 0)
+        {
+            var componentExists = components.TryGetValue(selector, out var componentRuntime) && componentRuntime.Id is not null;
+            var expectedExists = assertion.Exists ?? true;
+            return new ApplyAssertionResult(testName, assertion.Target, phase, componentExists == expectedExists,
+                JsonValue.Create(expectedExists), JsonValue.Create(componentExists), componentExists == expectedExists ? "Component existence matched." : "Component existence differed.");
+        }
+        if (!components.TryGetValue(selector[..separator], out var runtime) || runtime.Id is null)
             return new ApplyAssertionResult(testName, assertion.Target, phase, false,
                 assertion.Expected is { } missingExpected ? JsonNode.Parse(missingExpected.GetRawText()) : null, null, "Component/member target was not found.");
         var memberName = selector[(separator + 1)..];
-        var component = refresh ? await client.GetComponentAsync(runtime.Existing.Id, cancellationToken) :
-            new ComponentInfo(runtime.Existing.Id, runtime.Existing.Type, runtime.Existing.Members ?? new Dictionary<string, MemberValue>());
+        var component = refresh ? await client.GetComponentAsync(runtime.Id, cancellationToken) :
+            new ComponentInfo(runtime.Id, runtime.ResolvedType ?? runtime.Spec.Type,
+                runtime.Existing?.Members ?? new Dictionary<string, MemberValue>());
         if (!component.Members.TryGetValue(memberName, out var member))
             return new ApplyAssertionResult(testName, assertion.Target, phase, assertion.Exists == false,
                 assertion.Expected is { } absentExpected ? JsonNode.Parse(absentExpected.GetRawText()) : JsonValue.Create(assertion.Exists), null, "Member does not exist.");
@@ -585,6 +636,19 @@ public sealed class WorldService(IResoniteClient client)
         var raw = await ResolveValueAsync(expected, components, slots, assets, cancellationToken);
         return new ApplyAssertionResult(testName, assertion.Target, phase, MemberMatchesRaw(member, raw),
             JsonNode.Parse(expected.GetRawText()), MemberActual(member), MemberMatchesRaw(member, raw) ? "Value matched." : "Value differed.");
+    }
+
+    private async Task<int> CountChildren(ApplyAssertionSpec assertion, IReadOnlyDictionary<string, NodeRuntime> slots,
+        CancellationToken cancellationToken, bool refresh)
+    {
+        if (!assertion.Target.StartsWith("$slot:", StringComparison.Ordinal) ||
+            !slots.TryGetValue(assertion.Target[6..], out var runtime) || runtime.Id is null)
+            return 0;
+        var slot = refresh ? await client.GetSlotAsync(runtime.Id, 1, true, cancellationToken) : runtime.Existing;
+        if (slot is null) return 0;
+        return slot.Children.Count(child =>
+            (assertion.Name is null || child.Name.Equals(assertion.Name, StringComparison.Ordinal)) &&
+            (assertion.ComponentType is null || child.Components.Any(component => TypeNamesEquivalent(component.Type, assertion.ComponentType))));
     }
 
     private static JsonNode? MemberActual(MemberValue member) => member.Kind switch
@@ -629,13 +693,25 @@ public sealed class WorldService(IResoniteClient client)
         var parentId = await ResolveSlotIdAsync(parentSelector, cancellationToken);
         var stateDepth = state.Slots.Values.Select(x => x.Path.Count(ch => ch == '/')).DefaultIfEmpty(0).Max();
         var parent = await client.GetSlotAsync(parentId, Math.Clamp(Math.Max(MaxDepth(document.Children) + 1, stateDepth), 0, 64), true, cancellationToken);
-        var prepared = new PreparedApply(document, options, state, statePath, session, parentId, sameSession,
+        var snapshots = new List<(SlotInfo Slot, string Path)> { (parent, NormalizeParentPath(parentSelector)) };
+        var rootKey = document.Slot!.Key!;
+        if (state.Slots.TryGetValue(rootKey, out var rootState) && !ContainsSlot(parent, rootState.Id))
+        {
+            try
+            {
+                var oldRootId = sameSession && !string.IsNullOrWhiteSpace(rootState.Id)
+                    ? rootState.Id : await ResolveSlotIdAsync(rootState.Path, cancellationToken);
+                snapshots.Add((await client.GetSlotAsync(oldRootId, Math.Clamp(stateDepth, 0, 64), true, cancellationToken), rootState.Path));
+            }
+            catch (RLoopException ex) when (ex.Code is "SLOT_NOT_FOUND" or "SLOT_PATH_NOT_FOUND" or "RESONITE_OPERATION_FAILED") { }
+        }
+        var prepared = new PreparedApply(document, options, state, statePath, session, parentId, sameSession, snapshots,
             migrations.Slots, migrations.Components);
         var rootSpec = new ApplyNodeSpec(document.Slot, document.Components, document.Children);
         BuildNode(prepared, rootSpec, null, parent, NormalizeParentPath(parentSelector), true);
         BuildAssetPlans(prepared);
         BuildComponentPlans(prepared);
-        BuildDeletionPlans(prepared, parent);
+        BuildDeletionPlans(prepared);
         var resolvedTypes = prepared.Components.Where(x => x.Existing is not null)
             .GroupBy(x => x.Spec.Type, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.First().Existing!.Type, StringComparer.Ordinal);
@@ -651,18 +727,22 @@ public sealed class WorldService(IResoniteClient client)
         var stableKey = spec.Slot.Key ?? "$path:" + path;
         prepared.State.Slots.TryGetValue(stableKey, out var stateSlot);
         var existing = MatchSlot(parentSnapshot, spec.Slot.Name, stateSlot, prepared.SameSession, path);
+        existing ??= FindManagedSlot(prepared, stateSlot);
         if (isRoot && existing is not null && stateSlot is null && !prepared.Options.Adopt)
             throw new RLoopException("APPLY_OWNERSHIP_UNVERIFIED",
                 $"Slot '{path}' already exists but is not bound to ownership '{prepared.Document.Ownership!.Key}'.",
                 ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["path"] = path, ["stateFile"] = prepared.StatePath },
                 ["Inspect the target, then re-run with --adopt to bind this exact root Slot without deleting it."]);
-        var action = existing is null ? "create" : SlotNeedsUpdate(existing, spec.Slot) ? "update" : "no-op";
+        var desiredParentId = parentRuntime?.Existing?.Id ?? (parentRuntime is null ? prepared.ParentId : null);
+        var relocating = existing is not null && (desiredParentId is null || existing.ParentId != desiredParentId);
+        var action = existing is null ? "create" : relocating ? "relocate" : SlotNeedsUpdate(existing, spec.Slot) ? "update" : "no-op";
         var node = new NodeRuntime(spec.Slot, spec.Components ?? [], parentRuntime, existing, stableKey, path, action);
         prepared.Nodes.Add(node);
         var planAction = action == "update" && existing?.Name != spec.Slot.Name ? "rename" : action;
         var migratedFrom = prepared.SlotMigrations.GetValueOrDefault(stableKey);
         prepared.Entries.Add(new ApplyPlanEntry(planAction, "slot", path, stableKey,
-            Reason: action == "create" ? "managed Slot does not exist" : planAction == "rename" ?
+            Reason: action == "create" ? "managed Slot does not exist" : action == "relocate" ?
+                $"stable key '{stableKey}' preserves identity while the parent changes; current local transform policy remains in effect" : planAction == "rename" ?
                 $"stable key '{stableKey}' preserves identity while the name changes from '{existing!.Name}' to '{spec.Slot.Name}'" :
                 action == "update" ? "one or more managed transforms differ" : migratedFrom is not null ?
                 $"stable key migrated from '{migratedFrom}' without recreating the Slot" : "Slot already matches"));
@@ -684,9 +764,21 @@ public sealed class WorldService(IResoniteClient client)
                 typeOrdinals[normalizedType] = ordinal + 1;
                 var stableKey = spec.Key ?? $"{node.StableKey}/component:{normalizedType}:{ordinal}";
                 prepared.State.Components.TryGetValue(stableKey, out var stateComponent);
-                var existing = MatchComponent(node.Existing?.Components ?? [], spec.Type, ordinal, stateComponent, prepared.SameSession);
+                var relocating = stateComponent is not null && stateComponent.SlotKey != node.StableKey;
+                var existing = relocating ? null :
+                    MatchComponent(node.Existing?.Components ?? [], spec.Type, ordinal, stateComponent, prepared.SameSession);
+                var componentIndex = existing is null
+                    ? (node.Existing?.Components.Count ?? 0) + prepared.Components.Count(candidate => candidate.Node == node && candidate.Existing is null)
+                    : node.Existing!.Components.ToList().FindIndex(candidate => candidate.Id == existing.Id);
                 var runtime = new ComponentRuntime(spec, node, existing, stableKey, ordinal,
-                    node.Path + "/@" + (spec.Key ?? normalizedType + "[" + ordinal + "]"));
+                    node.Path + "/@" + (spec.Key ?? normalizedType + "[" + ordinal + "]"), componentIndex);
+                if (relocating)
+                {
+                    var sourceSlot = FindStateSlot(prepared, stateComponent!.SlotKey);
+                    runtime.RelocationSource = sourceSlot is null ? null :
+                        MatchComponent(sourceSlot.Components, spec.Type, ordinal, stateComponent, prepared.SameSession);
+                    if (runtime.RelocationSource?.Id == existing?.Id) runtime.RelocationSource = null;
+                }
                 prepared.Components.Add(runtime);
             }
         }
@@ -698,8 +790,10 @@ public sealed class WorldService(IResoniteClient client)
             .ToDictionary(x => x.Key, x => x.DirectUrl ?? prepared.State.Assets[x.Key].Url, StringComparer.Ordinal);
         foreach (var component in prepared.Components)
         {
-            var action = component.Existing is null ? "create" : "no-op";
-            var reason = component.Existing is null ? "managed Component does not exist" : "Component and fields already match";
+            var action = component.RelocationSource is not null ? "relocate" : component.Existing is null ? "create" : "no-op";
+            var reason = component.RelocationSource is not null
+                ? $"stable key '{component.StableKey}' moves the Component to Slot '{component.Node.StableKey}'"
+                : component.Existing is null ? "managed Component does not exist" : "Component and fields already match";
             var diffs = new List<ApplyMemberDiff>();
             if (component.Existing is not null)
             {
@@ -774,23 +868,24 @@ public sealed class WorldService(IResoniteClient client)
         }
     }
 
-    private static void BuildDeletionPlans(PreparedApply prepared, SlotInfo parentSnapshot)
+    private static void BuildDeletionPlans(PreparedApply prepared)
     {
         var liveSlotKeys = prepared.Nodes.Select(x => x.StableKey).ToHashSet(StringComparer.Ordinal);
         var liveComponentKeys = prepared.Components.Select(x => x.StableKey).ToHashSet(StringComparer.Ordinal);
         var rootPath = prepared.Nodes[0].Path;
-        var snapshots = new List<(SlotInfo Slot, string Path)>();
-        void VisitSnapshot(SlotInfo slot, string path)
-        {
-            snapshots.Add((slot, path));
-            foreach (var child in slot.Children) VisitSnapshot(child, path.TrimEnd('/') + "/" + child.Name);
-        }
-        VisitSnapshot(parentSnapshot, NormalizeParentPath(prepared.Document.Slot!.Parent ?? "Root"));
+        var ownedRootPaths = new HashSet<string>(StringComparer.Ordinal) { rootPath };
+        if (prepared.State.Slots.TryGetValue(prepared.Nodes[0].StableKey, out var previousRoot))
+            ownedRootPaths.Add(previousRoot.Path);
+        var snapshots = prepared.SnapshotSlots.Select(slot => (Slot: slot, Path: slot.Path ?? string.Empty)).ToArray();
+
+        bool IsInsideOwnedRoot(string path, bool includeRoot) => ownedRootPaths.Any(ownedRoot =>
+            includeRoot && path.Equals(ownedRoot, StringComparison.Ordinal) ||
+            path.StartsWith(ownedRoot + "/", StringComparison.Ordinal));
 
         var staleSlots = new List<(string Key, ApplyStateSlot State, SlotInfo Slot, string Path)>();
         foreach (var stateSlot in prepared.State.Slots.Where(x => !liveSlotKeys.Contains(x.Key)).ToArray())
         {
-            if (!stateSlot.Value.Path.StartsWith(rootPath + "/", StringComparison.Ordinal)) continue;
+            if (!IsInsideOwnedRoot(stateSlot.Value.Path, includeRoot: false)) continue;
             var slot = snapshots.FirstOrDefault(x => prepared.SameSession && x.Slot.Id == stateSlot.Value.Id || x.Path == stateSlot.Value.Path);
             if (slot.Slot is null || slot.Slot.Id.Equals("Root", StringComparison.OrdinalIgnoreCase)) continue;
             staleSlots.Add((stateSlot.Key, stateSlot.Value, slot.Slot, slot.Path));
@@ -808,7 +903,7 @@ public sealed class WorldService(IResoniteClient client)
         {
             if (!prepared.State.Slots.TryGetValue(stateComponent.Value.SlotKey, out var stateSlot)) continue;
             var slot = snapshots.FirstOrDefault(x => prepared.SameSession && x.Slot.Id == stateSlot.Id || x.Path == stateSlot.Path);
-            if (slot.Slot is null || !slot.Path.StartsWith(rootPath + "/", StringComparison.Ordinal) && slot.Path != rootPath) continue;
+            if (slot.Slot is null || !IsInsideOwnedRoot(slot.Path, includeRoot: true)) continue;
             var matches = slot.Slot.Components.Where(x => TypeNamesEquivalent(x.Type, stateComponent.Value.Type)).ToArray();
             var component = prepared.SameSession ? slot.Slot.Components.FirstOrDefault(x => x.Id == stateComponent.Value.Id) : null;
             component ??= stateComponent.Value.TypeOrdinal < matches.Length ? matches[stateComponent.Value.TypeOrdinal] : null;
@@ -847,6 +942,14 @@ public sealed class WorldService(IResoniteClient client)
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var field in fields ?? new Dictionary<string, JsonElement>())
             result[field.Key] = await ResolveValueAsync(field.Value, components, slots, assets, cancellationToken);
+        return result;
+    }
+
+    private static IReadOnlyDictionary<string, JsonElement> MergeCreateFields(ApplyComponentSpec component)
+    {
+        var result = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        foreach (var field in component.InitialFields ?? new Dictionary<string, JsonElement>()) result[field.Key] = field.Value;
+        foreach (var field in component.Fields ?? new Dictionary<string, JsonElement>()) result[field.Key] = field.Value;
         return result;
     }
 
@@ -1043,11 +1146,8 @@ public sealed class WorldService(IResoniteClient client)
         var currentNode = NormalizeNode(member.Value);
         JsonNode? desiredNode;
         if (IsStringLike(member.Type)) desiredNode = JsonValue.Create(raw);
-        else
-        {
-            try { desiredNode = JsonNode.Parse(raw); }
-            catch (JsonException) { desiredNode = JsonValue.Create(raw); }
-        }
+        else desiredNode = MemberValueSyntax.NormalizeTupleOrJson(member.Type, raw, currentNode is JsonArray array ? array.Count : null);
+        desiredNode = NormalizeNode(desiredNode);
         return JsonEquivalent(currentNode, desiredNode);
     }
 
@@ -1103,6 +1203,25 @@ public sealed class WorldService(IResoniteClient client)
         return candidates.SingleOrDefault();
     }
 
+    private static SlotInfo? FindManagedSlot(PreparedApply prepared, ApplyStateSlot? state)
+    {
+        if (state is null) return null;
+        if (prepared.SameSession && !string.IsNullOrWhiteSpace(state.Id))
+        {
+            var byId = prepared.SnapshotSlots.Where(slot => slot.Id == state.Id).ToArray();
+            if (byId.Length == 1) return byId[0];
+        }
+        var normalizedPath = NormalizePath(state.Path);
+        var byPath = prepared.SnapshotSlots.Where(slot => NormalizePath(slot.Path ?? string.Empty) == normalizedPath).ToArray();
+        if (byPath.Length > 1)
+            throw new RLoopException("APPLY_TARGET_AMBIGUOUS", $"Multiple Slots match managed state path '{state.Path}'.",
+                ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["ids"] = byPath.Select(slot => slot.Id).ToArray() });
+        return byPath.SingleOrDefault();
+    }
+
+    private static SlotInfo? FindStateSlot(PreparedApply prepared, string slotKey) =>
+        prepared.State.Slots.TryGetValue(slotKey, out var stateSlot) ? FindManagedSlot(prepared, stateSlot) : null;
+
     private static ComponentSummary? MatchComponent(IReadOnlyList<ComponentSummary> components, string type, int ordinal,
         ApplyStateComponent? state, bool sameSession)
     {
@@ -1111,9 +1230,57 @@ public sealed class WorldService(IResoniteClient client)
             var byId = components.SingleOrDefault(x => x.Id == state.Id);
             if (byId is not null) return byId;
         }
-        var matches = components.Where(x => TypeNamesEquivalent(x.Type, state?.Type ?? type)).ToArray();
+        var matches = StableComponentCandidates(components, state?.Type ?? type, state?.ComponentIndex,
+            state?.MemberNames, state?.IdentityValues);
+        if (matches.Length > 1 && state is not null && (state.MemberNames is not null || state.IdentityValues is not null))
+            throw new RLoopException("STABLE_COMPONENT_AMBIGUOUS",
+                $"Stable Component on Slot '{state.SlotKey}' matches multiple runtime Components.", ExitCodes.ValidationFailed,
+                new Dictionary<string, object?> { ["candidateIds"] = matches.Select(candidate => candidate.Id).ToArray(),
+                    ["type"] = state.Type },
+                ["Add identityFields containing immutable managed values that uniquely identify this Component."]);
+        if (matches.Length == 1) return matches[0];
+        if (state is not null && (state.MemberNames is not null || state.IdentityValues is not null)) return null;
+        matches = components.Where(x => TypeNamesEquivalent(x.Type, state?.Type ?? type)).ToArray();
         var requestedOrdinal = state?.TypeOrdinal ?? ordinal;
         return requestedOrdinal >= 0 && requestedOrdinal < matches.Length ? matches[requestedOrdinal] : null;
+    }
+
+    private static ComponentSummary[] StableComponentCandidates(IReadOnlyList<ComponentSummary> components, string type,
+        int? componentIndex, IReadOnlyList<string>? memberNames, IReadOnlyDictionary<string, string>? identityValues)
+    {
+        var candidates = components.Where(component => TypeNamesEquivalent(component.Type, type)).ToArray();
+        if (memberNames is not null)
+            candidates = candidates.Where(component => memberNames.All(name => component.Members?.ContainsKey(name) == true)).ToArray();
+        if (identityValues is not null)
+            candidates = candidates.Where(component => identityValues.All(identity =>
+                component.Members?.TryGetValue(identity.Key, out var value) == true && MemberMatchesRaw(value, identity.Value))).ToArray();
+        if (candidates.Length <= 1) return candidates;
+        if ((identityValues is null || identityValues.Count == 0) && componentIndex is >= 0 && componentIndex < components.Count)
+        {
+            var indexed = components[componentIndex.Value];
+            if (candidates.Any(candidate => candidate.Id == indexed.Id)) return [indexed];
+        }
+        return candidates;
+    }
+
+    private static ApplyStateComponent CreateComponentState(ComponentRuntime component, string id,
+        IReadOnlyDictionary<string, string>? resolvedFields = null)
+    {
+        var memberNames = (component.Spec.Fields?.Keys ?? [])
+            .Concat(component.Spec.InitialFields?.Keys ?? []).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        Dictionary<string, string>? identityValues = null;
+        if (component.Spec.IdentityFields is { Count: > 0 })
+        {
+            identityValues = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var name in component.Spec.IdentityFields)
+            {
+                if (resolvedFields?.TryGetValue(name, out var resolved) == true) identityValues[name] = resolved;
+                else if (component.AppliedOnCreate?.TryGetValue(name, out var initial) == true) identityValues[name] = initial;
+                else if (component.Existing?.Members?.TryGetValue(name, out var current) == true) identityValues[name] = MemberRaw(current);
+            }
+        }
+        return new ApplyStateComponent(id, component.Node.StableKey, component.ResolvedType ?? component.Spec.Type,
+            component.TypeOrdinal, component.ComponentIndex, memberNames, identityValues);
     }
 
     private static bool SlotNeedsUpdate(SlotInfo existing, ApplySlotSpec desired) =>
@@ -1122,14 +1289,15 @@ public sealed class WorldService(IResoniteClient client)
         ManagesTransform(desired, "rotation") && desired.Rotation is not null && !QuaternionEquals(existing.Rotation, desired.Rotation) ||
         ManagesTransform(desired, "scale") && desired.Scale is not null && !VectorEquals(existing.Scale, desired.Scale);
 
-    private static SlotUpdateRequest CreateSlotUpdate(NodeRuntime node)
+    private static SlotUpdateRequest CreateSlotUpdate(NodeRuntime node, string rootParentId)
     {
         var existing = node.Existing!;
         return new SlotUpdateRequest(existing.Id,
             existing.Name == node.Spec.Name ? null : node.Spec.Name,
             ManagesTransform(node.Spec, "position") && node.Spec.Position is not null && !VectorEquals(existing.Position, node.Spec.Position) ? node.Spec.Position.ToVector3("position") : null,
             ManagesTransform(node.Spec, "rotation") && node.Spec.Rotation is not null && !QuaternionEquals(existing.Rotation, node.Spec.Rotation) ? node.Spec.Rotation.ToQuaternion("rotation") : null,
-            ManagesTransform(node.Spec, "scale") && node.Spec.Scale is not null && !VectorEquals(existing.Scale, node.Spec.Scale) ? node.Spec.Scale.ToVector3("scale") : null);
+            ManagesTransform(node.Spec, "scale") && node.Spec.Scale is not null && !VectorEquals(existing.Scale, node.Spec.Scale) ? node.Spec.Scale.ToVector3("scale") : null,
+            node.SlotAction == "relocate" ? node.Parent?.Id ?? rootParentId : null);
     }
 
     private static bool ManagesTransform(ApplySlotSpec slot, string field) =>
@@ -1221,8 +1389,10 @@ public sealed class WorldService(IResoniteClient client)
         foreach (var child in slot.Children) Visit(child, path + "/" + child.Name, visitor);
     }
 
+    private static bool ContainsSlot(SlotInfo root, string id) => root.Id == id || root.Children.Any(child => ContainsSlot(child, id));
+
     private sealed class PreparedApply(ApplyDocument document, ApplyOptions options, ApplyState state,
-        string statePath, SessionInfo session, string parentId, bool sameSession,
+        string statePath, SessionInfo session, string parentId, bool sameSession, IReadOnlyList<(SlotInfo Slot, string Path)> snapshots,
         IReadOnlyDictionary<string, string> slotMigrations, IReadOnlyDictionary<string, string> componentMigrations)
     {
         public ApplyDocument Document { get; } = document;
@@ -1234,11 +1404,19 @@ public sealed class WorldService(IResoniteClient client)
         public bool SameSession { get; } = sameSession;
         public IReadOnlyDictionary<string, string> SlotMigrations { get; } = slotMigrations;
         public IReadOnlyDictionary<string, string> ComponentMigrations { get; } = componentMigrations;
+        public IReadOnlyList<SlotInfo> SnapshotSlots { get; } = snapshots.SelectMany(snapshot => Flatten(snapshot.Slot, snapshot.Path)).ToArray();
         public List<NodeRuntime> Nodes { get; } = [];
         public List<ComponentRuntime> Components { get; } = [];
         public List<ApplyPlanEntry> Entries { get; } = [];
         public List<DeletionRuntime> Deletions { get; } = [];
         public List<AssetRuntime> Assets { get; } = [];
+
+        private static IReadOnlyList<SlotInfo> Flatten(SlotInfo root, string rootPath)
+        {
+            var result = new List<SlotInfo>();
+            Visit(root, rootPath, result.Add);
+            return result;
+        }
     }
 
     private sealed class NodeRuntime(ApplySlotSpec spec, IReadOnlyList<ApplyComponentSpec> componentSpecs,
@@ -1255,17 +1433,19 @@ public sealed class WorldService(IResoniteClient client)
     }
 
     private sealed class ComponentRuntime(ApplyComponentSpec spec, NodeRuntime node, ComponentSummary? existing,
-        string stableKey, int typeOrdinal, string path)
+        string stableKey, int typeOrdinal, string path, int componentIndex)
     {
         public ApplyComponentSpec Spec { get; } = spec;
         public NodeRuntime Node { get; } = node;
         public ComponentSummary? Existing { get; } = existing;
         public string StableKey { get; } = stableKey;
         public int TypeOrdinal { get; } = typeOrdinal;
+        public int ComponentIndex { get; } = componentIndex;
         public string Path { get; } = path;
         public string? Id { get; set; }
         public string? ResolvedType { get; set; }
         public IReadOnlyDictionary<string, string>? AppliedOnCreate { get; set; }
+        public ComponentSummary? RelocationSource { get; set; }
         public Dictionary<string, string> MemberIds { get; } = new(StringComparer.Ordinal);
     }
 

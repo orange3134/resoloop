@@ -8,37 +8,37 @@
 
 ### P0: 宣言値とinteractionの確実な収束
 
-- [ ] vector、quaternion、color/colorX、nullable、nested valueを型付きcanonical JSONへ正規化し、strict validation、write、diff、testで同じ比較規則を使う。互換入力として配列、object、従来のcomma stringを扱い、2回目applyをmutation 0・update候補0へ収束させる。
-- [ ] malformedまたは未対応値をmutation前に検出し、`VALUE_CONVERSION_FAILED`へtarget typeと受理例を含める。
-- [ ] `tests[].assertions`欠落をNullReferenceExceptionにせず、`APPLY_TEST_ASSERTIONS_MISSING`として報告する。
-- [ ] `$component:key`自体の存在assertion、子Slot数・実行前後の増分・Component型filterを持つassertionを追加する。
-- [ ] method probeの`arguments`をschema、example、helpへ明記し、未知propertyには近い正式名をsuggestする。
+- [x] vector、quaternion、color/colorX、nullable、nested valueを型付きcanonical JSONへ正規化し、strict validation、write、diff、testで同じ比較規則を使う。互換入力として配列、object、従来のcomma stringを扱い、2回目applyをmutation 0・update候補0へ収束させる。
+- [x] malformedまたは未対応値をmutation前に検出し、`VALUE_CONVERSION_FAILED`へtarget typeと受理例を含める。
+- [x] `tests[].assertions`欠落をNullReferenceExceptionにせず、`APPLY_TEST_ASSERTIONS_MISSING`として報告する。
+- [x] `$component:key`自体の存在assertion、子Slot数・実行前後の増分・Component型filterを持つassertionを追加する。
+- [x] method probeの`arguments`をschema、example、helpへ明記し、未知propertyには近い正式名をsuggestする。
 - [ ] public SyncMethodを対象にしたWorldDelegate bindingを宣言・diff・apply・再読取できるようにする。ResoniteLink 0.13.1が直接更新を公開しない場合は、所有root内の検証済み一時worker、finally cleanup、checkpoint recoveryをadapterへ閉じ込める。
 - [ ] `dynamic-impulse` probeを、一度限り・`safe: true`・`--probe --yes`・optional value/reference payload付きで追加する。
 
 ### P0: stable identity、relocation、runtime state
 
-- [ ] stable Slotの親変更を`relocate`としてplanへ表示する。pinned upstreamでParent更新を検証し、直接reparent可能ならIDを維持する。不可ならcreate、managed reference/Flux再配線、旧対象削除をcheckpoint付きで実施する。
-- [ ] stable Componentを別Slotへ移した場合を`recreate-and-rebind`として扱い、旧Componentをstateから失う前に参照更新と削除を完了する。
+- [x] stable Slotの親変更を`relocate`としてplanへ表示する。pinned upstreamでParent更新を検証し、直接reparent可能ならIDを維持する。不可ならcreate、managed reference/Flux再配線、旧対象削除をcheckpoint付きで実施する。
+- [x] stable Componentを別Slotへ移した場合を`recreate-and-rebind`として扱い、旧Componentをstateから失う前に参照更新と削除を完了する。
 - [ ] relocation時にlocal transformとworld transformのどちらを維持するかを宣言・planへ表示する。
-- [ ] Componentへ`initialFields`を追加し、新規作成時だけ初期値を設定する。adopt、再apply、既存runtime dataへは再適用しない。
+- [x] Componentへ`initialFields`を追加し、新規作成時だけ初期値を設定する。adopt、再apply、既存runtime dataへは再適用しない。
 - [ ] session変更後のComponent再解決をtype ordinalだけに依存させず、component index、管理member、reference topology、optional `identityFields`で一意性を確認する。曖昧時は誤接続せず`STABLE_COMPONENT_AMBIGUOUS`を返す。
 - [ ] apply/test/inspect/component primitiveが同じ`$slot:key`、`$component:key`、`$member:key.Member`とworld state解決を利用する。
 
 ### P0: portable item closure
 
-- [ ] Grabbable付き保存rootについて、subtree内Component、Flux module、Flux bindings、runtime targetの参照閉包を検査する`item audit`を追加する。
-- [ ] 外部参照をrequired world element、addressable asset、runtime context、明示許可へ分類し、保存後に切れる参照だけをactionable errorにする。
-- [ ] Flux module自身またはbinding targetがportable root外にある場合、deploy/verify前に警告またはstrict errorを返す。
+- [x] Grabbable付き保存rootについて、subtree内Component、Flux module、Flux bindings、runtime targetの参照閉包を検査する`item audit`を追加する。
+- [x] 外部参照をrequired world element、addressable asset、runtime context、明示許可へ分類し、保存後に切れる参照だけをactionable errorにする。
+- [x] Flux module自身またはbinding targetがportable root外にある場合、deploy/verify前に警告またはstrict errorを返す。
 - [ ] テレポーターガンfixtureで、外側のMain/Runtimeを不合格、Grabbable配下へ移した状態を合格とする。
 
 ### P0: Flux discoveryとdeploy preflight
 
-- [ ] pinned Flux-SDKの公開metadataからnode名、category、generic、input、outputを索引化する`flux node search/describe`を追加する。compilerは再実装しない。
-- [ ] node catalogをFlux-SDK/Resonite versionごとにcacheし、同名nodeはassembly-qualified identityで保持してduplicate keyを回避する。
-- [ ] 非空sourceが0 nodeへ最適化された場合は`FLUX_EMPTY_MODULE`とentrypoint保持のsuggestionを返す。
-- [ ] compiled module input/output型と解決済みworld target型をdeploy前に照合する。未結線、型不一致、書き込み不能driveを構造化エラーにする。
-- [ ] Flux-SDK 1.9.0のinterface型global input既知問題をdeploy前に検出し、element input＋module内global化またはDynamic Impulse bridgeをsuggestして非原子的失敗を避ける。
+- [x] pinned Flux-SDKの公開metadataからnode名、category、generic、input、outputを索引化する`flux node search/describe`を追加する。compilerは再実装しない。
+- [x] node catalogをFlux-SDK/library identityごとにcacheし、同名nodeはfull runtime identityで保持してduplicate keyを回避する。
+- [x] 非空sourceが0 nodeへ最適化された場合は`FLUX_EMPTY_MODULE`とentrypoint保持のsuggestionを返す。
+- [x] source headerで宣言したmodule input/output型と解決済みworld target型をdeploy前に照合する。未結線、型不一致、書き込み不能driveを構造化エラーにする。
+- [x] Flux-SDK 1.9.0のinterface型global input既知問題をdeploy前に検出し、element input＋module内global化またはDynamic Impulse bridgeをsuggestして非原子的失敗を避ける。
 
 ### P1: scene/UIX/item lintとverification coverage
 
@@ -52,12 +52,14 @@
 
 ### Skills、fixture、完了条件
 
-- [ ] `resonite-build`へcamera Z+、single/double sided、UIX Graphic分離、world-space背景material、Grabbable保存境界、GripPose、`initialFields`、runtime clone migrationを追加する。
-- [ ] `resonite-flux`へ0-node、interface global、element input＋module内global化、Dynamic Impulse bridge、portable root内module配置を追加する。
+- [x] `resonite-build`へcamera Z+、single/double sided、UIX Graphic分離、world-space背景material、Grabbable保存境界、GripPose、`initialFields`、runtime clone migrationを追加する。
+- [x] `resonite-flux`へ0-node、interface global、element input＋module内global化、Dynamic Impulse bridge、portable root内module配置を追加する。
 - [ ] bundled skillのhash/versionをlockし、未編集の旧skillだけを安全に更新する`skills sync --check/--update`を追加する。利用者編集は競合として保護する。
 - [ ] 3事例から、壊れた版と修正版の最小offline fixtureを作る。
-- [ ] live testは一意な`RLoop_Test_*`だけを作り、exact IDをfinallyでcleanupする。Rootや既存contentを変更しない。
+- [x] live testは一意な`RLoop_Test_*`だけを作り、exact IDをfinallyでcleanupする。Rootや既存contentを変更しない。
 - [ ] P0完了条件は、cameraの実ボタン撮影、teleporter itemのclosure、UIX Dynamic Impulse、再接続後のstable解決、runtime data保持、全fixtureの2回目apply mutation 0を確認すること。
+
+2026-08-31実装結果: offline unit 87件とintegration harness 5件が成功し、`localhost:22599`でもlive integration 5件が成功した。一意なテストrootでSlot Parent更新時のID維持、所有rootのrelocationと旧子prune、apply 2回目mutation 0、strict item auditを確認した。Flux-SDK 1.9.0の`froox-docs --json`が同名`ToLower`で例外になることも再現し、通常metadata parserで回避した。未完了のinteraction 2項目は、ResoniteLink 0.13.1がUIX `SyncDelegate`をdefinition/updateへ公開せず、Dynamic Impulse helperと`CallInput.Trigger`も呼び出し可能なSyncMethodに公開しないためである。raw protocolを推測せず、現状はstructural-onlyとしてskillsとKnown limitationsへ明記した。
 
 ## 2026-08-28 ブロック崩しフィードバックの改善計画
 

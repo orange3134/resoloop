@@ -139,7 +139,8 @@ public sealed record SlotUpdateRequest(
     string? Name = null,
     Vector3Value? Position = null,
     QuaternionValue? Rotation = null,
-    Vector3Value? Scale = null);
+    Vector3Value? Scale = null,
+    string? ParentId = null);
 
 public sealed record MemberDefinitionInfo(
     string Name,

@@ -158,7 +158,7 @@ rloop apply examples/house-world.json --json
 
 schema v1では、top-levelに `schemaVersion: "1"`、`ownership.key`、root `slot.key`が必要です。ownershipごとのstateは既定でproject内の `.rloop/state/<ownership>.json` に保存され、途中経過もcheckpointされます。このdirectoryは `rloop init` が生成するignore設定によりversion controlから除外されます。
 
-`children` でSlot階層を宣言できます。SlotとComponentの明示的 `key` はrenameやセッション変更後の再解決に使われます。同じSlotに同型Componentを複数宣言する場合は、それぞれにkeyが必要です。`managedFields`はrloopが収束させるposition/rotation/scaleを限定し、`preserveWorldTransform`は既存Slotの現在のtransform値を保持します。key変更時は`migrateFrom`でworld objectを作り直さずstateを移行できます。fieldから `$slot:key`、`$component:key`、`$member:key.MemberName`、`$asset:key` を参照でき、forward referenceも利用できます。旧 `$ref:key` も互換です。
+`children` でSlot階層を宣言できます。SlotとComponentの明示的 `key` はrename、親変更、セッション変更後の再解決に使われます。stable Slotの親変更はIDを維持する`relocate`、stable Componentの親Slot変更は作成・参照再解決・旧Component削除としてplan/applyされます。同じSlotに同型Componentを複数宣言する場合は、それぞれにkeyが必要です。`identityFields`へ不変な管理memberを指定すると、同型Componentの挿入後も再接続時に誤接続せず再解決できます。`fields`は毎回収束させる値、`initialFields`はComponent新規作成時だけ設定してruntime dataを上書きしない値です。`managedFields`はrloopが収束させるposition/rotation/scaleを限定し、`preserveWorldTransform`は既存Slotの現在のlocal transform値を保持します。key変更時は`migrateFrom`でworld objectを作り直さずstateを移行できます。fieldから `$slot:key`、`$component:key`、`$member:key.MemberName`、`$asset:key` を参照でき、forward referenceも利用できます。旧 `$ref:key` も互換です。vector、quaternion、colorはJSON array/objectがcanonicalで、従来のcomma stringも互換入力として受理されます。
 
 include、parameter/variable、prototype/instance、repeat、asset、camera、assertionの仕様は[docs/DECLARATIVE.md](docs/DECLARATIVE.md)にまとめています。house fixtureは3ファイルへ分割し、22個のboxと4本のtable legをprototype化しました。展開結果69 Slot・148 Componentを維持したまま、宣言量は46,178 byteから42,430 byteへ8.1%減っています。
 
@@ -184,13 +184,23 @@ dotnet tool install --global Papaltine.FluxSDK --version 1.9.0
 $env:RESONITE_MANAGED_DATA_PATH="D:\Users\star_\AppData\Local\RESO Launcher\profiles\profile1\Game"
 
 rloop flux check examples/flux/RLoopHello.pg --project examples/flux --json
+rloop flux node search DynamicImpulse --json
+rloop flux node describe DynamicImpulseTrigger --json
 rloop flux build examples/flux/RLoopHello.pg --project examples/flux --json
 rloop flux deploy --project examples/flux --module RLoopHello --parent RLoop_Test --json
 rloop flux deploy-manifest examples/flux/rloop.flux.json --json
 rloop flux watch examples/flux/rloop.flux.json --json
 ~~~
 
-`.pg`に対するbuild/check/watchは既存Flux-SDK CLIをラップします。JSON module manifestに対するwatchは依存順に成功buildだけを再deployします。`$slot:key` parentはworld stateから現在session向けに検証・再解決されます。moduleの `bindings` ではFlux input名を `mode: "source"`、output名を `mode: "drive"` として `$slot:key` / `$component:key` / `$member:key.MemberName` へ接続できます。driveはmember targetだけを受け付けます。IDはworld stateのkey・path・type ordinalから接続ごとに再解決され、未解決またはmanifestと不一致のbindingはdeploy前に構造化エラーになります。deployはFlux-SDK 1.9のLoader.replaceを利用し、deploy先の`parentSlotId`と、再観測した実module childの`moduleSlotIdBefore` / `moduleSlotIdAfter`、解決済みbinding、checkpoint recoveryを返します。`doctor`は最小check/build probeでmanaged-dataの明示pathまたは自動発見が実際に成功するか確認します。
+`.pg`に対するbuild/check/watchは既存Flux-SDK CLIをラップします。`flux node search/describe`はFlux-SDKの通常metadata出力を、同名nodeをfull identity別に保持したversioned catalogへcacheします（1.9.0の`froox-docs --json`は同名keyで失敗するため使用しません）。JSON module manifestに対するwatchは依存順に成功buildだけを再deployします。`$slot:key` parentはworld stateから現在session向けに検証・再解決されます。moduleの `bindings` ではFlux input名を `mode: "source"`、output名を `mode: "drive"` として `$slot:key` / `$component:key` / `$member:key.MemberName` へ接続できます。driveはmember targetだけを受け付けます。IDはworld stateのcomponent index、管理member、`identityFields`を使って再解決されます。source signatureの未結線port、方向・型不一致、Flux-SDK 1.9.xのinterface global inputはbuild/deploy前に、build成功後の0 nodeはdeploy前に構造化エラーになります。deployはFlux-SDK 1.9のLoader.replaceを利用し、deploy先の`parentSlotId`と、再観測した実module childの`moduleSlotIdBefore` / `moduleSlotIdAfter`、解決済みbinding、checkpoint recoveryを返します。`doctor`は最小check/build probeでmanaged-dataの明示pathまたは自動発見が実際に成功するか確認します。
+
+保存・配布するGrabbableは、保存前に参照閉包を監査できます。
+
+~~~powershell
+rloop item audit Root/RLoop_Test_Teleporter --strict --json
+~~~
+
+`item audit`はroot以下のSlot、Component、member IDを閉包として収集し、外部参照をrequired world element、Flux external、runtime context、明示許可へ分類します。保存後に切れる参照は`ITEM_NOT_PORTABLE`、runtime contextはwarningです。意図した依存だけを`--allow-external`で許可し、Flux moduleとbinding targetもGrabbable root内へ置いてください。
 
 ## Codex Skills
 
@@ -234,7 +244,7 @@ rloop logs --tail 200 --json
 - COMPONENT_TYPE_NOT_FOUND: type searchの完全な結果を使う
 - open generic: `rloop type specialize '[FrooxEngine]FrooxEngine.DynamicValueVariable<>' string` でclosed genericを生成する
 - COMPONENT_MEMBER_NOT_FOUND: type describeでflattened memberを確認
-- VALUE_CONVERSION_FAILED: vectorsはcomma区切り、quaternion/colorは4要素
+- VALUE_CONVERSION_FAILED: vector/quaternion/colorはJSON array/objectを優先し、エラーのtarget typeと受理例を確認
 - FLUX_SDK_NOT_FOUND: flux-sdkをglobal toolとして導入、またはRLOOP_FLUX_EXECUTABLEを設定
 - Flux type error: RESONITE_MANAGED_DATA_PATHまたは --library-path を確認
 
@@ -246,7 +256,8 @@ rloop logs --tail 200 --json
 - ResoniteLink 0.13.1にscreenshot APIがないため、captureは決定的なcamera-space SVGで、最終レンダリング画像ではありません。結果は `screenshotAvailable: false` を明示します。
 - logsはLink protocolからのstreamではなく、明示されたローカルlog fileのtailです。
 - runtime probeは `safe: true` と `--probe --yes` の二重許可が必要です。public Reflectionに公開されたSyncMethodを呼ぶ `method` probeに加え、fieldを一時変更してafter assertionをpollし、`finally`で元の値へ戻して復元確認する `set-member` probeを利用できます。公開されないinteractionはstructural-onlyです。
-- Flux-SDK 1.9.0ではinterface型のglobal input（実機で確認した `IButton global` など）が参照配線後に `Invalid component type` を返し、部分的なmoduleを残す場合があります。rloopはこのupstream errorを成功扱いせず、checkpoint recoveryを返します。`Slot element` inputの配線は正常動作を確認しています。
+- ResoniteLink 0.13.1はUIXの`SyncDelegate` memberをComponent definition/update modelへ公開せず、Dynamic Impulse helperと`CallInput.Trigger`も呼び出し可能なSyncMethodとして公開しません。rloopはraw messageやmember名を推測せず、これらのinteractionをstructural-onlyとして報告します。
+- Flux-SDK 1.9.xのinterface型global input（実機で確認した `IButton global` など）はdeploy前に`FLUX_INTERFACE_GLOBAL_UNSUPPORTED`で拒否します。concrete Componentの`element` inputからmodule内でglobal化するか、Dynamic Impulse bridgeを使用してください。`Slot element` inputの配線は正常動作を確認しています。
 
 ## License and upstream notes
 

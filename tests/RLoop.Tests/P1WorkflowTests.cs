@@ -106,7 +106,12 @@ public sealed class P1WorkflowTests : IDisposable
     [Fact]
     public async Task FluxManifestPassesResolvedInputAndOutputBindingsToDeployer()
     {
-        File.WriteAllText(Path.Combine(_root, "binding.pg"), "module Binding where { 1->display }");
+        File.WriteAllText(Path.Combine(_root, "binding.pg"), """
+            module Binding
+            in Source: Slot element
+            out Result: bool
+            where { Result = true; Source->display }
+            """);
         var manifest = Path.Combine(_root, "binding-flux.json");
         File.WriteAllText(manifest, """
             { "schemaVersion":"1", "modules":[{
@@ -244,6 +249,79 @@ public sealed class P1WorkflowTests : IDisposable
         Assert.False(failure.Success);
         Assert.False(failure.AutoDiscovery);
         Assert.Contains("Could not find FrooxEngine assemblies", failure.Message);
+    }
+
+    [Fact]
+    public void FluxNodeCatalogPreservesDuplicateShortNamesAndParsesPorts()
+    {
+        var nodes = FluxNodeCatalog.Parse("""
+            ToLower:
+              FullName: FrooxEngine.ProtoFlux.Runtimes.Execution.Nodes.Strings.ToLower
+              ThisType: "string"
+              Inputs:
+                Str: string
+              Outputs: {}
+              Globals: {}
+
+            ToLower:
+              FullName: FrooxEngine.ProtoFlux.Runtimes.Execution.Nodes.Characters.ToLower
+              ThisType: "char"
+              Inputs:
+                Character: char
+              Outputs:
+                Value: char
+              Globals: {}
+            """);
+
+        Assert.Equal(2, nodes.Count);
+        Assert.All(nodes, node => Assert.Equal("ToLower", node.Name));
+        Assert.Equal(2, nodes.Select(node => node.FullName).Distinct().Count());
+        Assert.Equal("Str", Assert.Single(nodes[0].Inputs).Name);
+        Assert.Equal("Value", Assert.Single(nodes[1].Outputs).Name);
+    }
+
+    [Fact]
+    public async Task FluxManifestRejectsZeroNodeBuildBeforeDeploy()
+    {
+        File.WriteAllText(Path.Combine(_root, "empty.pg"), "module Empty\nwhere { }");
+        var manifest = Path.Combine(_root, "empty-flux.json");
+        File.WriteAllText(manifest, """
+            { "schemaVersion":"1", "modules":[{"name":"empty","source":"empty.pg","module":"Empty"}] }
+            """);
+        var fake = new FakeFluxTool { BuildResult = new FluxResult(true, 0, "Packing 0 ProtoFlux nodes and 0 comments.", "") };
+
+        var error = await Assert.ThrowsAsync<RLoopException>(() => new FluxManifestOrchestrator(fake)
+            .DeployAsync(manifest, "Reso_Parent", new Uri("ws://localhost:12449"), null, null));
+
+        Assert.Equal("FLUX_EMPTY_MODULE", error.Code);
+        Assert.Empty(fake.Deployed);
+    }
+
+    [Fact]
+    public async Task FluxManifestRejectsInterfaceGlobalBeforeDeploy()
+    {
+        File.WriteAllText(Path.Combine(_root, "button.pg"), """
+            module Button
+            in TouchButton: IButton global
+            where { TouchButton->display }
+            """);
+        var manifest = Path.Combine(_root, "button-flux.json");
+        File.WriteAllText(manifest, """
+            { "schemaVersion":"1", "modules":[{"name":"button","source":"button.pg","module":"Button",
+              "bindings":{"TouchButton":{"target":"$component:button","mode":"source"}}}] }
+            """);
+        var resolved = new Dictionary<string, FluxResolvedModuleBindings>
+        {
+            ["button"] = new([new("TouchButton", "source", "$component:button", "Reso_Button", "component", "FrooxEngine.PhysicalButton")])
+        };
+        var fake = new FakeFluxTool();
+
+        var error = await Assert.ThrowsAsync<RLoopException>(() => new FluxManifestOrchestrator(fake)
+            .DeployAsync(manifest, "Reso_Parent", new Uri("ws://localhost:12449"), null, null, resolvedBindings: resolved));
+
+        Assert.Equal("FLUX_INTERFACE_GLOBAL_UNSUPPORTED", error.Code);
+        Assert.Empty(fake.BuildRequests);
+        Assert.Empty(fake.Deployed);
     }
 
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, true); }

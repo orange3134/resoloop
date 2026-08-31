@@ -21,6 +21,39 @@ public sealed class ValueCodecTests
         Assert.IsType(expected, result);
     }
 
+    [Theory]
+    [InlineData("[1,2,3]")]
+    [InlineData("{\"x\":1,\"y\":2,\"z\":3}")]
+    [InlineData("1,2,3")]
+    public async Task ConvertsStructuredValuesFromCanonicalAndCompatibilityShapes(string raw)
+    {
+        var link = new Link.LinkInterface();
+        var definition = new Link.FieldDefinition { ValueType = new Link.TypeReference { Type = "float3" } };
+
+        var result = Assert.IsType<Link.Field_float3>(await ValueCodec.ParseAsync(link, definition, raw));
+
+        Assert.Equal(1, result.Value.x);
+        Assert.Equal(2, result.Value.y);
+        Assert.Equal(3, result.Value.z);
+    }
+
+    [Fact]
+    public async Task ConvertsReflectedIntegerTupleFromCanonicalArray()
+    {
+        var link = new Link.LinkInterface();
+        var definition = new Link.FieldDefinition { ValueType = new Link.TypeReference { Type = "int3" } };
+
+        var result = Assert.IsAssignableFrom<Link.Field>(await ValueCodec.ParseAsync(link, definition, "[1,2,3]"));
+        var value = result.GetType().GetProperty("Value")!.GetValue(result)!;
+        object? Coordinate(string name) => value.GetType().GetField(name)?.GetValue(value) ??
+                                            value.GetType().GetProperty(name)?.GetValue(value);
+
+        Assert.Equal("Field_int3", result.GetType().Name);
+        Assert.Equal(1, Coordinate("x"));
+        Assert.Equal(2, Coordinate("y"));
+        Assert.Equal(3, Coordinate("z"));
+    }
+
     [Fact]
     public async Task ConvertsReferencesAndNull()
     {

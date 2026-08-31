@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using RLoop.Core;
 
 namespace RLoop.Flux;
@@ -42,10 +43,11 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
         foreach (var module in Topological(loaded.Manifest.Modules))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var source = Path.GetFullPath(module.Source, loaded.Directory);
             state.Modules.TryGetValue(module.Name, out var previous);
             FluxResolvedModuleBindings? moduleBindings = null;
             _ = resolvedBindings?.TryGetValue(module.Name, out moduleBindings);
-            ValidateResolvedBindings(module, moduleBindings);
+            ValidateResolvedBindings(module, moduleBindings, source);
             var hash = EffectiveHash(hashes[module.Name], moduleBindings);
             var beforeSlotId = resolveModuleSlot is null
                 ? previous?.SlotId
@@ -62,7 +64,6 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
                     true, false, beforeSlotId, beforeSlotId, Bindings: moduleBindings?.Bindings));
                 continue;
             }
-            var source = Path.GetFullPath(module.Source, loaded.Directory);
             var build = await flux.BuildAsync(new FluxBuildRequest(source, loaded.ProjectDirectory, null, libraryPath), cancellationToken);
             if (!build.Success)
             {
@@ -70,6 +71,12 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
                     false, false, beforeSlotId, beforeSlotId, build.StandardError, moduleBindings?.Bindings));
                 return Report(false);
             }
+            if (Regex.IsMatch(build.StandardOutput + "\n" + build.StandardError,
+                    @"Packing\s+0\s+ProtoFlux\s+nodes", RegexOptions.IgnoreCase))
+                throw new RLoopException("FLUX_EMPTY_MODULE",
+                    $"Module '{module.Name}' compiled successfully but contains zero ProtoFlux nodes.", ExitCodes.ValidationFailed,
+                    new Dictionary<string, object?> { ["module"] = module.Name, ["source"] = source },
+                    ["Keep a reachable entrypoint such as CallInput, a Dynamic Impulse receiver, LocalUpdate, or another consumer of the graph."]);
             var deploy = await flux.DeployAsync(new FluxDeployRequest(loaded.ProjectDirectory, module.Module, parentSlotId, url,
                 libraryPath, helperPath, moduleBindings?.InputMap, moduleBindings?.OutputMap), cancellationToken);
             if (!deploy.Success)
@@ -137,10 +144,18 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
 
     public static FluxModuleManifest Inspect(string manifestPath) => Load(manifestPath).Manifest;
 
-    private static void ValidateResolvedBindings(FluxModuleSpec module, FluxResolvedModuleBindings? resolved)
+    private static void ValidateResolvedBindings(FluxModuleSpec module, FluxResolvedModuleBindings? resolved, string source)
     {
         var declared = module.Bindings ?? new Dictionary<string, FluxBindingSpec>();
-        if (declared.Count == 0) return;
+        var ports = FluxModuleSignature.Parse(File.ReadAllText(source));
+        if (declared.Count == 0)
+        {
+            if (ports.Count > 0)
+                throw new RLoopException("FLUX_MODULE_PORT_UNBOUND",
+                    $"Module '{module.Name}' declares input/output ports but its manifest has no bindings.", ExitCodes.ValidationFailed,
+                    new Dictionary<string, object?> { ["module"] = module.Name, ["ports"] = ports.Select(port => port.Name).ToArray() });
+            return;
+        }
         if (resolved is null)
             throw new RLoopException("FLUX_BINDINGS_UNRESOLVED",
                 $"Module '{module.Name}' declares bindings, but no resolved world targets were supplied.",
@@ -153,18 +168,74 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
                 (!string.Equals(pair.Value.Mode, binding.Mode, StringComparison.Ordinal) ||
                  !string.Equals(pair.Value.Target, binding.Selector, StringComparison.Ordinal)))
             .Select(pair => pair.Key).ToArray();
-        if (missing.Length == 0 && extra.Length == 0 && mismatched.Length == 0) return;
+        if (missing.Length != 0 || extra.Length != 0 || mismatched.Length != 0)
+            throw new RLoopException("FLUX_BINDINGS_UNRESOLVED",
+                $"Resolved bindings for module '{module.Name}' do not match its manifest declaration.",
+                ExitCodes.ValidationFailed,
+                new Dictionary<string, object?>
+                {
+                    ["module"] = module.Name,
+                    ["missing"] = missing,
+                    ["extra"] = extra,
+                    ["mismatched"] = mismatched
+                });
 
-        throw new RLoopException("FLUX_BINDINGS_UNRESOLVED",
-            $"Resolved bindings for module '{module.Name}' do not match its manifest declaration.",
-            ExitCodes.ValidationFailed,
-            new Dictionary<string, object?>
-            {
-                ["module"] = module.Name,
-                ["missing"] = missing,
-                ["extra"] = extra,
-                ["mismatched"] = mismatched
-            });
+        var portsByName = ports.ToDictionary(port => port.Name, StringComparer.Ordinal);
+        var undeclaredPorts = ports.Where(port => !declared.ContainsKey(port.Name)).Select(port => port.Name).ToArray();
+        var unknownBindings = declared.Keys.Where(name => !portsByName.ContainsKey(name)).ToArray();
+        if (undeclaredPorts.Length > 0 || unknownBindings.Length > 0)
+            throw new RLoopException("FLUX_MODULE_PORT_UNBOUND",
+                $"Module '{module.Name}' ports and manifest bindings do not form a complete one-to-one map.", ExitCodes.ValidationFailed,
+                new Dictionary<string, object?> { ["module"] = module.Name, ["unboundPorts"] = undeclaredPorts,
+                    ["unknownBindings"] = unknownBindings });
+
+        foreach (var binding in resolved.Bindings)
+        {
+            var port = portsByName[binding.Name];
+            if (port.Direction != binding.Mode)
+                throw new RLoopException("FLUX_BINDING_DIRECTION_MISMATCH",
+                    $"Binding '{module.Name}.{binding.Name}' is mode '{binding.Mode}', but the compiled module port is '{port.Direction}'.",
+                    ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["portType"] = port.Type, ["modifier"] = port.Modifier });
+            if (port.Modifier == "global" && IsInterfaceName(port.Type))
+                throw new RLoopException("FLUX_INTERFACE_GLOBAL_UNSUPPORTED",
+                    $"Flux-SDK 1.9.x cannot safely deploy interface global input '{module.Name}.{binding.Name}' ({port.Type}).",
+                    ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["module"] = module.Name,
+                        ["binding"] = binding.Name, ["portType"] = port.Type, ["targetType"] = binding.TargetType },
+                    ["Use an element input with a concrete Component type, then convert it to a global inside the module with asDrivenGlobal.",
+                     "For event-only coupling, use a Dynamic Impulse bridge instead of an interface global."]);
+            if (!TargetTypeCompatible(port.Type, binding.TargetKind, binding.TargetType))
+                throw new RLoopException("FLUX_BINDING_TYPE_MISMATCH",
+                    $"Binding '{module.Name}.{binding.Name}' expects '{port.Type}', but '{binding.Selector}' resolves to '{binding.TargetType ?? binding.TargetKind}'.",
+                    ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["module"] = module.Name,
+                        ["binding"] = binding.Name, ["portType"] = port.Type, ["portModifier"] = port.Modifier,
+                        ["targetKind"] = binding.TargetKind, ["targetType"] = binding.TargetType });
+        }
+    }
+
+    private static bool TargetTypeCompatible(string expected, string targetKind, string? actual)
+    {
+        var expectedName = SimpleType(expected);
+        if (targetKind == "slot") return expectedName == "Slot";
+        if (string.IsNullOrWhiteSpace(actual)) return false;
+        var actualName = SimpleType(actual);
+        if (expectedName.Equals(actualName, StringComparison.OrdinalIgnoreCase)) return true;
+        if (targetKind == "component" && IsInterfaceName(expectedName)) return true;
+        return false;
+    }
+
+    private static bool IsInterfaceName(string type)
+    {
+        var name = SimpleType(type);
+        return name.Length > 1 && name[0] == 'I' && char.IsUpper(name[1]);
+    }
+
+    private static string SimpleType(string type)
+    {
+        var value = type.Trim();
+        var bracket = value.LastIndexOf(']');
+        if (bracket >= 0) value = value[(bracket + 1)..];
+        var dot = value.LastIndexOf('.');
+        return dot >= 0 ? value[(dot + 1)..] : value;
     }
 
     private static LoadedManifest Load(string manifestPath)

@@ -65,6 +65,42 @@ public sealed class ApplyDocumentTests : IDisposable
         Assert.Equal("APPLY_DOCUMENT_INVALID", error.Code);
     }
 
+    [Fact]
+    public void UnknownProbePropertySuggestsArguments()
+    {
+        File.WriteAllText(_path, """
+            {
+              "schemaVersion":"1", "ownership":{"key":"test"},
+              "slot":{"key":"root","name":"RootNode","parent":"Root"},
+              "tests":[{"name":"probe","assertions":[],"probe":{
+                "kind":"method","target":"$component:target","method":"Run","argumnts":{}
+              }}]
+            }
+            """);
+
+        var error = Assert.Throws<RLoopException>(() => ApplyDocument.Load(_path));
+
+        Assert.Equal("APPLY_DOCUMENT_INVALID", error.Code);
+        Assert.Contains(error.Suggestions, suggestion => suggestion.Contains("'arguments'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task MissingAssertionsReturnsStructuredValidationIssue()
+    {
+        File.WriteAllText(_path, """
+            {
+              "schemaVersion":"1", "ownership":{"key":"test"},
+              "slot":{"key":"root","name":"RootNode","parent":"Root"},
+              "tests":[{"name":"missing","assertions":null}]
+            }
+            """);
+
+        var result = await ApplyDocumentValidator.ValidateAsync(ApplyDocument.Load(_path));
+
+        Assert.False(result.Valid);
+        Assert.Contains(result.Issues, issue => issue.Code == "APPLY_TEST_ASSERTIONS_MISSING");
+    }
+
     public void Dispose()
     {
         if (File.Exists(_path)) File.Delete(_path);

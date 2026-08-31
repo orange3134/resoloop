@@ -63,6 +63,88 @@ public sealed class ApplyWorkflowTests : IDisposable
     }
 
     [Fact]
+    public async Task InitialFieldsAreAppliedOnlyWhenComponentIsCreated()
+    {
+        var path = Path.Combine(_root, "initial-fields.json");
+        File.WriteAllText(path, """
+            {
+              "schemaVersion":"1", "ownership":{"key":"initial-fields"},
+              "slot":{"key":"root","name":"Managed","parent":"Root"},
+              "components":[{"key":"state","type":"Test.Target","fields":{"Enabled":true},"initialFields":{"Count":0}}]
+            }
+            """);
+        var document = ApplyDocument.Load(path);
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "initial-fields.state.json");
+        await service.ApplyAsync(document, new ApplyOptions(state));
+        var component = Assert.Single(Assert.Single(client.Root.Children).Components);
+        await client.SetComponentMemberAsync(component.Id, "Count", "5");
+        client.ResetWriteCounts();
+
+        var second = await service.ApplyAsync(document, new ApplyOptions(state));
+
+        Assert.Equal(0, client.Writes);
+        Assert.Equal(5, component.Members["Count"].Value!.GetValue<int>());
+    }
+
+    [Fact]
+    public async Task TestSupportsComponentExistenceAndFilteredChildCount()
+    {
+        var path = Path.Combine(_root, "existence-tests.json");
+        File.WriteAllText(path, """
+            {
+              "schemaVersion":"1", "ownership":{"key":"existence-tests"},
+              "slot":{"key":"root","name":"Managed","parent":"Root"},
+              "components":[{"key":"target","type":"Test.Target","fields":{"Enabled":true}}],
+              "children":[{"slot":{"key":"output","name":"Output"},"children":[
+                {"slot":{"key":"generated","name":"Image"},"components":[{"key":"metadata","type":"Test.Metadata","fields":{}}]}
+              ]}],
+              "tests":[{"name":"structure","assertions":[
+                {"target":"$component:target","exists":true},
+                {"kind":"child-count","target":"$slot:output","name":"Image","componentType":"Test.Metadata","count":1}
+              ]}]
+            }
+            """);
+        var document = ApplyDocument.Load(path);
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "existence-tests.state.json");
+        await service.ApplyAsync(document, new ApplyOptions(state));
+
+        var report = await service.TestAsync(document, new ApplyOptions(state));
+
+        Assert.True(report.Passed);
+        Assert.All(Assert.Single(report.Tests).Assertions, assertion => Assert.True(assertion.Passed));
+    }
+
+    [Fact]
+    public async Task TupleCompatibilityStringConvergesAgainstRuntimeObject()
+    {
+        var path = Path.Combine(_root, "tuple-convergence.json");
+        File.WriteAllText(path, """
+            {
+              "schemaVersion":"1", "ownership":{"key":"tuple-convergence"},
+              "slot":{"key":"root","name":"Managed","parent":"Root"},
+              "components":[{"key":"target","type":"Test.Target","fields":{"Offset":"1,2,3"}}]
+            }
+            """);
+        var document = ApplyDocument.Load(path);
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "tuple-convergence.state.json");
+        await service.ApplyAsync(document, new ApplyOptions(state));
+        var component = Assert.Single(Assert.Single(client.Root.Children).Components);
+        component.Members["Offset"] = new MemberValue("field", component.Id + ":Offset", "float3",
+            new JsonObject { ["x"] = 1, ["y"] = 2, ["z"] = 3 });
+        client.ResetWriteCounts();
+
+        var second = await service.ApplyAsync(document, new ApplyOptions(state));
+
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Fact]
     public async Task SyncObjectListConvergesWhenRuntimeMembersMatchDeclaredStructure()
     {
         var client = new FakeResoniteClient();
@@ -195,6 +277,35 @@ public sealed class ApplyWorkflowTests : IDisposable
 
         Assert.Equal(0, reapplied.ComponentsAdded);
         Assert.Equal(2, reapplied.ComponentsUnchanged);
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Fact]
+    public async Task IdentityFieldsResolveStableComponentAfterSameTypeInsertionAndSessionChange()
+    {
+        var path = Path.Combine(_root, "identity-fields.json");
+        File.WriteAllText(path, """
+            { "schemaVersion":"1", "ownership":{"key":"identity-fields"},
+              "slot":{"key":"root","name":"Managed","parent":"Root"},
+              "components":[{"key":"target","type":"Test.Target","fields":{"Enabled":false},"identityFields":["Enabled"]}] }
+            """);
+        var document = ApplyDocument.Load(path);
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "identity-fields.state.json");
+        await service.ApplyAsync(document, new ApplyOptions(state));
+        var managed = Assert.Single(client.Root.Children);
+        var originalId = Assert.Single(managed.Components).Id;
+        client.PrependComponent(managed, "Test.Target", new Dictionary<string, string> { ["Enabled"] = "true" });
+        client.SessionId = "session-2";
+        client.ResetWriteCounts();
+
+        var resolved = await service.ResolveStableReferenceAsync(state, "$component:target", client.SessionId);
+        var reapplied = await service.ApplyAsync(document, new ApplyOptions(state));
+
+        Assert.Equal(originalId, resolved.Id);
+        Assert.Equal(0, reapplied.ComponentsAdded);
+        Assert.Equal(1, reapplied.ComponentsUnchanged);
         Assert.Equal(0, client.Writes);
     }
 
@@ -380,6 +491,11 @@ public sealed class ApplyWorkflowTests : IDisposable
         var client = new FakeResoniteClient();
         var service = new WorldService(client);
         await service.ApplyAsync(ApplyDocument.Load(initialPath), new ApplyOptions(state));
+        var managed = Assert.Single(client.Root.Children);
+        var oldParent = Assert.Single(managed.Children);
+        var originalChild = Assert.Single(oldParent.Children);
+        var originalSlotId = originalChild.Id;
+        var originalComponentId = Assert.Single(originalChild.Components).Id;
 
         var applied = await service.ApplyAsync(ApplyDocument.Load(desiredPath),
             new ApplyOptions(state, Prune: true, ConfirmDeletes: true));
@@ -387,13 +503,167 @@ public sealed class ApplyWorkflowTests : IDisposable
         var reapplied = await service.ApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(state));
 
         Assert.Equal(1, applied.SlotsDeleted);
-        Assert.Single(Assert.Single(client.Root.Children).Children);
+        Assert.Equal(1, applied.SlotsUpdated);
+        Assert.Equal(0, applied.SlotsCreated);
+        Assert.Equal(0, applied.ComponentsAdded);
+        Assert.Equal(0, applied.ComponentsDeleted);
+        var movedChild = Assert.Single(Assert.Single(client.Root.Children).Children);
+        Assert.Equal(originalSlotId, movedChild.Id);
+        Assert.Equal(originalComponentId, Assert.Single(movedChild.Components).Id);
         Assert.Equal(0, reapplied.SlotsCreated);
         Assert.Equal(0, reapplied.ComponentsAdded);
         Assert.Equal(0, client.Writes);
         using var checkpoint = JsonDocument.Parse(File.ReadAllText(state));
         Assert.True(checkpoint.RootElement.GetProperty("slots").TryGetProperty("kept-child", out _));
         Assert.True(checkpoint.RootElement.GetProperty("components").TryGetProperty("kept-component", out _));
+    }
+
+    [Fact]
+    public async Task StableComponentMoveRecreatesAtDestinationAndRemovesExactSource()
+    {
+        var state = Path.Combine(_root, "component-move.state.json");
+        var initialPath = Path.Combine(_root, "component-move-initial.json");
+        File.WriteAllText(initialPath, """
+            { "schemaVersion":"1", "ownership":{"key":"component-move"}, "slot":{"key":"root","name":"Managed","parent":"Root"},
+              "components":[{"key":"moved-component","type":"Test.Target","fields":{"Enabled":true}}],
+              "children":[{"slot":{"key":"destination","name":"Destination"}}] }
+            """);
+        var desiredPath = Path.Combine(_root, "component-move-desired.json");
+        File.WriteAllText(desiredPath, """
+            { "schemaVersion":"1", "ownership":{"key":"component-move"}, "slot":{"key":"root","name":"Managed","parent":"Root"},
+              "children":[{"slot":{"key":"destination","name":"Destination"},"components":[
+                {"key":"moved-component","type":"Test.Target","fields":{"Enabled":true}}
+              ]}] }
+            """);
+        var client = new FakeResoniteClient();
+        var service = new WorldService(client);
+        await service.ApplyAsync(ApplyDocument.Load(initialPath), new ApplyOptions(state));
+        var managed = Assert.Single(client.Root.Children);
+        var originalId = Assert.Single(managed.Components).Id;
+
+        var plan = await service.PlanApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(state));
+        Assert.Contains(plan.Operations, operation => operation.Action == "relocate" && operation.Key == "moved-component");
+        var applied = await service.ApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(state));
+        client.ResetWriteCounts();
+        var reapplied = await service.ApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(state));
+
+        Assert.Empty(managed.Components);
+        var replacement = Assert.Single(Assert.Single(managed.Children).Components);
+        Assert.NotEqual(originalId, replacement.Id);
+        Assert.Equal(1, applied.ComponentsAdded);
+        Assert.Equal(1, applied.ComponentsDeleted);
+        Assert.Equal(0, reapplied.ComponentsAdded);
+        Assert.Equal(0, reapplied.ComponentsDeleted);
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Fact]
+    public async Task StableComponentMoveDoesNotAdoptAnUnrelatedSameTypeDestinationComponent()
+    {
+        var state = Path.Combine(_root, "component-move-collision.state.json");
+        var initialPath = Path.Combine(_root, "component-move-collision-initial.json");
+        File.WriteAllText(initialPath, """
+            { "schemaVersion":"1", "ownership":{"key":"component-move-collision"},
+              "slot":{"key":"root","name":"Managed","parent":"Root"},
+              "components":[{"key":"moved","type":"Test.Target","fields":{"Enabled":true}}],
+              "children":[{"slot":{"key":"destination","name":"Destination"},"components":[
+                {"key":"resident","type":"Test.Target","fields":{"Enabled":false}}
+              ]}] }
+            """);
+        var desiredPath = Path.Combine(_root, "component-move-collision-desired.json");
+        File.WriteAllText(desiredPath, """
+            { "schemaVersion":"1", "ownership":{"key":"component-move-collision"},
+              "slot":{"key":"root","name":"Managed","parent":"Root"},
+              "children":[{"slot":{"key":"destination","name":"Destination"},"components":[
+                {"key":"resident","type":"Test.Target","fields":{"Enabled":false}},
+                {"key":"moved","type":"Test.Target","fields":{"Enabled":true}}
+              ]}] }
+            """);
+        var client = new FakeResoniteClient();
+        var service = new WorldService(client);
+        await service.ApplyAsync(ApplyDocument.Load(initialPath), new ApplyOptions(state));
+        var managed = Assert.Single(client.Root.Children);
+        var sourceId = Assert.Single(managed.Components).Id;
+        var residentId = Assert.Single(Assert.Single(managed.Children).Components).Id;
+
+        var applied = await service.ApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(state));
+
+        Assert.Empty(managed.Components);
+        var destinationComponents = Assert.Single(managed.Children).Components;
+        Assert.Equal(2, destinationComponents.Count);
+        Assert.Contains(destinationComponents, component => component.Id == residentId);
+        Assert.Contains(destinationComponents, component => component.Id != residentId && component.Id != sourceId);
+        Assert.Equal(1, applied.ComponentsAdded);
+        Assert.Equal(1, applied.ComponentsDeleted);
+    }
+
+    [Fact]
+    public async Task StableOwnershipRootMovesBetweenParentsWithoutChangingId()
+    {
+        var initialPath = Path.Combine(_root, "root-move-initial.json");
+        File.WriteAllText(initialPath, """
+            { "schemaVersion":"1", "ownership":{"key":"root-move"},
+              "slot":{"key":"root","name":"Managed","parent":"Root/ParentA"} }
+            """);
+        var desiredPath = Path.Combine(_root, "root-move-desired.json");
+        File.WriteAllText(desiredPath, """
+            { "schemaVersion":"1", "ownership":{"key":"root-move"},
+              "slot":{"key":"root","name":"Managed","parent":"Root/ParentB"} }
+            """);
+        var client = new FakeResoniteClient();
+        await client.CreateSlotAsync(new SlotCreateRequest("Root", "ParentA"));
+        await client.CreateSlotAsync(new SlotCreateRequest("Root", "ParentB"));
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "root-move.state.json");
+        var initial = await service.ApplyAsync(ApplyDocument.Load(initialPath), new ApplyOptions(state));
+        client.ResetWriteCounts();
+
+        var plan = await service.PlanApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(state));
+        var moved = await service.ApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(state));
+        client.ResetWriteCounts();
+        var reapplied = await service.ApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(state));
+
+        Assert.Contains(plan.Operations, operation => operation.Action == "relocate" && operation.Key == "root");
+        Assert.Equal(1, plan.Updates);
+        Assert.Equal(initial.SlotId, moved.SlotId);
+        Assert.Equal(initial.SlotId, Assert.Single(client.Root.Children.Single(slot => slot.Name == "ParentB").Children).Id);
+        Assert.Empty(client.Root.Children.Single(slot => slot.Name == "ParentA").Children);
+        Assert.Equal(0, reapplied.SlotsUpdated);
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Fact]
+    public async Task StableOwnershipRootMoveCanPruneAStaleChildFromItsPreviousLocation()
+    {
+        var initialPath = Path.Combine(_root, "root-move-prune-initial.json");
+        File.WriteAllText(initialPath, """
+            { "schemaVersion":"1", "ownership":{"key":"root-move-prune"},
+              "slot":{"key":"root","name":"Managed","parent":"Root/ParentA"},
+              "children":[{"slot":{"key":"stale","name":"Stale"}}] }
+            """);
+        var desiredPath = Path.Combine(_root, "root-move-prune-desired.json");
+        File.WriteAllText(desiredPath, """
+            { "schemaVersion":"1", "ownership":{"key":"root-move-prune"},
+              "slot":{"key":"root","name":"Managed","parent":"Root/ParentB"}, "children":[] }
+            """);
+        var client = new FakeResoniteClient();
+        await client.CreateSlotAsync(new SlotCreateRequest("Root", "ParentA"));
+        await client.CreateSlotAsync(new SlotCreateRequest("Root", "ParentB"));
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "root-move-prune.state.json");
+        var initial = await service.ApplyAsync(ApplyDocument.Load(initialPath), new ApplyOptions(state));
+
+        var plan = await service.PlanApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(state));
+        var applied = await service.ApplyAsync(ApplyDocument.Load(desiredPath),
+            new ApplyOptions(state, Prune: true, ConfirmDeletes: true));
+
+        Assert.Contains(plan.Operations, operation => operation.Action == "relocate" && operation.Key == "root");
+        Assert.Contains(plan.Operations, operation => operation.Action == "delete" && operation.Key == "stale");
+        Assert.Equal(initial.SlotId, applied.SlotId);
+        Assert.Equal(1, applied.SlotsUpdated);
+        Assert.Equal(1, applied.SlotsDeleted);
+        Assert.Empty(client.Root.Children.Single(slot => slot.Name == "ParentA").Children);
+        Assert.Empty(Assert.Single(client.Root.Children.Single(slot => slot.Name == "ParentB").Children).Children);
     }
 
     [Fact]
@@ -637,6 +907,12 @@ public sealed class ApplyWorkflowTests : IDisposable
         {
             Write();
             var slot = _slots[request.Id];
+            if (request.ParentId is not null && request.ParentId != slot.ParentId)
+            {
+                if (slot.ParentId is not null) _slots[slot.ParentId].Children.Remove(slot);
+                _slots[request.ParentId].Children.Add(slot);
+                slot.ParentId = request.ParentId;
+            }
             if (request.Name is not null) slot.Name = request.Name;
             if (request.Position is not null) slot.Position = request.Position;
             if (request.Rotation is not null) slot.Rotation = request.Rotation;
@@ -714,6 +990,17 @@ public sealed class ApplyWorkflowTests : IDisposable
             [new ClientOperationMetric("fake", _requests, 0)]);
         public void ResetWriteCounts() { Writes = 0; BatchUpdates = 0; }
 
+        public FakeComponent PrependComponent(FakeSlot slot, string type, IReadOnlyDictionary<string, string> fields)
+        {
+            var component = new FakeComponent("C" + _nextComponent++, type);
+            foreach (var member in _knownMembers.GetValueOrDefault(type) ?? [])
+                component.Members[member] = new MemberValue("field", component.Id + ":" + member, "bool", JsonValue.Create(false));
+            SetFields(component, fields);
+            _components[component.Id] = component;
+            slot.Components.Insert(0, component);
+            return component;
+        }
+
         private void Write()
         {
             Writes++;
@@ -760,6 +1047,7 @@ public sealed class ApplyWorkflowTests : IDisposable
                     if (!_knownMembers.TryGetValue(component.Type, out var members))
                         _knownMembers[component.Type] = members = new HashSet<string>(StringComparer.Ordinal);
                     foreach (var field in component.Fields?.Keys ?? []) members.Add(field);
+                    foreach (var field in component.InitialFields?.Keys ?? []) members.Add(field);
                     if (!string.IsNullOrWhiteSpace(component.Key)) keyedTypes[component.Key] = component.Type;
                 }
                 foreach (var child in children ?? []) Visit(child.Slot, child.Components, child.Children);
@@ -796,7 +1084,7 @@ public sealed class ApplyWorkflowTests : IDisposable
         {
             public string Id { get; } = id;
             public string Name { get; set; } = name;
-            public string? ParentId { get; } = parentId;
+            public string? ParentId { get; set; } = parentId;
             public Vector3Value? Position { get; set; } = position;
             public QuaternionValue? Rotation { get; set; } = rotation;
             public Vector3Value? Scale { get; set; } = scale;

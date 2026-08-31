@@ -18,6 +18,14 @@ public sealed class FluxProcessTool(string executable, IFluxDeployer deployer) :
     public Task<FluxResult> DeployAsync(FluxDeployRequest request, CancellationToken cancellationToken = default) =>
         deployer.DeployAsync(request, cancellationToken);
 
+    public Task<FluxResult> GenerateNodeDocsAsync(string output, string? libraryPath,
+        CancellationToken cancellationToken = default)
+    {
+        var args = new List<string> { "froox-docs", "--out", Path.GetFullPath(output) };
+        if (!string.IsNullOrWhiteSpace(libraryPath)) { args.Add("--library-path"); args.Add(Path.GetFullPath(libraryPath)); }
+        return Run(args, Path.GetDirectoryName(Path.GetFullPath(output))!, cancellationToken);
+    }
+
     public async Task<FluxToolStatus> GetStatusAsync(CancellationToken cancellationToken = default)
     {
         try

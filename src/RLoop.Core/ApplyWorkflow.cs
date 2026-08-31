@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 
 namespace RLoop.Core;
 
@@ -38,8 +39,14 @@ public sealed record ApplyDocument(
         }
         catch (JsonException ex)
         {
+            var unknown = Regex.Match(ex.Message, @"property '([^']+)'", RegexOptions.IgnoreCase).Groups[1].Value;
+            var suggestion = string.IsNullOrWhiteSpace(unknown) ? null : KnownProperties
+                .OrderBy(candidate => EditDistance(unknown, candidate)).ThenBy(candidate => candidate, StringComparer.Ordinal)
+                .FirstOrDefault();
             throw new RLoopException("APPLY_DOCUMENT_INVALID", $"Invalid apply document: {ex.Message}",
-                ExitCodes.ValidationFailed, innerException: ex);
+                ExitCodes.ValidationFailed,
+                new Dictionary<string, object?> { ["jsonPath"] = ex.Path, ["unknownProperty"] = string.IsNullOrWhiteSpace(unknown) ? null : unknown },
+                suggestion is null ? null : [$"Did you mean '{suggestion}'? Unknown properties are rejected to prevent silent no-ops."], ex);
         }
     }
 
@@ -51,6 +58,33 @@ public sealed record ApplyDocument(
         PropertyNameCaseInsensitive = true,
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
     };
+
+    private static int EditDistance(string left, string right)
+    {
+        var costs = Enumerable.Range(0, right.Length + 1).ToArray();
+        for (var i = 1; i <= left.Length; i++)
+        {
+            var previous = costs[0];
+            costs[0] = i;
+            for (var j = 1; j <= right.Length; j++)
+            {
+                var saved = costs[j];
+                costs[j] = Math.Min(Math.Min(costs[j] + 1, costs[j - 1] + 1), previous +
+                    (char.ToUpperInvariant(left[i - 1]) == char.ToUpperInvariant(right[j - 1]) ? 0 : 1));
+                previous = saved;
+            }
+        }
+        return costs[^1];
+    }
+
+    private static readonly string[] KnownProperties =
+    [
+        "schemaVersion", "ownership", "key", "slot", "parent", "name", "position", "rotation", "scale",
+        "managedFields", "preserveWorldTransform", "migrateFrom", "components", "children", "type", "fields",
+        "initialFields", "identityFields", "assets", "cameras", "tests", "assertions", "probe", "arguments",
+        "method", "kind", "target", "value", "restore", "safe", "expected", "exists", "phase", "componentType",
+        "count", "delta", "timeoutMs", "pollMs"
+    ];
 }
 
 public sealed record ApplyCompilationSummary(
@@ -74,7 +108,7 @@ public sealed record ApplyCameraSpec(
 
 public sealed record ApplyTestSpec(
     string Name,
-    IReadOnlyList<ApplyAssertionSpec> Assertions,
+    IReadOnlyList<ApplyAssertionSpec>? Assertions,
     ApplyProbeSpec? Probe = null,
     int TimeoutMs = 2000,
     int PollMs = 100);
@@ -83,7 +117,12 @@ public sealed record ApplyAssertionSpec(
     string Target,
     JsonElement? Expected = null,
     bool? Exists = null,
-    string? Phase = null);
+    string? Phase = null,
+    string Kind = "member",
+    string? Name = null,
+    string? ComponentType = null,
+    int? Count = null,
+    int? Delta = null);
 
 public sealed record ApplyProbeSpec(
     string Target,
@@ -109,7 +148,9 @@ public sealed record ApplyComponentSpec(
     string Type,
     IReadOnlyDictionary<string, JsonElement>? Fields,
     string? Key = null,
-    string? MigrateFrom = null);
+    string? MigrateFrom = null,
+    IReadOnlyDictionary<string, JsonElement>? InitialFields = null,
+    IReadOnlyList<string>? IdentityFields = null);
 
 public sealed record ApplyNodeSpec(
     ApplySlotSpec Slot,
@@ -185,7 +226,20 @@ public static class ApplyDocumentValidator
             var test = document.Tests![i];
             var path = $"$.tests[{i}]";
             if (string.IsNullOrWhiteSpace(test.Name)) Issue("APPLY_TEST_NAME_MISSING", "Test name is required.", path + ".name");
-            if (test.Assertions.Count == 0) Issue("APPLY_TEST_ASSERTIONS_MISSING", "A test requires at least one assertion.", path + ".assertions");
+            if (test.Assertions is null || test.Assertions.Count == 0) Issue("APPLY_TEST_ASSERTIONS_MISSING", "A test requires at least one assertion.", path + ".assertions");
+            foreach (var assertion in test.Assertions ?? [])
+            {
+                if (string.IsNullOrWhiteSpace(assertion.Target)) Issue("APPLY_ASSERTION_TARGET_MISSING", "An assertion requires target.", path + ".assertions");
+                if (assertion.Kind.Equals("child-count", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!assertion.Target.StartsWith("$slot:", StringComparison.Ordinal))
+                        Issue("APPLY_ASSERTION_SLOT_TARGET_REQUIRED", "A child-count assertion target must use $slot:key.", path + ".assertions");
+                    if (assertion.Count is null && assertion.Delta is null && assertion.Expected is null)
+                        Issue("APPLY_ASSERTION_COUNT_MISSING", "A child-count assertion requires count, delta, or expected.", path + ".assertions");
+                }
+                else if (!assertion.Kind.Equals("member", StringComparison.OrdinalIgnoreCase))
+                    Issue("APPLY_ASSERTION_KIND_UNSUPPORTED", "Assertion kind must be 'member' or 'child-count'.", path + ".assertions");
+            }
             if (test.Probe is not { } probe) continue;
             if (!probe.Safe) Issue("UNSAFE_PROBE_REJECTED", "A probe must declare safe=true.", path + ".probe.safe");
             switch (probe.Kind?.ToLowerInvariant())
@@ -291,7 +345,20 @@ public static class ApplyDocumentValidator
                     else if (!componentMigrations.TryAdd(component.MigrateFrom, (component.Key, componentPath)))
                         Issue("APPLY_MIGRATION_SOURCE_DUPLICATE", $"Stable Component key '{component.MigrateFrom}' is used by multiple migrations.", componentPath + ".migrateFrom");
                 }
-                foreach (var field in component.Fields ?? new Dictionary<string, JsonElement>())
+                var duplicateInitial = (component.InitialFields?.Keys ?? []).Intersect(component.Fields?.Keys ?? [], StringComparer.Ordinal).ToArray();
+                if (duplicateInitial.Length > 0)
+                    Issue("APPLY_COMPONENT_FIELD_POLICY_CONFLICT", $"Fields cannot be both managed and initial-only: {string.Join(", ", duplicateInitial)}.", componentPath);
+                var availableIdentityFields = (component.Fields?.Keys ?? []).Concat(component.InitialFields?.Keys ?? [])
+                    .ToHashSet(StringComparer.Ordinal);
+                foreach (var identityField in component.IdentityFields ?? [])
+                {
+                    if (string.IsNullOrWhiteSpace(identityField))
+                        Issue("APPLY_IDENTITY_FIELD_INVALID", "identityFields cannot contain an empty member name.", componentPath + ".identityFields");
+                    else if (!availableIdentityFields.Contains(identityField))
+                        Issue("APPLY_IDENTITY_FIELD_UNMANAGED",
+                            $"Identity field '{identityField}' must also be declared in fields or initialFields.", componentPath + ".identityFields");
+                }
+                foreach (var field in EnumerateComponentFields(component))
                 {
                     if (string.IsNullOrWhiteSpace(field.Key)) Issue("APPLY_MEMBER_NAME_MISSING", "Field names cannot be empty.", componentPath + ".fields");
                     ScanValue(field.Value, componentPath + ".fields." + field.Key);
@@ -323,7 +390,7 @@ public static class ApplyDocumentValidator
 
         foreach (var (component, componentPath) in componentPaths)
         {
-            foreach (var field in component.Fields ?? new Dictionary<string, JsonElement>())
+            foreach (var field in EnumerateComponentFields(component))
             {
                 ValidateReferences(field.Value, componentKeys, slotKeys, document.Assets?.Keys.ToHashSet(StringComparer.Ordinal) ?? [],
                     issues, componentPath + ".fields." + field.Key);
@@ -347,16 +414,25 @@ public static class ApplyDocumentValidator
             {
                 if (!definitions.TryGetValue(component.Type, out var definition)) continue;
                 var members = definition.Members.ToDictionary(x => x.Name, StringComparer.Ordinal);
-                foreach (var field in component.Fields ?? new Dictionary<string, JsonElement>())
+                foreach (var field in EnumerateComponentFields(component))
                 {
-                    if (!members.ContainsKey(field.Key))
+                    if (!members.TryGetValue(field.Key, out var member))
                         Issue("COMPONENT_MEMBER_NOT_FOUND", $"Member '{field.Key}' does not exist on '{component.Type}'.", componentPath + ".fields." + field.Key);
+                    else if (member.Kind == "field" && MemberValueSyntax.IsStructuredTuple(member.ValueType, out _))
+                    {
+                        var raw = field.Value.ValueKind == JsonValueKind.String ? field.Value.GetString() ?? string.Empty : field.Value.GetRawText();
+                        if (!raw.StartsWith('$'))
+                        {
+                            try { _ = MemberValueSyntax.ParseTuple(member.ValueType, raw); }
+                            catch (RLoopException ex) { issues.Add(new ApplyValidationIssue(ex.Code, ex.Message, componentPath + ".fields." + field.Key)); }
+                        }
+                    }
                 }
             }
 
             foreach (var (component, componentPath) in componentPaths)
             {
-                foreach (var field in component.Fields ?? new Dictionary<string, JsonElement>())
+                foreach (var field in EnumerateComponentFields(component))
                     await ValidateMemberReferencesStrict(field.Value, definitions, componentKeys, issues,
                         componentPath + ".fields." + field.Key, cancellationToken);
             }
@@ -364,6 +440,9 @@ public static class ApplyDocumentValidator
 
         return new ApplyValidationResult(issues.Count == 0, document.SchemaVersion, slots, components, references, strict, issues);
     }
+
+    private static IEnumerable<KeyValuePair<string, JsonElement>> EnumerateComponentFields(ApplyComponentSpec component) =>
+        (component.Fields ?? new Dictionary<string, JsonElement>()).Concat(component.InitialFields ?? new Dictionary<string, JsonElement>());
 
     public static void ThrowIfInvalid(ApplyValidationResult result)
     {
@@ -450,7 +529,9 @@ public static class ApplyDocumentValidator
 }
 
 internal sealed record ApplyStateSlot(string Id, string Path);
-internal sealed record ApplyStateComponent(string Id, string SlotKey, string Type, int TypeOrdinal);
+internal sealed record ApplyStateComponent(string Id, string SlotKey, string Type, int TypeOrdinal,
+    int? ComponentIndex = null, IReadOnlyList<string>? MemberNames = null,
+    IReadOnlyDictionary<string, string>? IdentityValues = null);
 internal sealed record ApplyStateAsset(string Kind, string SourceHash, string Url);
 
 internal sealed class ApplyState

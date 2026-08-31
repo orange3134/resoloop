@@ -405,6 +405,36 @@ public static class Program
                 });
                 break;
             }
+            case "item":
+            {
+                var sub = args.Positional(1, "item subcommand").ToLowerInvariant();
+                if (sub != "audit") throw UnknownCommand($"item {sub}");
+                var allowed = new List<string>();
+                foreach (var value in args.Options("allow-external"))
+                {
+                    if (value.StartsWith('$'))
+                    {
+                        var state = args.RequireOption("state");
+                        var session = await client.GetSessionInfoAsync(cancellationToken);
+                        allowed.Add((await world.ResolveStableReferenceAsync(state, value, session.UniqueSessionId, cancellationToken)).Id);
+                    }
+                    else if (value.StartsWith("Root", StringComparison.OrdinalIgnoreCase))
+                        allowed.Add(await world.ResolveSlotIdAsync(value, cancellationToken));
+                    else allowed.Add(value);
+                }
+                var report = await world.AuditItemAsync(args.Positional(2, "Item root Slot ID or path"), allowed,
+                    args.Has("strict"), cancellationToken);
+                if (!report.Portable)
+                    throw new RLoopException("ITEM_NOT_PORTABLE", $"Item root '{report.RootName}' contains references that will not travel with it.",
+                        ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["report"] = report },
+                        ["Move required Slots, Components, and Flux modules below the saved Grabbable root, or explicitly allow a runtime context dependency."]);
+                output.Success(report, writer =>
+                {
+                    writer.WriteLine($"portable={report.Portable} slots={report.Slots} components={report.Components} references={report.References}");
+                    foreach (var issue in report.Issues) writer.WriteLine($"{issue.Severity,-7} {issue.Code} {issue.Member} -> {issue.TargetId}");
+                });
+                break;
+            }
             default: throw UnknownCommand(string.Join(' ', args.Positionals));
         }
     }
@@ -515,6 +545,50 @@ public static class Program
     {
         var sub = args.Positional(1, "flux subcommand").ToLowerInvariant();
         if (sub == "status") { output.Success(await flux.GetStatusAsync(ct)); return ExitCodes.Success; }
+        if (sub == "node")
+        {
+            if (flux is not FluxProcessTool process)
+                throw new RLoopException("FLUX_NODE_CATALOG_UNAVAILABLE", "The configured Flux tool does not expose node metadata.", ExitCodes.ExternalToolFailed);
+            var operation = args.Positional(2, "flux node subcommand").ToLowerInvariant();
+            var query = args.Positional(3, "node query");
+            var cacheDirectory = args.Option("cache") ?? Path.Combine(Environment.CurrentDirectory, ".rloop", "cache", "flux-nodes");
+            var catalog = await FluxNodeCatalog.GetOrCreateAsync(process,
+                args.Option("library-path") ?? config.ResoniteManagedDataPath, cacheDirectory, args.Has("refresh"), ct);
+            if (operation == "search")
+            {
+                var limit = args.IntOption("limit", 50, 1, 500);
+                var matches = catalog.Nodes.Where(node => node.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                                                          node.FullName.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                                                          node.Category.Contains(query, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(node => node.Name.Equals(query, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                    .ThenBy(node => node.Name, StringComparer.Ordinal).ThenBy(node => node.FullName, StringComparer.Ordinal)
+                    .Take(limit).ToArray();
+                output.Success(new { query, count = matches.Length, catalog.FluxSdkVersion, catalog.LibraryIdentity, catalog.CachePath, nodes = matches },
+                    writer => { foreach (var node in matches) writer.WriteLine($"{node.Name,-36} {node.FullName}"); });
+                return ExitCodes.Success;
+            }
+            if (operation == "describe")
+            {
+                var matches = catalog.Nodes.Where(node => node.FullName.Equals(query, StringComparison.Ordinal) ||
+                                                          node.Name.Equals(query, StringComparison.Ordinal)).ToArray();
+                if (matches.Length == 0)
+                    throw new RLoopException("FLUX_NODE_NOT_FOUND", $"Flux node '{query}' was not found.", ExitCodes.NotFound,
+                        suggestions: ["Use 'rloop flux node search <query>' to discover exact names and full identities."]);
+                output.Success(new { query, count = matches.Length, catalog.FluxSdkVersion, catalog.LibraryIdentity, catalog.CachePath, nodes = matches },
+                    writer =>
+                    {
+                        foreach (var node in matches)
+                        {
+                            writer.WriteLine(node.FullName);
+                            if (node.Inputs.Count > 0) writer.WriteLine("  inputs: " + string.Join(", ", node.Inputs.Select(port => $"{port.Name}: {port.Type}")));
+                            if (node.Outputs.Count > 0) writer.WriteLine("  outputs: " + string.Join(", ", node.Outputs.Select(port => $"{port.Name}: {port.Type}")));
+                            if (node.Globals.Count > 0) writer.WriteLine("  globals: " + string.Join(", ", node.Globals.Select(port => $"{port.Name}: {port.Type}")));
+                        }
+                    });
+                return ExitCodes.Success;
+            }
+            throw UnknownCommand($"flux node {operation}");
+        }
         if (sub == "deploy-manifest" || sub == "watch" && args.Positional(2, "Flux source or manifest").EndsWith(".json", StringComparison.OrdinalIgnoreCase))
         {
             var manifestPath = Path.GetFullPath(args.Positional(2, "Flux manifest"));
@@ -735,9 +809,12 @@ Editing:
   rloop plan|diff FILE.json [--state FILE] [--adopt] [--changes-only|--creates-only|--deletes-only|--summary]
   rloop apply FILE.json [--state FILE] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
   rloop test FILE.json [--state FILE] [--probe --yes]
+  rloop item audit SLOT [--strict] [--allow-external ID|PATH|$slot:key ...] [--state WORLD_STATE]
 
 ProtoFlux (Flux-SDK):
   rloop flux status
+  rloop flux node search QUERY [--limit 50] [--refresh] [--library-path DIR]
+  rloop flux node describe NAME_OR_FULL_NAME [--library-path DIR]
   rloop flux check|build|watch FILE.pg [--project DIR] [--out FILE] [--library-path DIR]
   rloop flux deploy --project DIR --module MODULE_PATH [--parent SLOT] [--library-path DIR]
   rloop flux deploy-manifest FILE.json [--parent SLOT|$slot:key] [--state WORLD_STATE]

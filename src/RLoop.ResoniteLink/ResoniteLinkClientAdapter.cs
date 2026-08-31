@@ -92,6 +92,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         var slot = new Link.Slot
         {
             ID = request.Id,
+            Parent = request.ParentId is null ? null : new Link.Reference { TargetID = request.ParentId },
             Name = request.Name is null ? null : new Link.Field_string { Value = request.Name },
             Position = request.Position is null ? null : new Link.Field_float3 { Value = ToLink(request.Position) },
             Rotation = request.Rotation is null ? null : new Link.Field_floatQ { Value = ToLink(request.Rotation) },
@@ -738,6 +739,8 @@ public static class ValueCodec
         object? value;
         if (targetType == typeof(string)) value = raw;
         else if (targetType == typeof(Uri)) value = new Uri(raw, UriKind.RelativeOrAbsolute);
+        else if (MemberValueSyntax.IsStructuredTuple(underlying, out _))
+            value = ParseReflectedTuple(targetType, underlying, raw);
         else
         {
             var json = raw;
@@ -750,6 +753,31 @@ public static class ValueCodec
         }
         property.SetValue(field, value);
         return field;
+    }
+
+    private static object ParseReflectedTuple(Type targetType, string tupleType, string raw)
+    {
+        var tuple = MemberValueSyntax.ParseTuple(tupleType, raw);
+        var result = Activator.CreateInstance(targetType) ??
+            throw new RLoopException("VALUE_TYPE_UNSUPPORTED", $"Tuple type '{tupleType}' cannot be constructed.", ExitCodes.ValidationFailed);
+        var names = SimpleType(tupleType) is "color" or "colorx"
+            ? new[] { "r", "g", "b", "a" }
+            : new[] { "x", "y", "z", "w" };
+        for (var index = 0; index < tuple.Count; index++)
+        {
+            var member = targetType.GetField(names[index]) as System.Reflection.MemberInfo ?? targetType.GetProperty(names[index]);
+            var memberType = member switch
+            {
+                System.Reflection.FieldInfo field => field.FieldType,
+                System.Reflection.PropertyInfo property => property.PropertyType,
+                _ => throw new RLoopException("VALUE_TYPE_UNSUPPORTED",
+                    $"Tuple type '{tupleType}' does not expose '{names[index]}'.", ExitCodes.ValidationFailed)
+            };
+            var converted = JsonSerializer.Deserialize(tuple[index]!.ToJsonString(), memberType);
+            if (member is System.Reflection.FieldInfo targetField) targetField.SetValue(result, converted);
+            else ((System.Reflection.PropertyInfo)member).SetValue(result, converted);
+        }
+        return result;
     }
 
     private static async Task<T> WaitValueRequest<T>(Task<T> task, string operation, TimeSpan? timeout,
@@ -775,18 +803,17 @@ public static class ValueCodec
         }
     }
 
-    private static Link.Member Float2(string raw) { var v = Parts(raw, 2); return new Link.Field_float2 { Value = new Link.float2 { x = v[0], y = v[1] } }; }
-    private static Link.Member Float3(string raw) { var v = Parts(raw, 3); return new Link.Field_float3 { Value = new Link.float3 { x = v[0], y = v[1], z = v[2] } }; }
-    private static Link.Member Float4(string raw) { var v = Parts(raw, 4); return new Link.Field_float4 { Value = new Link.float4 { x = v[0], y = v[1], z = v[2], w = v[3] } }; }
-    private static Link.Member FloatQ(string raw) { var v = Parts(raw, 4); return new Link.Field_floatQ { Value = new Link.floatQ { x = v[0], y = v[1], z = v[2], w = v[3] } }; }
-    private static Link.Member Color(string raw) { var v = Parts(raw, 4); return new Link.Field_color { Value = new Link.color { r = v[0], g = v[1], b = v[2], a = v[3] } }; }
-    private static Link.Member ColorX(string raw) { var v = Parts(raw, 4); return new Link.Field_colorX { Value = new Link.colorX { r = v[0], g = v[1], b = v[2], a = v[3] } }; }
+    private static Link.Member Float2(string raw) { var v = Parts("float2", raw); return new Link.Field_float2 { Value = new Link.float2 { x = v[0], y = v[1] } }; }
+    private static Link.Member Float3(string raw) { var v = Parts("float3", raw); return new Link.Field_float3 { Value = new Link.float3 { x = v[0], y = v[1], z = v[2] } }; }
+    private static Link.Member Float4(string raw) { var v = Parts("float4", raw); return new Link.Field_float4 { Value = new Link.float4 { x = v[0], y = v[1], z = v[2], w = v[3] } }; }
+    private static Link.Member FloatQ(string raw) { var v = Parts("floatQ", raw); return new Link.Field_floatQ { Value = new Link.floatQ { x = v[0], y = v[1], z = v[2], w = v[3] } }; }
+    private static Link.Member Color(string raw) { var v = Parts("color", raw); return new Link.Field_color { Value = new Link.color { r = v[0], g = v[1], b = v[2], a = v[3] } }; }
+    private static Link.Member ColorX(string raw) { var v = Parts("colorX", raw); return new Link.Field_colorX { Value = new Link.colorX { r = v[0], g = v[1], b = v[2], a = v[3] } }; }
 
-    private static float[] Parts(string raw, int count)
+    private static float[] Parts(string type, string raw)
     {
-        var parts = raw.Trim('[', ']').Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length != count) throw new FormatException();
-        return parts.Select(x => float.Parse(x, CultureInfo.InvariantCulture)).ToArray();
+        var tuple = MemberValueSyntax.ParseTuple(type, raw);
+        return tuple.Select(value => (float)(value?.GetValue<double>() ?? throw new FormatException())).ToArray();
     }
 
     private static string SimpleType(string type)

@@ -41,6 +41,10 @@ includeは記述順に読み込まれ、`children`、`components`、`tests`を�
 
 forward referenceを利用できます。全参照が宣言され、strict modeではComponent/memberがruntime Reflectionに存在すると確認されてからmutationを始めます。closed generic Component typeも文字列を変形せずReflectionへ渡します。
 
+vector、quaternion、color/colorXなどの構造値はJSON arrayまたは`x/y/z/w`・`r/g/b/a` objectをcanonical入力とします。従来のcomma stringも互換入力として受理し、runtimeのobject表現と同じ値なら2回目applyで差分を出しません。不正な要素数や数値はmutation前にtarget typeと受理例付きで拒否されます。
+
+Componentの`fields`はapplyごとに収束させます。runtimeが更新するcounter、history、選択状態などは`initialFields`へ置くと、新規作成時だけ初期化され、adopt・再applyでは上書きされません。同型Componentが複数あり再接続時の識別が必要なら、不変な管理値のmember名を`identityFields`へ指定してください。identity fieldは`fields`または`initialFields`にも存在する必要があります。stateはtype ordinalだけでなく、Slot内index、管理member集合、identity値を保存し、複数候補が残る場合は`STABLE_COMPONENT_AMBIGUOUS`として停止します。
+
 ## Transform管理とstable key migration
 
 既存Slotの配置を宣言へ取り込むときは、rloopが管理するtransformを明示的に狭められます。
@@ -63,7 +67,7 @@ forward referenceを利用できます。全参照が宣言され、strict mode�
 }
 ~~~
 
-`managedFields`に指定できるのは`position`、`rotation`、`scale`です。省略時は、宣言されたtransformをすべて管理します。既存Slotで`preserveWorldTransform: true`を指定すると、この3値を更新しません。新規Slotの作成時は初期値として宣言値を適用します。ResoniteLinkが公開するSlot transform値を保持する機能であり、座標系を変換してworld-spaceを再計算するものではありません。`preserveWorldTransform`と`managedFields`を併記した場合は保持を優先します。Slot名はどちらの設定にも関係なく管理されます。
+`managedFields`に指定できるのは`position`、`rotation`、`scale`です。省略時は、宣言されたtransformをすべて管理します。既存Slotで`preserveWorldTransform: true`を指定すると、この3つのlocal値を更新しません。新規Slotの作成時は初期値として宣言値を適用します。座標系を変換してworld-spaceを再計算するものではありません。`preserveWorldTransform`と`managedFields`を併記した場合は保持を優先します。Slot名はどちらの設定にも関係なく管理されます。stable keyを保った親変更はplanで`relocate`となり、ResoniteLinkのParent更新でSlot IDを維持します。親変更時もlocal値が基準です。
 
 Slot / Componentの明示keyを変更する場合は、新key側へ`migrateFrom`で旧keyを1つ指定できます。stateだけを移行するため、対応するworld objectを削除・再作成しません。旧keyと新keyの両方がstateにある場合、旧keyを同じ宣言内に残した場合、移行元を複数箇所で使った場合は曖昧な移行としてvalidationまたはplanで拒否します。移行を適用してcheckpointされた後は`migrateFrom`を削除できます。
 
@@ -97,7 +101,7 @@ local `texture`、`audio`、ResoniteLink `ImportMeshJSON`は公開import APIを�
       { "target": "$component:toggle.TargetValue", "expected": "$member:renderer.Enabled" },
       { "target": "$component:renderer.Enabled", "expected": false, "phase": "after" }
     ],
-    "probe": { "target": "$component:button", "method": "Press", "safe": true },
+    "probe": { "target": "$component:worker", "method": "Run", "arguments": { "count": 1 }, "safe": true },
     "timeoutMs": 2000, "pollMs": 100
   }]
 }
@@ -129,6 +133,8 @@ ResoniteLink 0.13.1にframebuffer/screenshot APIはないため、`capture`は�
 ~~~
 
 `set-member`はfieldだけを対象とし、変更中にafter assertionをpollした後、成功・失敗・cancelのいずれでも元の値を復元して再読取確認します。`restore: false` は拒否されます。従来のmethod probeは `kind` 省略時の既定値です。
+
+assertionはmember値に加え、`$component:key`の存在と`kind: "child-count"`を扱えます。child-countには`name`、`componentType`、固定`count`、またはprobe前からの`delta`を指定できます。`assertions`欠落は`APPLY_TEST_ASSERTIONS_MISSING`です。未知propertyは黙って無視せず、たとえば`argumnts`には`arguments`をsuggestします。
 
 ## Diff、rename、prune、recovery
 
@@ -167,3 +173,13 @@ parentに `$slot:key` を使う場合は`worldState`または`--state`が必要�
 ~~~
 
 `source`はFlux moduleの `in` 名、`drive`は `out` 名をkeyにします。source targetはslot/component/member、drive targetはmemberだけです。rloopはworld stateから現在のIDを再解決し、Flux-SDKのInputMap/OutputMapへ渡します。binding宣言と解決結果が一致しない場合はdeployしません。deploy stateはsource、binding、transitive dependencyのhash、置換後module child IDを保存し、no-op/updateと非atomic recoveryを報告します。結果の`parentSlotId`はdeploy先、各moduleの`moduleSlotIdBefore` / `moduleSlotIdAfter`はparent直下を再観測した実module childです。接続が変わっても再観測したchildとhashが一致すればno-opになります。watchは変更を検出して成功buildだけを検証済みparentへ再deployします。
+
+manifest deployはsource headerの`in`/`out` signatureとbindingを一対一で照合してからbuild/deployへ進み、方向、world target型、driveのmember可否を検査します。build結果の`Packing 0 ProtoFlux nodes`は`FLUX_EMPTY_MODULE`、未結線portは`FLUX_MODULE_PORT_UNBOUND`です。Flux-SDK 1.9.xの`IButton global`のようなinterface globalは既知の非原子的失敗を避けるためdeploy前に拒否されます。concrete Componentの`element` inputからmodule内で`asDrivenGlobal`するか、eventだけならDynamic Impulse bridgeを選びます。
+
+## Portable item audit
+
+~~~powershell
+rloop item audit Root/MyItem --strict --json
+~~~
+
+Grabbableを保存する前に、root以下のSlot、Component、nested memberを参照閉包として検査します。root外の通常参照とFlux参照は保存後に切れるerror、Userなど再取得前提の参照はruntime-context warning、`--allow-external`で指定したIDまたはstable selectorは明示許可として分類されます。strict modeではwarningも不合格です。Grabbable、Flux module、runtime targetを同じ保存rootへ収めてから監査してください。

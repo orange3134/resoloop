@@ -9,7 +9,7 @@ public sealed class ParsedArguments
         "json", "verbose", "help", "exact", "include-components", "members", "yes", "full-errors",
         "strict", "adopt", "profile", "ndjson-progress", "quiet", "prune", "probe",
         "changes-only", "creates-only", "deletes-only", "summary", "direct-children",
-        "exclude-reference-only", "components-only"
+        "exclude-reference-only", "components-only", "refresh"
     };
     private readonly Dictionary<string, List<string>> _options;
 

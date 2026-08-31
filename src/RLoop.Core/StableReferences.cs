@@ -4,7 +4,8 @@ namespace RLoop.Core;
 
 public sealed record StableSlotReference(string Key, string Id, string Path, string? SessionId, string OwnershipKey);
 public sealed record StableComponentReference(string Key, string Id, string SlotKey, string Type, int TypeOrdinal,
-    string? SessionId, string OwnershipKey);
+    string? SessionId, string OwnershipKey, int? ComponentIndex = null,
+    IReadOnlyList<string>? MemberNames = null, IReadOnlyDictionary<string, string>? IdentityValues = null);
 public sealed record ResolvedWorldReference(string Selector, string Id, string Kind, string? Type, string? Path = null);
 
 public static class StableReferenceResolver
@@ -39,12 +40,21 @@ public static class StableReferenceResolver
         {
             if (!root.GetProperty("components").TryGetProperty(key, out var component))
                 throw new RLoopException("STABLE_COMPONENT_NOT_FOUND", $"Stable component key '{key}' is not present in '{path}'.", ExitCodes.NotFound);
+            var memberNames = component.TryGetProperty("memberNames", out var memberNamesElement)
+                ? memberNamesElement.EnumerateArray().Select(value => value.GetString() ?? string.Empty).Where(value => value.Length > 0).ToArray()
+                : null;
+            var identityValues = component.TryGetProperty("identityValues", out var identityElement)
+                ? identityElement.EnumerateObject().ToDictionary(property => property.Name,
+                    property => property.Value.GetString() ?? string.Empty, StringComparer.Ordinal)
+                : null;
             return new StableComponentReference(key, component.GetProperty("id").GetString() ?? string.Empty,
                 component.GetProperty("slotKey").GetString() ?? string.Empty,
                 component.GetProperty("type").GetString() ?? string.Empty,
                 component.GetProperty("typeOrdinal").GetInt32(),
                 root.TryGetProperty("sessionId", out var session) ? session.GetString() : null,
-                root.GetProperty("ownershipKey").GetString() ?? string.Empty);
+                root.GetProperty("ownershipKey").GetString() ?? string.Empty,
+                component.TryGetProperty("componentIndex", out var index) && index.ValueKind == JsonValueKind.Number ? index.GetInt32() : null,
+                memberNames, identityValues);
         }, reference);
     }
 

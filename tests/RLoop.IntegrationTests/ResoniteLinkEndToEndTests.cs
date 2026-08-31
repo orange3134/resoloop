@@ -7,6 +7,92 @@ public sealed class ResoniteLinkEndToEndTests
 {
     [Fact]
     [Trait("Category", "Integration")]
+    public async Task ReparentsIsolatedSlotWithoutChangingItsId()
+    {
+        if (Environment.GetEnvironmentVariable("RLOOP_RUN_INTEGRATION") != "1") return;
+        var url = Environment.GetEnvironmentVariable("RESONITE_LINK_URL")
+                  ?? throw new InvalidOperationException("RESONITE_LINK_URL is required.");
+        await using var client = new ResoniteLinkClientAdapter();
+        await client.ConnectAsync(new Uri(url), TimeSpan.FromSeconds(30));
+        var name = "RLoop_Test_Reparent_" + Guid.NewGuid().ToString("N")[..8];
+        string? rootId = null;
+        try
+        {
+            rootId = await client.CreateSlotAsync(new SlotCreateRequest("Root", name));
+            var sourceId = await client.CreateSlotAsync(new SlotCreateRequest(rootId, "Source"));
+            var destinationId = await client.CreateSlotAsync(new SlotCreateRequest(rootId, "Destination"));
+            var movedId = await client.CreateSlotAsync(new SlotCreateRequest(sourceId, "Moved", new Vector3Value(1, 2, 3)));
+
+            await client.UpdateSlotAsync(new SlotUpdateRequest(movedId, ParentId: destinationId));
+
+            var source = await client.GetSlotAsync(sourceId, 1, false);
+            var destination = await client.GetSlotAsync(destinationId, 1, false);
+            var moved = Assert.Single(destination.Children);
+            Assert.Empty(source.Children);
+            Assert.Equal(movedId, moved.Id);
+            Assert.Equal(destinationId, moved.ParentId);
+        }
+        finally
+        {
+            if (rootId is not null) await client.DeleteSlotAsync(rootId);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task ApplyRelocatesOwnershipRootAndPrunesItsOldChild()
+    {
+        if (Environment.GetEnvironmentVariable("RLOOP_RUN_INTEGRATION") != "1") return;
+        var url = Environment.GetEnvironmentVariable("RESONITE_LINK_URL")
+                  ?? throw new InvalidOperationException("RESONITE_LINK_URL is required.");
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var containerName = "RLoop_Test_RootMove_" + suffix;
+        var directory = Path.Combine(Path.GetTempPath(), "rloop-live-root-move-" + suffix);
+        Directory.CreateDirectory(directory);
+        var initialPath = Path.Combine(directory, "initial.json");
+        var desiredPath = Path.Combine(directory, "desired.json");
+        var statePath = Path.Combine(directory, "state.json");
+        await File.WriteAllTextAsync(initialPath, $$$"""
+            { "schemaVersion":"1", "ownership":{"key":"live-root-move-{{{suffix}}}"},
+              "slot":{"key":"root","name":"Managed","parent":"Root/{{{containerName}}}/ParentA"},
+              "children":[{"slot":{"key":"stale","name":"Stale"}}] }
+            """);
+        await File.WriteAllTextAsync(desiredPath, $$$"""
+            { "schemaVersion":"1", "ownership":{"key":"live-root-move-{{{suffix}}}"},
+              "slot":{"key":"root","name":"Managed","parent":"Root/{{{containerName}}}/ParentB"}, "children":[] }
+            """);
+
+        await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(30));
+        await client.ConnectAsync(new Uri(url), TimeSpan.FromSeconds(30));
+        string? containerId = null;
+        try
+        {
+            containerId = await client.CreateSlotAsync(new SlotCreateRequest("Root", containerName));
+            var parentAId = await client.CreateSlotAsync(new SlotCreateRequest(containerId, "ParentA"));
+            var parentBId = await client.CreateSlotAsync(new SlotCreateRequest(containerId, "ParentB"));
+            var world = new WorldService(client);
+            var initial = await world.ApplyAsync(ApplyDocument.Load(initialPath), new ApplyOptions(statePath));
+
+            var applied = await world.ApplyAsync(ApplyDocument.Load(desiredPath),
+                new ApplyOptions(statePath, Prune: true, ConfirmDeletes: true));
+
+            Assert.Equal(initial.SlotId, applied.SlotId);
+            Assert.Equal(1, applied.SlotsUpdated);
+            Assert.Equal(1, applied.SlotsDeleted);
+            Assert.Empty((await client.GetSlotAsync(parentAId, 1, false)).Children);
+            var moved = Assert.Single((await client.GetSlotAsync(parentBId, 2, false)).Children);
+            Assert.Equal(initial.SlotId, moved.Id);
+            Assert.Empty(moved.Children);
+        }
+        finally
+        {
+            if (containerId is not null) await client.DeleteSlotAsync(containerId);
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
     public async Task CreatesMutatesAndCleansIsolatedSlot()
     {
         if (Environment.GetEnvironmentVariable("RLOOP_RUN_INTEGRATION") != "1") return;
@@ -80,6 +166,9 @@ public sealed class ResoniteLinkEndToEndTests
             Assert.Equal(0, second.ComponentsAdded);
             Assert.Equal(0, second.ComponentsUpdated);
             Assert.Equal(2, second.Profile!.NoOps);
+            var audit = await world.AuditItemAsync(slotId, strict: true);
+            Assert.True(audit.Portable);
+            Assert.True(audit.HasGrabbable);
         }
         finally
         {
