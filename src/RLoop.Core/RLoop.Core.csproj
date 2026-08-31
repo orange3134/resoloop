@@ -2,4 +2,10 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="../../skills/codex/resonite-build/SKILL.md" LogicalName="RLoop.Core.Skills.resonite-build.SKILL.md" />
+    <EmbeddedResource Include="../../skills/codex/resonite-debug/SKILL.md" LogicalName="RLoop.Core.Skills.resonite-debug.SKILL.md" />
+    <EmbeddedResource Include="../../skills/codex/resonite-flux/SKILL.md" LogicalName="RLoop.Core.Skills.resonite-flux.SKILL.md" />
+    <EmbeddedResource Include="../../skills/codex/resonite-inspect/SKILL.md" LogicalName="RLoop.Core.Skills.resonite-inspect.SKILL.md" />
+  </ItemGroup>
 </Project>

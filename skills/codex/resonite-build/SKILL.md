@@ -7,7 +7,7 @@ description: Build or modify Resonite world content through rloop when a request
 
 Use rloop with --json as the primitive interface and keep source artifacts in the repository.
 
-1. For a new repository without `.rloop.json`, run `rloop init` only in the user-approved project directory. It must not replace a conflicting file; resolve `INIT_FILE_EXISTS` with the user.
+1. For a new repository without `.rloop.json`, run `rloop init` only in the user-approved project directory. This also installs the bundled project skills under `.agents/skills/`. It must not replace a conflicting file; resolve `INIT_FILE_EXISTS` with the user.
 2. Run `rloop doctor --json`, then `rloop status --json`. If connection fails, report the actionable error; do not invent a port. Optional Flux or log warnings do not block Slot/Component work.
 3. Observe with a bounded hierarchy, then find and inspect the relevant target. Prefer stable IDs returned by the current session.
 4. Before adding a Component or setting an unfamiliar member, run type search and type describe. Never guess Resonite type or member names. When a described member is a list, pass supported field/reference elements as a JSON array and re-inspect the resulting element targets.

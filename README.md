@@ -201,15 +201,13 @@ skills/codexには次のworkflow Skillがあります。
 - resonite-inspect: コンテキストを浪費しない観測
 - resonite-flux: ProtoGraph check/build/deploy
 
-Resoniteコンテンツproject限定のskillsとして導入する例です。対象projectのrootで実行します。
+`rloop init` はResoniteコンテンツproject限定のskillsとして、対象projectの `.agents/skills/` へこれらを自動的にインストールします。
 
 ~~~powershell
-$rloopRepository = "D:\path\to\resonite-link-cli-loop"
-New-Item -ItemType Directory -Force .agents\skills | Out-Null
-Copy-Item -Recurse -Force "$rloopRepository\skills\codex\*" .agents\skills\
+rloop init .
 ~~~
 
-Codexはcurrent directoryからrepository rootまでの `.agents/skills/` を読み込むため、このskillsは対象project内でだけ利用されます。詳細は[OpenAI公式のskill discovery仕様](https://developers.openai.com/codex/skills#where-codex-loads-local-skills)を参照してください。CLI commandはprimitive、Skillはworkflowです。SkillはComponent/member名を推測せず、先にruntime Reflectionするよう指示します。
+既存のskillが同じ内容ならスキップし、内容が異なる場合はほかの初期化対象と同様に `INIT_FILE_EXISTS` で停止して上書きしません。Codexはcurrent directoryからrepository rootまでの `.agents/skills/` を読み込むため、このskillsは対象project内でだけ利用されます。詳細は[OpenAI公式のskill discovery仕様](https://developers.openai.com/codex/skills#where-codex-loads-local-skills)を参照してください。CLI commandはprimitive、Skillはworkflowです。SkillはComponent/member名を推測せず、先にruntime Reflectionするよう指示します。
 
 ## Tests
 

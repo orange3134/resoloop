@@ -33,6 +33,8 @@ MyResoniteProject/
 ├─ .rloop.json          # project単位の非機密設定
 ├─ .rloop/
 │  └─ .gitignore        # apply checkpoint/stateをversion controlから除外
+├─ .agents/
+│  └─ skills/           # project限定のCodex workflow skills
 ├─ content/
 │  └─ main.json         # SlotとComponentの宣言
 └─ flux/
@@ -140,15 +142,13 @@ rloop inspect $slotId --depth 2 --members --json
 
 機械処理では `--json` を標準にすると、成功時は `data`、失敗時は `error.code`、`context`、`suggestions` を安定して利用できます。
 
-Codexへ同梱skillsを導入する場合は、personal skillsではなく、Resoniteコンテンツprojectの `.agents/skills/` へコピーします。次のコマンドは対象projectのrootで実行してください。`$rloopRepository` にはクローン済みrloopリポジトリのpathを指定します。
+`rloop init` は同梱skillsをpersonal skillsではなく、Resoniteコンテンツprojectの `.agents/skills/` へ自動的にインストールします。
 
 ~~~powershell
-$rloopRepository = "D:\path\to\resonite-link-cli-loop"
-New-Item -ItemType Directory -Force .agents\skills | Out-Null
-Copy-Item -Recurse -Force "$rloopRepository\skills\codex\*" .agents\skills\
+rloop init .
 ~~~
 
-Codexはcurrent directoryからrepository rootまでの `.agents/skills/` を読み込むため、これらのskillはこのproject内でだけ利用されます。`.agents/skills/` をversion controlに含めれば、チームで同じworkflowを共有できます。以前の手順で `$env:USERPROFILE\.codex\skills\` へコピー済みの場合、そのpersonal copyを削除するまでglobalにも表示されます。Codexが変更を検出しない場合は再起動してください。詳細は[OpenAI公式のskill discovery仕様](https://developers.openai.com/codex/skills#where-codex-loads-local-skills)を参照してください。
+Codexはcurrent directoryからrepository rootまでの `.agents/skills/` を読み込むため、これらのskillはこのproject内でだけ利用されます。既存ファイルは上書きせず、同じ内容ならスキップし、異なる場合は `INIT_FILE_EXISTS` で停止します。`.agents/skills/` をversion controlに含めれば、チームで同じworkflowを共有できます。以前の手順で `$env:USERPROFILE\.codex\skills\` へコピー済みの場合、そのpersonal copyを削除するまでglobalにも表示されます。Codexが変更を検出しない場合は再起動してください。詳細は[OpenAI公式のskill discovery仕様](https://developers.openai.com/codex/skills#where-codex-loads-local-skills)を参照してください。
 
 エージェントには、対象project directory、実現したい内容、変更してよい範囲を伝えます。安全な基本ループは次のとおりです。
 
