@@ -213,11 +213,13 @@ Flux bindingとinteraction probeは、型名・member名・メッセージを推
 
 ### 10. versioned release
 
-- [ ] immutableなversion付きdotnet tool packageを発行する。
+- [x] immutableなversion付きdotnet tool packageを発行する。初回previewとして`ResoLoop 0.1.0-preview.1`をnuget.orgへ公開した。
 - [x] Windows CIでbuild、offline test、package install smoke testを行う。
 - [ ] opt-in live test jobを用意し、必ず専用 `ResoLoop_Test*` 配下だけを扱う。
 - [ ] `resoloop init` templateとCLI/schemaのversion互換性を診断する。
 - [ ] changelog、upgrade guide、署名方針を整備する。GitHub OIDCによるNuGet Trusted PublishingとGitHub prerelease作成のautomationは実装済み。
+
+2026-09-02実装結果: `dotnet tool install --global ResoLoop --version 0.1.0-preview.1`で配布するframework-dependent .NET 10 toolをnuget.orgへ発行した。Windows CIでbuild、offline unit 106件、integration harness 5件、pack、隔離tool pathへのinstall、`init`、bundled skill check、生成manifest validationを実行している。releaseはGitHub OIDCの短期NuGet API keyを使い、長期secretを保存しない。非公開repositoryを維持しつつAGPLの対応ソースを各nupkgの`source/`へ同梱し、workflowで必須source/build fileを検査する。Trusted Publisherは恒久GitHub repository IDへ固定し、exact package ID `ResoLoop`だけを許可する。
 
 ### 11. 診断と観測性
 

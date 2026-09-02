@@ -19,7 +19,9 @@ Create a nuget.org trusted-publishing policy with these exact values:
 - Repository: `resoloop`
 - Workflow file: `release.yml`
 - Environment: `release`
-- Package scope: `ResoLoop`
+- Package scope: exact `ResoLoop` for an existing package
+
+For the first publication, nuget.org cannot resolve an exact package ID that does not exist yet. Create the policy with the narrow temporary glob `ResoLoop*`, publish the first version during the private-repository activation window, then immediately edit the now-permanent policy to exact `ResoLoop`. Keep unlist/relist disabled.
 
 In the GitHub repository, create an Actions variable named `NUGET_USER` containing the nuget.org profile name, not an email address. For a private repository, complete the first publish during the temporary activation window shown by nuget.org.
 
