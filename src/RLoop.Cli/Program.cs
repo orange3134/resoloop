@@ -18,6 +18,19 @@ public static class Program
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; userCancellation.Cancel(); };
         try
         {
+            if (parsed.Has("version") || parsed.Positionals.Count == 1 &&
+                parsed.Positionals[0].Equals("version", StringComparison.OrdinalIgnoreCase))
+            {
+                var version = typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "unknown";
+                var informational = typeof(Program).Assembly
+                    .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+                    .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+                    .SingleOrDefault()?.InformationalVersion;
+                if (!string.IsNullOrWhiteSpace(informational)) version = informational.Split('+')[0];
+                output.Success(new { name = "resoloop", version }, writer => writer.WriteLine(version));
+                return ExitCodes.Success;
+            }
+
             if (parsed.Positionals.Count == 0 || parsed.Has("help") || parsed.Positionals[0] is "help" or "-h")
             {
                 PrintHelp(Console.Out, parsed.Positionals.Count > 1 ? parsed.Positionals[1] : null);
@@ -27,7 +40,7 @@ public static class Program
             if (parsed.Positionals[0].Equals("init", StringComparison.OrdinalIgnoreCase))
             {
                 if (parsed.Positionals.Count > 2)
-                    throw new RLoopException("UNEXPECTED_ARGUMENT", "rloop init accepts at most one target directory.", ExitCodes.InvalidArguments);
+                    throw new RLoopException("UNEXPECTED_ARGUMENT", "resoloop init accepts at most one target directory.", ExitCodes.InvalidArguments);
                 var target = parsed.Positionals.Count > 1 ? parsed.Positionals[1] : Environment.CurrentDirectory;
                 var result = ProjectInitializer.Initialize(target);
                 output.Success(result, writer =>
@@ -55,7 +68,7 @@ public static class Program
                 if (!result.Synchronized)
                     throw new RLoopException("SKILL_SYNC_REQUIRED", "Bundled skills or their lock need synchronization.",
                         ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["report"] = result },
-                        ["Review the reported paths, then run rloop skills sync --update."]);
+                        ["Review the reported paths, then run resoloop skills sync --update."]);
                 output.Success(result, writer =>
                 {
                     writer.WriteLine($"skills {result.Mode}: synchronized={result.Synchronized}");
@@ -236,12 +249,12 @@ public static class Program
         catch (Exception ex)
         {
             checks.Add(new DoctorCheck("flux-sdk", "warning", false, ex.Message,
-                "Check RLOOP_FLUX_EXECUTABLE or install Papaltine.FluxSDK 1.9.0."));
+                "Check RESOLOOP_FLUX_EXECUTABLE or install Papaltine.FluxSDK 1.9.0."));
         }
 
         checks.Add(await ManagedDataCheckAsync(config.ResoniteManagedDataPath, fluxStatus, flux, cancellationToken));
         checks.Add(PathCheck("resonite-log", config.ResoniteLogPath,
-            "Set RESONITE_LOG_PATH when rloop logs is needed."));
+            "Set RESONITE_LOG_PATH when resoloop logs is needed."));
 
         var report = new DoctorReport(
             checks.Where(check => check.Required).All(check => check.Status == "pass"),
@@ -591,7 +604,7 @@ public static class Program
                 throw new RLoopException("FLUX_NODE_CATALOG_UNAVAILABLE", "The configured Flux tool does not expose node metadata.", ExitCodes.ExternalToolFailed);
             var operation = args.Positional(2, "flux node subcommand").ToLowerInvariant();
             var query = args.Positional(3, "node query");
-            var cacheDirectory = args.Option("cache") ?? Path.Combine(Environment.CurrentDirectory, ".rloop", "cache", "flux-nodes");
+            var cacheDirectory = args.Option("cache") ?? Path.Combine(Environment.CurrentDirectory, ".resoloop", "cache", "flux-nodes");
             var catalog = await FluxNodeCatalog.GetOrCreateAsync(process,
                 args.Option("library-path") ?? config.ResoniteManagedDataPath, cacheDirectory, args.Has("refresh"), ct);
             if (operation == "search")
@@ -613,7 +626,7 @@ public static class Program
                                                           node.Name.Equals(query, StringComparison.Ordinal)).ToArray();
                 if (matches.Length == 0)
                     throw new RLoopException("FLUX_NODE_NOT_FOUND", $"Flux node '{query}' was not found.", ExitCodes.NotFound,
-                        suggestions: ["Use 'rloop flux node search <query>' to discover exact names and full identities."]);
+                        suggestions: ["Use 'resoloop flux node search <query>' to discover exact names and full identities."]);
                 output.Success(new { query, count = matches.Length, catalog.FluxSdkVersion, catalog.LibraryIdentity, catalog.CachePath, nodes = matches },
                     writer =>
                     {
@@ -785,32 +798,32 @@ public static class Program
         if (!args.Has("yes")) throw new RLoopException("CONFIRMATION_REQUIRED", $"{operation} is destructive and requires --yes.", ExitCodes.ValidationFailed);
     }
     private static RLoopException UnknownCommand(string command) => new("UNKNOWN_COMMAND", $"Unknown command '{command}'.", ExitCodes.InvalidArguments,
-        suggestions: ["Run rloop help to list commands."]);
+        suggestions: ["Run resoloop help to list commands."]);
 
     private static void PrintHelp(TextWriter writer, string? command = null)
     {
         var detail = command?.ToLowerInvariant() switch
         {
             "apply" => """
-rloop apply FILE.json [--state FILE] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
+resoloop apply FILE.json [--state FILE] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
 
 Validates and plans the complete document before mutation. State checkpoints make a failed non-atomic apply resumable.
 --adopt binds one verified existing root. --prune deletes stale owned targets and always requires --yes.
 """,
             "plan" or "diff" => """
-rloop plan|diff FILE.json [--state FILE] [--adopt]
+resoloop plan|diff FILE.json [--state FILE] [--adopt]
   [--changes-only | --creates-only | --deletes-only | --summary]
 
 Never changes the world. JSON output always includes a separate changes array; output filters affect only operations.
 Review --deletes-only before apply --prune --yes.
 """,
             "find" => """
-rloop find (--name TEXT [--exact] | --component TYPE) [--under SLOT] [--direct-children]
+resoloop find (--name TEXT [--exact] | --component TYPE) [--under SLOT] [--direct-children]
   [--exclude-reference-only] [--depth 8] [--json]
 """,
             "inspect" => """
-rloop inspect SLOT|$slot:key [--state WORLD_STATE] [--depth 1] [--members] [--json]
-rloop inspect SLOT|$slot:key [--state WORLD_STATE] [--component TYPE] [--member NAME] [--components-only]
+resoloop inspect SLOT|$slot:key [--state WORLD_STATE] [--depth 1] [--members] [--json]
+resoloop inspect SLOT|$slot:key [--state WORLD_STATE] [--component TYPE] [--member NAME] [--components-only]
   [--exclude-reference-only] [--depth 1] [--json]
 
 Component/member filters return a bounded flat component view with count and Slot paths.
@@ -820,55 +833,56 @@ Stable selectors are resolved to the current connection ID from --state.
         };
         if (detail is not null) { writer.WriteLine(detail); return; }
         writer.WriteLine("""
-rloop 0.1 - agent-first Resonite CLI loop
+resoloop - agent-first Resonite CLI loop
 
 Project setup:
-  rloop init [DIRECTORY] [--json]
-  rloop skills sync [DIRECTORY] (--check | --update) [--json]
-  rloop doctor [--url ws://localhost:PORT] [--json]
+  resoloop --version [--json]
+  resoloop init [DIRECTORY] [--json]
+  resoloop skills sync [DIRECTORY] (--check | --update) [--json]
+  resoloop doctor [--url ws://localhost:PORT] [--json]
 
 Connection and observation:
-  rloop status|ping [--url ws://localhost:PORT] [--json]
-  rloop hierarchy [--depth 2] [--include-components] [--json]
-  rloop find (--name TEXT [--exact] | --component TYPE) [--under SLOT] [--direct-children] [--depth 8] [--json]
-  rloop inspect SLOT|$slot:key [--state WORLD_STATE] [--depth 1] [--members] [--component TYPE] [--member NAME] [--components-only] [--json]
-  rloop scene summary FILE.json [--output summary.json]
-  rloop capture FILE.json --camera BOOKMARK [--output capture.svg] [--width 1280 --height 720]
+  resoloop status|ping [--url ws://localhost:PORT] [--json]
+  resoloop hierarchy [--depth 2] [--include-components] [--json]
+  resoloop find (--name TEXT [--exact] | --component TYPE) [--under SLOT] [--direct-children] [--depth 8] [--json]
+  resoloop inspect SLOT|$slot:key [--state WORLD_STATE] [--depth 1] [--members] [--component TYPE] [--member NAME] [--components-only] [--json]
+  resoloop scene summary FILE.json [--output summary.json]
+  resoloop capture FILE.json --camera BOOKMARK [--output capture.svg] [--width 1280 --height 720]
 
 Editing:
-  rloop slot create --name NAME [--parent SLOT] [--position x,y,z] [--rotation x,y,z,w] [--scale x,y,z]
-  rloop slot set SLOT [--name NAME] [--position x,y,z] [--rotation x,y,z,w] [--scale x,y,z]
-  rloop slot delete SLOT --yes
-  rloop component list SLOT
-  rloop component inspect COMPONENT_ID|$component:key [--state WORLD_STATE]
-  rloop component add SLOT TYPE [--set Member=value ...]
-  rloop component set COMPONENT_ID MEMBER VALUE
-  rloop component remove COMPONENT_ID --yes
-  rloop type search QUERY [--limit 50]
-  rloop type describe TYPE
-  rloop type specialize OPEN_GENERIC TYPE_ARGUMENT [...]
-  rloop validate FILE.json [--strict]
-  rloop plan|diff FILE.json [--state FILE] [--adopt] [--changes-only|--creates-only|--deletes-only|--summary]
-  rloop apply FILE.json [--state FILE] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
-  rloop test FILE.json [--state FILE] [--probe --yes]
-  rloop item audit SLOT [--strict] [--allow-external ID|PATH|$slot:key ...] [--state WORLD_STATE]
+  resoloop slot create --name NAME [--parent SLOT] [--position x,y,z] [--rotation x,y,z,w] [--scale x,y,z]
+  resoloop slot set SLOT [--name NAME] [--position x,y,z] [--rotation x,y,z,w] [--scale x,y,z]
+  resoloop slot delete SLOT --yes
+  resoloop component list SLOT
+  resoloop component inspect COMPONENT_ID|$component:key [--state WORLD_STATE]
+  resoloop component add SLOT TYPE [--set Member=value ...]
+  resoloop component set COMPONENT_ID MEMBER VALUE
+  resoloop component remove COMPONENT_ID --yes
+  resoloop type search QUERY [--limit 50]
+  resoloop type describe TYPE
+  resoloop type specialize OPEN_GENERIC TYPE_ARGUMENT [...]
+  resoloop validate FILE.json [--strict]
+  resoloop plan|diff FILE.json [--state FILE] [--adopt] [--changes-only|--creates-only|--deletes-only|--summary]
+  resoloop apply FILE.json [--state FILE] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
+  resoloop test FILE.json [--state FILE] [--probe --yes]
+  resoloop item audit SLOT [--strict] [--allow-external ID|PATH|$slot:key ...] [--state WORLD_STATE]
 
 ProtoFlux (Flux-SDK):
-  rloop flux status
-  rloop flux node search QUERY [--limit 50] [--refresh] [--library-path DIR]
-  rloop flux node describe NAME_OR_FULL_NAME [--library-path DIR]
-  rloop flux check|build|watch FILE.pg [--project DIR] [--out FILE] [--library-path DIR]
-  rloop flux deploy --project DIR --module MODULE_PATH [--parent SLOT] [--library-path DIR]
-  rloop flux deploy-manifest FILE.json [--parent SLOT|$slot:key] [--state WORLD_STATE]
-  rloop flux watch FILE.json [--parent SLOT|$slot:key] [--state WORLD_STATE] [--poll-ms 500]
+  resoloop flux status
+  resoloop flux node search QUERY [--limit 50] [--refresh] [--library-path DIR]
+  resoloop flux node describe NAME_OR_FULL_NAME [--library-path DIR]
+  resoloop flux check|build|watch FILE.pg [--project DIR] [--out FILE] [--library-path DIR]
+  resoloop flux deploy --project DIR --module MODULE_PATH [--parent SLOT] [--library-path DIR]
+  resoloop flux deploy-manifest FILE.json [--parent SLOT|$slot:key] [--state WORLD_STATE]
+  resoloop flux watch FILE.json [--parent SLOT|$slot:key] [--state WORLD_STATE] [--poll-ms 500]
 
 Diagnostics:
-  rloop doctor
-  rloop logs [--path FILE_OR_DIRECTORY] [--tail 200]
+  resoloop doctor
+  resoloop logs [--path FILE_OR_DIRECTORY] [--tail 200]
 
 Global options: --url, --timeout SECONDS, --command-timeout SECONDS, --json, --verbose
-Configuration priority: CLI > environment > .rloop.json > ~/.rloop/config.json
-Environment: RESONITE_LINK_URL, RLOOP_TIMEOUT_SECONDS, RLOOP_COMMAND_TIMEOUT_SECONDS, RESONITE_MANAGED_DATA_PATH, RESONITE_LOG_PATH
+Configuration priority: CLI > environment > .resoloop.json > ~/.resoloop/config.json
+Environment: RESONITE_LINK_URL, RESOLOOP_TIMEOUT_SECONDS, RESOLOOP_COMMAND_TIMEOUT_SECONDS, RESOLOOP_FLUX_EXECUTABLE, RESONITE_MANAGED_DATA_PATH, RESONITE_LOG_PATH
 """);
     }
 }

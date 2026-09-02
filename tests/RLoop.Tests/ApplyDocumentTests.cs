@@ -4,7 +4,7 @@ namespace RLoop.Tests;
 
 public sealed class ApplyDocumentTests : IDisposable
 {
-    private readonly string _path = Path.Combine(Path.GetTempPath(), "rloop-apply-" + Guid.NewGuid().ToString("N") + ".json");
+    private readonly string _path = Path.Combine(Path.GetTempPath(), "resoloop-apply-" + Guid.NewGuid().ToString("N") + ".json");
 
     [Fact]
     public void LoadsNestedSlotsAndSymbolicComponentKeys()

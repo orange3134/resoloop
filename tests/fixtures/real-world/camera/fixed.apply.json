@@ -3,7 +3,7 @@
   "ownership": { "key": "camera-fixed" },
   "slot": {
     "key": "root",
-    "name": "RLoop_Test_CameraFixture",
+    "name": "ResoLoop_Test_CameraFixture",
     "parent": "Root",
     "rotation": [0, 0, 0, 1]
   },

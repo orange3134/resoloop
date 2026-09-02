@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore ResoLoop.slnx
+
+      - name: Build
+        run: dotnet build ResoLoop.slnx --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test ResoLoop.slnx --configuration Release --no-build --no-restore
+
+      - name: Pack
+        shell: pwsh
+        run: |
+          [xml]$project = Get-Content src/RLoop.Cli/RLoop.Cli.csproj
+          $version = $project.Project.PropertyGroup.Version
+          "PACKAGE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          dotnet pack src/RLoop.Cli/RLoop.Cli.csproj --configuration Release --no-build --output artifacts
+
+      - name: Installed-tool smoke test
+        shell: pwsh
+        run: |
+          $toolPath = Join-Path $env:RUNNER_TEMP "resoloop-tool"
+          $projectPath = Join-Path $env:RUNNER_TEMP "resoloop-init-smoke"
+          dotnet tool install ResoLoop --tool-path $toolPath --add-source artifacts --version $env:PACKAGE_VERSION
+          & (Join-Path $toolPath "resoloop.exe") --version
+          & (Join-Path $toolPath "resoloop.exe") init $projectPath
+          & (Join-Path $toolPath "resoloop.exe") skills sync $projectPath --check
+          & (Join-Path $toolPath "resoloop.exe") validate (Join-Path $projectPath "content/main.json") --json
+
+      - name: Upload package
+        uses: actions/upload-artifact@v7
+        with:
+          name: resoloop-nuget
+          path: artifacts/*.nupkg
+          if-no-files-found: error
+

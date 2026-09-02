@@ -148,7 +148,7 @@ public static class SceneArtifactService
         b.AppendLine("</g><g fill=\"#e5e7eb\" font-family=\"monospace\" font-size=\"11\">");
         foreach (var point in projected.OrderBy(x => x.Depth).Take(200))
             b.AppendLine(FormattableString.Invariant($"<text x=\"{point.X + 5:0.###}\" y=\"{point.Y - 5:0.###}\">{SecurityElement.Escape(point.Placement.Key)}</text>"));
-        b.AppendLine($"<text x=\"16\" y=\"24\" font-size=\"14\">rloop wireframe · {SecurityElement.Escape(cameraName)} · {summary.Slots} slots</text></g></svg>");
+        b.AppendLine($"<text x=\"16\" y=\"24\" font-size=\"14\">resoloop wireframe · {SecurityElement.Escape(cameraName)} · {summary.Slots} slots</text></g></svg>");
         return b.ToString();
     }
 

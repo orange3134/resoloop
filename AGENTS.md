@@ -7,15 +7,15 @@ Dependency direction is RLoop.Cli → RLoop.Core ← RLoop.ResoniteLink and RLoo
 ## Commands
 
 ~~~powershell
-dotnet build RLoop.slnx
-dotnet test RLoop.slnx --no-build
+dotnet build ResoLoop.slnx
+dotnet test ResoLoop.slnx --no-build
 dotnet run --project src/RLoop.Cli -- help
 ~~~
 
 Live tests are opt-in:
 
 ~~~powershell
-$env:RLOOP_RUN_INTEGRATION="1"
+$env:RESOLOOP_RUN_INTEGRATION="1"
 $env:RESONITE_LINK_URL="ws://localhost:<current-port>"
 dotnet test tests/RLoop.IntegrationTests/RLoop.IntegrationTests.csproj --filter Category=Integration
 ~~~
@@ -23,7 +23,7 @@ dotnet test tests/RLoop.IntegrationTests/RLoop.IntegrationTests.csproj --filter 
 ## Resonite safety
 
 - Never run destructive operations against Root or an unverified ID/path.
-- Put experiments under an unmistakable RLoop_Test* Slot and clean only that exact Slot in finally.
+- Put experiments under an unmistakable ResoLoop_Test* Slot and clean only that exact Slot in finally.
 - Do not change existing user content unless the task explicitly names it.
 - CLI delete/remove must retain explicit --yes; do not add an implicit confirmation bypass.
 - IDs are session-scoped. Re-observe after session restart.

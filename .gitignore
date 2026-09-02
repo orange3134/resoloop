@@ -6,6 +6,9 @@ TestResults/
 *.user
 *.nupkg
 artifacts/
+**/.resoloop/state/
+**/.resoloop/flux-state/
+# Ignore checkpoints created before the ResoLoop rename.
 **/.rloop/state/
 **/.rloop/flux-state/
 examples/flux/build/

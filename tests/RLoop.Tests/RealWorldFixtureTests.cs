@@ -6,7 +6,7 @@ namespace RLoop.Tests;
 
 public sealed class RealWorldFixtureTests : IDisposable
 {
-    private readonly string _temp = Path.Combine(Path.GetTempPath(), "rloop-real-world-fixtures-" + Guid.NewGuid().ToString("N"));
+    private readonly string _temp = Path.Combine(Path.GetTempPath(), "resoloop-real-world-fixtures-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
     public async Task CameraFixtureRejectsBrokenQuaternionAndAcceptsFixedDocument()

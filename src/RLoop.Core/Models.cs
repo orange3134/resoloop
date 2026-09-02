@@ -56,10 +56,10 @@ public static class GenericTypeName
         var open = openGeneric.LastIndexOf('<');
         if (open < 0 || !openGeneric.EndsWith('>'))
             throw new RLoopException("GENERIC_TYPE_OPEN_REQUIRED", $"'{openGeneric}' is not an open generic type.", ExitCodes.InvalidArguments,
-                suggestions: ["Pass the exact open generic returned by rloop type search, such as [FrooxEngine]FrooxEngine.DynamicValueVariable<>."]);
+                suggestions: ["Pass the exact open generic returned by resoloop type search, such as [FrooxEngine]FrooxEngine.DynamicValueVariable<>."]);
         if (!openGeneric.StartsWith("[", StringComparison.Ordinal))
             throw new RLoopException("GENERIC_TYPE_ASSEMBLY_REQUIRED", "Generic specialization requires the assembly-prefixed runtime type returned by type search.", ExitCodes.ValidationFailed,
-                suggestions: ["Run rloop type search and pass its full [Assembly]Namespace.Type<> result."]);
+                suggestions: ["Run resoloop type search and pass its full [Assembly]Namespace.Type<> result."]);
         var arity = openGeneric[(open + 1)..^1].Count(character => character == ',') + 1;
         if (arguments.Count != arity)
             throw new RLoopException("GENERIC_TYPE_ARITY_MISMATCH", $"'{openGeneric}' requires {arity} type argument(s), but received {arguments.Count}.", ExitCodes.InvalidArguments);

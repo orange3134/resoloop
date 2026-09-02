@@ -5,7 +5,7 @@ namespace RLoop.Tests;
 
 public sealed class ConfigurationTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "rloop-tests-" + Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "resoloop-tests-" + Guid.NewGuid().ToString("N"));
 
     public ConfigurationTests() => Directory.CreateDirectory(_root);
 
@@ -16,9 +16,9 @@ public sealed class ConfigurationTests : IDisposable
         var child = Path.Combine(project, "src");
         var user = Path.Combine(_root, "user");
         Directory.CreateDirectory(child);
-        Directory.CreateDirectory(Path.Combine(user, ".rloop"));
-        File.WriteAllText(Path.Combine(project, ".rloop.json"), JsonSerializer.Serialize(new { resoniteLinkUrl = "ws://project:3", timeoutSeconds = 11 }));
-        File.WriteAllText(Path.Combine(user, ".rloop", "config.json"), JsonSerializer.Serialize(new { resoniteLinkUrl = "ws://user:4", fluxExecutable = "user-flux" }));
+        Directory.CreateDirectory(Path.Combine(user, ".resoloop"));
+        File.WriteAllText(Path.Combine(project, ".resoloop.json"), JsonSerializer.Serialize(new { resoniteLinkUrl = "ws://project:3", timeoutSeconds = 11 }));
+        File.WriteAllText(Path.Combine(user, ".resoloop", "config.json"), JsonSerializer.Serialize(new { resoniteLinkUrl = "ws://user:4", fluxExecutable = "user-flux" }));
         var env = new Dictionary<string, string?> { ["RESONITE_LINK_URL"] = "ws://env:2" };
 
         var result = ConfigResolver.Resolve(child, new Dictionary<string, string?> { ["url"] = "ws://cli:1" }, key => env.GetValueOrDefault(key), user);

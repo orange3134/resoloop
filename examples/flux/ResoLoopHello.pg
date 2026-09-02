@@ -1,0 +1,4 @@
+module ResoLoopHello
+where {
+    "Hello from resoloop!"->display
+}

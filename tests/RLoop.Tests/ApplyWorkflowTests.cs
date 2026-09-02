@@ -6,7 +6,7 @@ namespace RLoop.Tests;
 
 public sealed class ApplyWorkflowTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "rloop-workflow-" + Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "resoloop-workflow-" + Guid.NewGuid().ToString("N"));
 
     public ApplyWorkflowTests() => Directory.CreateDirectory(_root);
 

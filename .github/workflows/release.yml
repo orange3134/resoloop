@@ -1,0 +1,100 @@
+name: Preview release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Immutable SemVer preview version
+        required: true
+        default: 0.1.0-preview.1
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  RELEASE_VERSION: ${{ inputs.version }}
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    environment: release
+
+    steps:
+      - name: Validate release input
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_VERSION -notmatch '^\d+\.\d+\.\d+-[0-9A-Za-z.-]+$') {
+            throw "Preview version must be SemVer with a prerelease suffix."
+          }
+          if ([string]::IsNullOrWhiteSpace("${{ vars.NUGET_USER }}")) {
+            throw "Set the repository variable NUGET_USER to the nuget.org profile name."
+          }
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore ResoLoop.slnx
+
+      - name: Build
+        run: dotnet build ResoLoop.slnx --configuration Release --no-restore -p:Version=${{ inputs.version }}
+
+      - name: Test
+        run: dotnet test ResoLoop.slnx --configuration Release --no-build --no-restore -p:Version=${{ inputs.version }}
+
+      - name: Pack
+        run: dotnet pack src/RLoop.Cli/RLoop.Cli.csproj --configuration Release --no-build --output artifacts -p:PackageVersion=${{ inputs.version }} -p:Version=${{ inputs.version }}
+
+      - name: Installed-tool smoke test
+        shell: pwsh
+        run: |
+          $toolPath = Join-Path $env:RUNNER_TEMP "resoloop-tool"
+          $projectPath = Join-Path $env:RUNNER_TEMP "resoloop-release-smoke"
+          dotnet tool install ResoLoop --tool-path $toolPath --add-source artifacts --version $env:RELEASE_VERSION
+          $reported = & (Join-Path $toolPath "resoloop.exe") --version
+          if ($reported -ne $env:RELEASE_VERSION) { throw "Expected version $env:RELEASE_VERSION, got $reported" }
+          & (Join-Path $toolPath "resoloop.exe") init $projectPath
+          & (Join-Path $toolPath "resoloop.exe") skills sync $projectPath --check
+          & (Join-Path $toolPath "resoloop.exe") validate (Join-Path $projectPath "content/main.json") --json
+
+      - name: Verify public corresponding source
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $visibility = gh api "repos/$env:GITHUB_REPOSITORY" --jq .visibility
+          if ($visibility -ne "public") {
+            throw "NuGet publication is blocked while the AGPL corresponding-source repository is not public."
+          }
+
+      - name: NuGet login
+        uses: NuGet/login@v1
+        id: nuget
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      - name: Publish to nuget.org
+        shell: pwsh
+        run: dotnet nuget push "artifacts/ResoLoop.$env:RELEASE_VERSION.nupkg" --api-key "${{ steps.nuget.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json
+
+      - name: Create private repository release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "v$env:RELEASE_VERSION" "artifacts/ResoLoop.$env:RELEASE_VERSION.nupkg" --target "$env:GITHUB_SHA" --prerelease --generate-notes --title "ResoLoop $env:RELEASE_VERSION"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ResoLoop-${{ inputs.version }}
+          path: artifacts/*.nupkg
+          if-no-files-found: error

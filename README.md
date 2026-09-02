@@ -1,6 +1,6 @@
-# rloop
+# resoloop
 
-rloopは、CodexやClaude CodeなどのAIエージェントがResoniteを
+resoloopは、CodexやClaude CodeなどのAIエージェントがResoniteを
 
 観測 → 実装 → 適用 → 検証 → 解析 → 修正
 
@@ -36,13 +36,28 @@ ResoniteLink依存はAdapterに隔離されています。上位層は公式ラ�
 
 Resonite本体のデコンパイルはビルド・実行の必須依存ではありません。
 
-## Build and installation
+## Installation
 
 ~~~powershell
-dotnet build RLoop.slnx
-dotnet test RLoop.slnx --no-build
+dotnet tool install --global ResoLoop --version 0.1.0-preview.1
+resoloop --version
+~~~
+
+Preview版の更新:
+
+~~~powershell
+dotnet tool update --global ResoLoop --version 0.1.0-preview.1
+~~~
+
+release自動化とnuget.org Trusted Publishingの設定は[docs/RELEASING.md](docs/RELEASING.md)を参照してください。
+
+ソースから検証・package作成する場合:
+
+~~~powershell
+dotnet build ResoLoop.slnx
+dotnet test ResoLoop.slnx --no-build
 dotnet pack src/RLoop.Cli/RLoop.Cli.csproj -c Release -o artifacts
-dotnet tool install --global --add-source .\artifacts RLoop.Cli --version 0.1.0
+dotnet tool install --global --add-source .\artifacts ResoLoop --version 0.1.0-preview.1
 ~~~
 
 開発中は次でも実行できます。
@@ -57,57 +72,56 @@ dotnet run --project src/RLoop.Cli -- help
 
 ~~~powershell
 $env:RESONITE_LINK_URL="ws://localhost:12449"
-rloop status --json
+resoloop status --json
 ~~~
 
 設定優先順位:
 
 1. CLI: --url, --timeout, --command-timeout, --library-path
-2. 環境変数: RESONITE_LINK_URL, RLOOP_TIMEOUT_SECONDS, RLOOP_COMMAND_TIMEOUT_SECONDS, RESONITE_MANAGED_DATA_PATH
-3. カレントディレクトリから親方向で最初の .rloop.json
-4. %USERPROFILE%\.rloop\config.json
+2. 環境変数: RESONITE_LINK_URL, RESOLOOP_TIMEOUT_SECONDS, RESOLOOP_COMMAND_TIMEOUT_SECONDS, RESOLOOP_FLUX_EXECUTABLE, RESONITE_MANAGED_DATA_PATH
+3. カレントディレクトリから親方向で最初の .resoloop.json
+4. %USERPROFILE%\.resoloop\config.json
 
-URLがなければRESONITE_LINK_URL_MISSINGを返します。設定例は[examples/rloop.example.json](examples/rloop.example.json)です。
+URLがなければRESONITE_LINK_URL_MISSINGを返します。設定例は[examples/resoloop.example.json](examples/resoloop.example.json)です。
 
 ## Quick start
 
 自分のプロジェクトをゼロから開始する手順は[docs/QUICKSTART.md](docs/QUICKSTART.md)にまとめています。今後の実装順は[docs/ROADMAP.md](docs/ROADMAP.md)を参照してください。
 
 ~~~powershell
-New-Item -ItemType Directory MyResoniteProject
+resoloop init MyResoniteProject
 Set-Location MyResoniteProject
-rloop init .
-rloop skills sync --check
+resoloop skills sync --check
 $env:RESONITE_LINK_URL="ws://localhost:<current-port>"
-rloop doctor
-rloop validate content/main.json --json
-rloop plan content/main.json --json
-rloop apply content/main.json --json
+resoloop doctor
+resoloop validate content/main.json --json
+resoloop plan content/main.json --json
+resoloop apply content/main.json --json
 ~~~
 
 AIエージェントからは --json を標準にしてください。
 
 ~~~powershell
-rloop status --json
-rloop hierarchy --depth 2 --json
-rloop find --name Cube --json
-rloop inspect Root/MyObject --members --json
-rloop find --name Status --under Root/RLoop_Test_Game --direct-children --json
-rloop inspect Root/RLoop_Test_Game --component Slider --member SnapPositions --depth 4 --json
-rloop type search Grabbable --json
-rloop type describe FrooxEngine.Grabbable --json
+resoloop status --json
+resoloop hierarchy --depth 2 --json
+resoloop find --name Cube --json
+resoloop inspect Root/MyObject --members --json
+resoloop find --name Status --under Root/ResoLoop_Test_Game --direct-children --json
+resoloop inspect Root/ResoLoop_Test_Game --component Slider --member SnapPositions --depth 4 --json
+resoloop type search Grabbable --json
+resoloop type describe FrooxEngine.Grabbable --json
 
-$slot = (rloop slot create --parent Root --name RLoop_Test --position 0,1.5,2 --json | ConvertFrom-Json).data.id
-$component = (rloop component add $slot FrooxEngine.Grabbable --set Scalable=true --json | ConvertFrom-Json).data.id
-rloop component set $component Scalable false --json
-rloop inspect $slot --members --json
-rloop slot delete $slot --yes --json
+$slot = (resoloop slot create --parent Root --name ResoLoop_Test --position 0,1.5,2 --json | ConvertFrom-Json).data.id
+$component = (resoloop component add $slot FrooxEngine.Grabbable --set Scalable=true --json | ConvertFrom-Json).data.id
+resoloop component set $component Scalable false --json
+resoloop inspect $slot --members --json
+resoloop slot delete $slot --yes --json
 ~~~
 
 Reflectionでmemberがlistだと確認できた場合、対応済みのfield/reference要素はJSON arrayで設定できます。たとえばMeshRendererへmaterial providerを割り当てる場合:
 
 ~~~powershell
-rloop component set $renderer Materials ('["' + $materialProviderId + '"]') --json
+resoloop component set $renderer Materials ('["' + $materialProviderId + '"]') --json
 ~~~
 
 成功出力:
@@ -138,44 +152,44 @@ Exit codeは、2=引数、3=設定、4=接続、5=not found、6=validation、7=�
 | Flux | flux status/check/build/watch/deploy/deploy-manifest |
 | Diagnostics | doctor, logs |
 
-全オプションは `rloop help`、事故に関係する詳細は `rloop help apply` / `rloop help diff` で確認できます。hierarchyのdefault depthは2、findは8です。大規模worldでは `find --under` / `--direct-children` と `inspect --component` / `--member` を優先し、depth -1は避けてください。削除は --yes 必須で、Root削除は常に拒否されます。statusの `connectionId` はResoniteLink接続ごとのIDで、安定したworld identityではありません。保存済みIDは接続変更後にpath/keyから再解決されます。
+全オプションは `resoloop help`、事故に関係する詳細は `resoloop help apply` / `resoloop help diff` で確認できます。hierarchyのdefault depthは2、findは8です。大規模worldでは `find --under` / `--direct-children` と `inspect --component` / `--member` を優先し、depth -1は避けてください。削除は --yes 必須で、Root削除は常に拒否されます。statusの `connectionId` はResoniteLink接続ごとのIDで、安定したworld identityではありません。保存済みIDは接続変更後にpath/keyから再解決されます。
 
 ## Declarative apply
 
 [examples/agent-test.json](examples/agent-test.json)を参照してください。
 
 ~~~powershell
-rloop validate examples/agent-test.json --json
-rloop validate examples/agent-test.json --strict --json
-rloop plan examples/agent-test.json --json
-rloop apply examples/agent-test.json --json
+resoloop validate examples/agent-test.json --json
+resoloop validate examples/agent-test.json --strict --json
+resoloop plan examples/agent-test.json --json
+resoloop apply examples/agent-test.json --json
 ~~~
 
 Material、家具、照明、ReflectionMaterial、TouchButtonを含むnestedな実例は[examples/house-world.json](examples/house-world.json)です。
 
 ~~~powershell
-rloop apply examples/house-world.json --json
+resoloop apply examples/house-world.json --json
 ~~~
 
-schema v1では、top-levelに `schemaVersion: "1"`、`ownership.key`、root `slot.key`が必要です。ownershipごとのstateは既定でproject内の `.rloop/state/<ownership>.json` に保存され、途中経過もcheckpointされます。このdirectoryは `rloop init` が生成するignore設定によりversion controlから除外されます。
+schema v1では、top-levelに `schemaVersion: "1"`、`ownership.key`、root `slot.key`が必要です。ownershipごとのstateは既定でproject内の `.resoloop/state/<ownership>.json` に保存され、途中経過もcheckpointされます。このdirectoryは `resoloop init` が生成するignore設定によりversion controlから除外されます。
 
-`children` でSlot階層を宣言できます。SlotとComponentの明示的 `key` はrename、親変更、セッション変更後の再解決に使われます。stable Slotの親変更はIDを維持する`relocate`、stable Componentの親Slot変更は作成・参照再解決・旧Component削除としてplan/applyされます。同じSlotに同型Componentを複数宣言する場合は、それぞれにkeyが必要です。`identityFields`へ不変な管理memberを指定でき、managed reference topologyもstateへ保存されるため、同型Componentの挿入後も再接続時に誤接続せず再解決できます。`fields`は毎回収束させる値、`initialFields`はComponent新規作成時だけ設定してruntime dataを上書きしない値です。`managedFields`はrloopが収束させるposition/rotation/scaleを限定し、`preserveWorldTransform`は既存Slotの現在のlocal transform値を保持します。親変更時は`relocationTransform: "local"`が既定で、`"world"`なら旧world transformから新しいlocal transformを計算して以後保持します。planのrelocate理由にも選択したpolicyが表示されます。key変更時は`migrateFrom`でworld objectを作り直さずstateを移行できます。fieldから `$slot:key`、`$component:key`、`$member:key.MemberName`、`$asset:key` を参照でき、forward referenceも利用できます。旧 `$ref:key` も互換です。vector、quaternion、colorはJSON array/objectがcanonicalで、従来のcomma stringも互換入力として受理されます。
+`children` でSlot階層を宣言できます。SlotとComponentの明示的 `key` はrename、親変更、セッション変更後の再解決に使われます。stable Slotの親変更はIDを維持する`relocate`、stable Componentの親Slot変更は作成・参照再解決・旧Component削除としてplan/applyされます。同じSlotに同型Componentを複数宣言する場合は、それぞれにkeyが必要です。`identityFields`へ不変な管理memberを指定でき、managed reference topologyもstateへ保存されるため、同型Componentの挿入後も再接続時に誤接続せず再解決できます。`fields`は毎回収束させる値、`initialFields`はComponent新規作成時だけ設定してruntime dataを上書きしない値です。`managedFields`はresoloopが収束させるposition/rotation/scaleを限定し、`preserveWorldTransform`は既存Slotの現在のlocal transform値を保持します。親変更時は`relocationTransform: "local"`が既定で、`"world"`なら旧world transformから新しいlocal transformを計算して以後保持します。planのrelocate理由にも選択したpolicyが表示されます。key変更時は`migrateFrom`でworld objectを作り直さずstateを移行できます。fieldから `$slot:key`、`$component:key`、`$member:key.MemberName`、`$asset:key` を参照でき、forward referenceも利用できます。旧 `$ref:key` も互換です。vector、quaternion、colorはJSON array/objectがcanonicalで、従来のcomma stringも互換入力として受理されます。
 
-`inspect`、`slot`、`component`、`item audit`でもstable selectorを使用できます。例: `rloop component inspect '$component:controller' --state .rloop/state/item.json --json`。raw IDは接続単位、stable selectorはstateのpath、型、identity、reference topologyから現在のIDへ再解決されます。
+`inspect`、`slot`、`component`、`item audit`でもstable selectorを使用できます。例: `resoloop component inspect '$component:controller' --state .resoloop/state/item.json --json`。raw IDは接続単位、stable selectorはstateのpath、型、identity、reference topologyから現在のIDへ再解決されます。
 
 include、parameter/variable、prototype/instance、repeat、asset、camera、assertionの仕様は[docs/DECLARATIVE.md](docs/DECLARATIVE.md)にまとめています。house fixtureは3ファイルへ分割し、22個のboxと4本のtable legをprototype化しました。展開結果69 Slot・148 Componentを維持したまま、宣言量は46,178 byteから42,430 byteへ8.1%減っています。
 
 `validate` は接続なしのschema・値形状・key・参照検査、`validate --strict` は接続先のruntime Reflectionを使ったComponent/member検査です。`plan` はworldを変更せずcreate/update/no-opを列挙します。既存rootを初めて管理対象へ取り込む場合、inspectとplanで完全一致対象を確認してから一度だけ `--adopt` を付けます。stateがある通常の再適用では不要です。
 
 ~~~powershell
-rloop plan content/main.json --json
-rloop diff content/main.json --changes-only --json
-rloop diff content/main.json --deletes-only --json
-rloop apply content/main.json --profile --json
-rloop diff content/main.json --json
-rloop scene summary content/main.json --output artifacts/scene.json --json
-rloop capture content/main.json --camera main --output artifacts/main.svg --json
-rloop test content/main.json --json
+resoloop plan content/main.json --json
+resoloop diff content/main.json --changes-only --json
+resoloop diff content/main.json --deletes-only --json
+resoloop apply content/main.json --profile --json
+resoloop diff content/main.json --json
+resoloop scene summary content/main.json --output artifacts/scene.json --json
+resoloop capture content/main.json --camera main --output artifacts/main.svg --json
+resoloop test content/main.json --json
 ~~~
 
 applyの最終JSONはstdout、進捗はstderrへ分離されます。plan/diffのJSONは常に全変更を `changes` 配列へ分離し、`--changes-only` / `--creates-only` / `--deletes-only` / `--summary` は `operations` の表示量だけを絞ります。`--prune --yes`はstaleな親Slot配下を1回の親削除へ集約します。機械処理できる進捗が必要なら `--ndjson-progress`、表示を抑えるなら `--quiet` を使います。`--timeout` は各ResoniteLink request、`--command-timeout` はcommand全体のdeadlineです。Ctrl+Cやdeadlineで中断した場合はstate fileと完了件数が報告され、同じapplyで再開できます。
@@ -186,13 +200,13 @@ applyの最終JSONはstdout、進捗はstderrへ分離されます。plan/diff�
 dotnet tool install --global Papaltine.FluxSDK --version 1.9.0
 $env:RESONITE_MANAGED_DATA_PATH="D:\Users\star_\AppData\Local\RESO Launcher\profiles\profile1\Game"
 
-rloop flux check examples/flux/RLoopHello.pg --project examples/flux --json
-rloop flux node search DynamicImpulse --json
-rloop flux node describe DynamicImpulseTrigger --json
-rloop flux build examples/flux/RLoopHello.pg --project examples/flux --json
-rloop flux deploy --project examples/flux --module RLoopHello --parent RLoop_Test --json
-rloop flux deploy-manifest examples/flux/rloop.flux.json --json
-rloop flux watch examples/flux/rloop.flux.json --json
+resoloop flux check examples/flux/ResoLoopHello.pg --project examples/flux --json
+resoloop flux node search DynamicImpulse --json
+resoloop flux node describe DynamicImpulseTrigger --json
+resoloop flux build examples/flux/ResoLoopHello.pg --project examples/flux --json
+resoloop flux deploy --project examples/flux --module ResoLoopHello --parent ResoLoop_Test --json
+resoloop flux deploy-manifest examples/flux/resoloop.flux.json --json
+resoloop flux watch examples/flux/resoloop.flux.json --json
 ~~~
 
 `.pg`に対するbuild/check/watchは既存Flux-SDK CLIをラップします。`flux node search/describe`はFlux-SDKの通常metadata出力を、同名nodeをfull identity別に保持したversioned catalogへcacheします（1.9.0の`froox-docs --json`は同名keyで失敗するため使用しません）。JSON module manifestに対するwatchは依存順に成功buildだけを再deployします。`$slot:key` parentはworld stateから現在session向けに検証・再解決されます。moduleの `bindings` ではFlux input名を `mode: "source"`、output名を `mode: "drive"` として `$slot:key` / `$component:key` / `$member:key.MemberName` へ接続できます。driveはmember targetだけを受け付けます。IDはworld stateのcomponent index、管理member、`identityFields`を使って再解決されます。source signatureの未結線port、方向・型不一致、Flux-SDK 1.9.xのinterface global inputはbuild/deploy前に、build成功後の0 nodeはdeploy前に構造化エラーになります。deployはFlux-SDK 1.9のLoader.replaceを利用し、deploy先の`parentSlotId`と、再観測した実module childの`moduleSlotIdBefore` / `moduleSlotIdAfter`、解決済みbinding、checkpoint recoveryを返します。`doctor`は最小check/build probeでmanaged-dataの明示pathまたは自動発見が実際に成功するか確認します。
@@ -200,7 +214,7 @@ rloop flux watch examples/flux/rloop.flux.json --json
 保存・配布するGrabbableは、保存前に参照閉包を監査できます。
 
 ~~~powershell
-rloop item audit Root/RLoop_Test_Teleporter --strict --json
+resoloop item audit Root/ResoLoop_Test_Teleporter --strict --json
 ~~~
 
 `item audit`はroot以下のSlot、Component、member IDを閉包として収集し、外部参照をrequired world element、Flux external、runtime context、明示許可へ分類します。保存後に切れる参照は`ITEM_NOT_PORTABLE`、runtime contextはwarningです。意図した依存だけを`--allow-external`で許可し、Flux moduleとbinding targetもGrabbable root内へ置いてください。
@@ -214,44 +228,44 @@ skills/codexには次のworkflow Skillがあります。
 - resonite-inspect: コンテキストを浪費しない観測
 - resonite-flux: ProtoGraph check/build/deploy
 
-`rloop init` はResoniteコンテンツproject限定のskillsとして、対象projectの `.agents/skills/` へこれらを自動的にインストールします。
+`resoloop init` はResoniteコンテンツproject限定のskillsとして、対象projectの `.agents/skills/` へこれらを自動的にインストールします。
 
 ~~~powershell
-rloop init .
-rloop skills sync --check
+resoloop init .
+resoloop skills sync --check
 # 更新が必要で、利用者編集との競合がないことを確認後
-rloop skills sync --update
+resoloop skills sync --update
 ~~~
 
-`rloop init`はskill内容と配布hashを`.agents/skills/.rloop-bundled.json`へ記録します。`skills sync --check`はread-onlyで差分を検査し、`--update`は現在内容が前回配布hashと一致する未編集skillだけを更新します。利用者編集またはlockのない未知内容は`SKILL_SYNC_CONFLICT`で全更新前に停止します。Codexはcurrent directoryからrepository rootまでの `.agents/skills/` を読み込むため、このskillsは対象project内でだけ利用されます。CLI commandはprimitive、Skillはworkflowです。
+`resoloop init`はskill内容と配布hashを`.agents/skills/.resoloop-bundled.json`へ記録します。`skills sync --check`はread-onlyで差分を検査し、`--update`は現在内容が前回配布hashと一致する未編集skillだけを更新します。利用者編集またはlockのない未知内容は`SKILL_SYNC_CONFLICT`で全更新前に停止します。Codexはcurrent directoryからrepository rootまでの `.agents/skills/` を読み込むため、このskillsは対象project内でだけ利用されます。CLI commandはprimitive、Skillはworkflowです。
 
 ## Tests
 
 ~~~powershell
 dotnet test tests/RLoop.Tests/RLoop.Tests.csproj
 
-$env:RLOOP_RUN_INTEGRATION="1"
+$env:RESOLOOP_RUN_INTEGRATION="1"
 $env:RESONITE_LINK_URL="ws://localhost:12449"
 dotnet test tests/RLoop.IntegrationTests/RLoop.IntegrationTests.csproj --filter Category=Integration
 ~~~
 
-Integration testは一意なRLoop_Test_Integration_* Slotだけを作り、finallyでcleanupします。既存ユーザーコンテンツは操作しません。
+Integration testは一意なResoLoop_Test_Integration_* Slotだけを作り、finallyでcleanupします。既存ユーザーコンテンツは操作しません。
 
 ## Logs and troubleshooting
 
-rloop logsはResonite内部の非公開APIへ依存せず、設定されたファイルまたはdirectoryの最新.logをtailします。
+resoloop logsはResonite内部の非公開APIへ依存せず、設定されたファイルまたはdirectoryの最新.logをtailします。
 
 ~~~powershell
 $env:RESONITE_LOG_PATH="C:\path\to\Resonite\Logs"
-rloop logs --tail 200 --json
+resoloop logs --tail 200 --json
 ~~~
 
 - CONNECTION_FAILED: ResoniteLinkがworldで有効か、画面上のportとURLが同じか確認
 - COMPONENT_TYPE_NOT_FOUND: type searchの完全な結果を使う
-- open generic: `rloop type specialize '[FrooxEngine]FrooxEngine.DynamicValueVariable<>' string` でclosed genericを生成する
+- open generic: `resoloop type specialize '[FrooxEngine]FrooxEngine.DynamicValueVariable<>' string` でclosed genericを生成する
 - COMPONENT_MEMBER_NOT_FOUND: type describeでflattened memberを確認
 - VALUE_CONVERSION_FAILED: vector/quaternion/colorはJSON array/objectを優先し、エラーのtarget typeと受理例を確認
-- FLUX_SDK_NOT_FOUND: flux-sdkをglobal toolとして導入、またはRLOOP_FLUX_EXECUTABLEを設定
+- FLUX_SDK_NOT_FOUND: flux-sdkをglobal toolとして導入、またはRESOLOOP_FLUX_EXECUTABLEを設定
 - Flux type error: RESONITE_MANAGED_DATA_PATHまたは --library-path を確認
 
 ## Known limitations
@@ -262,9 +276,9 @@ rloop logs --tail 200 --json
 - ResoniteLink 0.13.1にscreenshot APIがないため、captureは決定的なcamera-space SVGで、最終レンダリング画像ではありません。結果は `screenshotAvailable: false` を明示します。
 - logsはLink protocolからのstreamではなく、明示されたローカルlog fileのtailです。
 - runtime probeは `safe: true` と `--probe --yes` の二重許可が必要です。public Reflectionに公開されたSyncMethodを呼ぶ `method` probeに加え、fieldを一時変更してafter assertionをpollし、`finally`で元の値へ戻して復元確認する `set-member` probeを利用できます。公開されないinteractionはstructural-onlyです。
-- ResoniteLink 0.13.1はUIXの`SyncDelegate` memberをComponent definition/update modelへ公開せず、Dynamic Impulse helperと`CallInput.Trigger`も呼び出し可能なSyncMethodとして公開しません。rloopはraw messageやmember名を推測せず、これらのinteractionをstructural-onlyとして報告します。
+- ResoniteLink 0.13.1はUIXの`SyncDelegate` memberをComponent definition/update modelへ公開せず、Dynamic Impulse helperと`CallInput.Trigger`も呼び出し可能なSyncMethodとして公開しません。resoloopはraw messageやmember名を推測せず、これらのinteractionをstructural-onlyとして報告します。
 - Flux-SDK 1.9.xのinterface型global input（実機で確認した `IButton global` など）はdeploy前に`FLUX_INTERFACE_GLOBAL_UNSUPPORTED`で拒否します。concrete Componentの`element` inputからmodule内でglobal化するか、Dynamic Impulse bridgeを使用してください。`Slot element` inputの配線は正常動作を確認しています。
 
 ## License and upstream notes
 
-ResoniteLinkはMIT、Flux-SDK programmatic integrationはAGPL-3.0-or-laterです。この構成はFlux-SDKへリンクするため、rloopの配布条件もAGPL-3.0-or-laterとしています。公開インターフェースを中心に実装し、非公開Resoniteソースやデコンパイル結果を同梱していません。
+ResoniteLinkはMIT、Flux-SDK programmatic integrationはAGPL-3.0-or-laterです。この構成はFlux-SDKへリンクするため、resoloopの配布条件もAGPL-3.0-or-laterとしています。公開インターフェースを中心に実装し、非公開Resoniteソースやデコンパイル結果を同梱していません。

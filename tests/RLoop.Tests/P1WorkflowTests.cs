@@ -6,7 +6,7 @@ namespace RLoop.Tests;
 
 public sealed class P1WorkflowTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "rloop-p1-" + Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "resoloop-p1-" + Guid.NewGuid().ToString("N"));
     public P1WorkflowTests() => Directory.CreateDirectory(_root);
 
     [Fact]
@@ -64,7 +64,7 @@ public sealed class P1WorkflowTests : IDisposable
         var source = Path.Combine(_root, "capture.json");
         File.WriteAllText(source, """
             { "schemaVersion":"1", "ownership":{"key":"capture"},
-              "slot":{"key":"root","name":"RLoop_Test_Capture","position":[0,0,0],"scale":[2,2,2]},
+              "slot":{"key":"root","name":"ResoLoop_Test_Capture","position":[0,0,0],"scale":[2,2,2]},
               "cameras":{"main":{"position":[0,2,-6],"target":[0,0,0],"width":640,"height":360,"representative":true}},
               "children":[{"slot":{"key":"child","name":"Child","position":[1,0,0]}}] }
             """);
@@ -76,7 +76,7 @@ public sealed class P1WorkflowTests : IDisposable
         Assert.True(File.Exists(output));
         Assert.True(File.Exists(result.SummaryOutput));
         Assert.Equal(2, result.Summary.Slots);
-        Assert.Contains("rloop wireframe", File.ReadAllText(output));
+        Assert.Contains("resoloop wireframe", File.ReadAllText(output));
     }
 
     [Fact]

@@ -9,12 +9,12 @@ public sealed class ResoniteLinkEndToEndTests
     [Trait("Category", "Integration")]
     public async Task ReparentsIsolatedSlotWithoutChangingItsId()
     {
-        if (Environment.GetEnvironmentVariable("RLOOP_RUN_INTEGRATION") != "1") return;
+        if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1") return;
         var url = Environment.GetEnvironmentVariable("RESONITE_LINK_URL")
                   ?? throw new InvalidOperationException("RESONITE_LINK_URL is required.");
         await using var client = new ResoniteLinkClientAdapter();
         await client.ConnectAsync(new Uri(url), TimeSpan.FromSeconds(30));
-        var name = "RLoop_Test_Reparent_" + Guid.NewGuid().ToString("N")[..8];
+        var name = "ResoLoop_Test_Reparent_" + Guid.NewGuid().ToString("N")[..8];
         string? rootId = null;
         try
         {
@@ -42,12 +42,12 @@ public sealed class ResoniteLinkEndToEndTests
     [Trait("Category", "Integration")]
     public async Task ApplyRelocatesOwnershipRootAndPrunesItsOldChild()
     {
-        if (Environment.GetEnvironmentVariable("RLOOP_RUN_INTEGRATION") != "1") return;
+        if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1") return;
         var url = Environment.GetEnvironmentVariable("RESONITE_LINK_URL")
                   ?? throw new InvalidOperationException("RESONITE_LINK_URL is required.");
         var suffix = Guid.NewGuid().ToString("N")[..8];
-        var containerName = "RLoop_Test_RootMove_" + suffix;
-        var directory = Path.Combine(Path.GetTempPath(), "rloop-live-root-move-" + suffix);
+        var containerName = "ResoLoop_Test_RootMove_" + suffix;
+        var directory = Path.Combine(Path.GetTempPath(), "resoloop-live-root-move-" + suffix);
         Directory.CreateDirectory(directory);
         var initialPath = Path.Combine(directory, "initial.json");
         var desiredPath = Path.Combine(directory, "desired.json");
@@ -99,14 +99,14 @@ public sealed class ResoniteLinkEndToEndTests
     [Trait("Category", "Integration")]
     public async Task CreatesMutatesAndCleansIsolatedSlot()
     {
-        if (Environment.GetEnvironmentVariable("RLOOP_RUN_INTEGRATION") != "1") return;
+        if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1") return;
         var url = Environment.GetEnvironmentVariable("RESONITE_LINK_URL")
                   ?? throw new InvalidOperationException("RESONITE_LINK_URL is required.");
         await using var client = new ResoniteLinkClientAdapter();
         await client.ConnectAsync(new Uri(url), TimeSpan.FromSeconds(30));
         var session = await client.GetSessionInfoAsync();
         Assert.True(session.Connected);
-        var name = "RLoop_Test_Integration_" + Guid.NewGuid().ToString("N")[..8];
+        var name = "ResoLoop_Test_Integration_" + Guid.NewGuid().ToString("N")[..8];
         string? slotId = null;
         try
         {
@@ -132,12 +132,12 @@ public sealed class ResoniteLinkEndToEndTests
     [Trait("Category", "Integration")]
     public async Task ApplyCheckpointsAndConvergesWithoutSecondRunWrites()
     {
-        if (Environment.GetEnvironmentVariable("RLOOP_RUN_INTEGRATION") != "1") return;
+        if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1") return;
         var url = Environment.GetEnvironmentVariable("RESONITE_LINK_URL")
                   ?? throw new InvalidOperationException("RESONITE_LINK_URL is required.");
         var suffix = Guid.NewGuid().ToString("N")[..8];
-        var name = "RLoop_Test_Apply_" + suffix;
-        var directory = Path.Combine(Path.GetTempPath(), "rloop-live-" + suffix);
+        var name = "ResoLoop_Test_Apply_" + suffix;
+        var directory = Path.Combine(Path.GetTempPath(), "resoloop-live-" + suffix);
         Directory.CreateDirectory(directory);
         var documentPath = Path.Combine(directory, "apply.json");
         var statePath = Path.Combine(directory, "state.json");
@@ -188,12 +188,12 @@ public sealed class ResoniteLinkEndToEndTests
     [Trait("Category", "Integration")]
     public async Task ApplyPreservesTransformMigratesKeysAndPrunesParentAsOneOperation()
     {
-        if (Environment.GetEnvironmentVariable("RLOOP_RUN_INTEGRATION") != "1") return;
+        if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1") return;
         var url = Environment.GetEnvironmentVariable("RESONITE_LINK_URL")
                   ?? throw new InvalidOperationException("RESONITE_LINK_URL is required.");
         var suffix = Guid.NewGuid().ToString("N")[..8];
-        var name = "RLoop_Test_Policy_" + suffix;
-        var directory = Path.Combine(Path.GetTempPath(), "rloop-live-policy-" + suffix);
+        var name = "ResoLoop_Test_Policy_" + suffix;
+        var directory = Path.Combine(Path.GetTempPath(), "resoloop-live-policy-" + suffix);
         Directory.CreateDirectory(directory);
         var initialPath = Path.Combine(directory, "initial.json");
         var desiredPath = Path.Combine(directory, "desired.json");

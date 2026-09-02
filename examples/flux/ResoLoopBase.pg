@@ -1,4 +1,4 @@
-module RLoopBase
+module ResoLoopBase
 where {
     1->display
 }

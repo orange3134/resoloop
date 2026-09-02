@@ -97,7 +97,7 @@ public sealed class FluxProcessTool(string executable, IFluxDeployer deployer) :
         {
             throw new RLoopException("FLUX_SDK_NOT_FOUND", $"Could not start Flux-SDK executable '{executable}'.", ExitCodes.ExternalToolFailed,
                 new Dictionary<string, object?> { ["executable"] = executable },
-                ["Install with: dotnet tool install --global Papaltine.FluxSDK --version 1.9.0", "Or configure RLOOP_FLUX_EXECUTABLE."], ex);
+                ["Install with: dotnet tool install --global Papaltine.FluxSDK --version 1.9.0", "Or configure RESOLOOP_FLUX_EXECUTABLE."], ex);
         }
     }
 }

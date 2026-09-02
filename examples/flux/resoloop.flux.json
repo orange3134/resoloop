@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1",
+  "projectDirectory": ".",
+  "parent": "$slot:root",
+  "worldState": "../../.resoloop/state/house-world.json",
+  "deployState": "../../.resoloop/flux-state/house-world.json",
+  "modules": [
+    {
+      "name": "base",
+      "source": "ResoLoopBase.pg",
+      "module": "ResoLoopBase"
+    },
+    {
+      "name": "hello",
+      "source": "ResoLoopHello.pg",
+      "module": "ResoLoopHello",
+      "dependsOn": ["base"]
+    }
+  ]
+}

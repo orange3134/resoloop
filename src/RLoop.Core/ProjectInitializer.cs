@@ -18,7 +18,7 @@ public static class ProjectInitializer
         var projectName = new DirectoryInfo(root).Name;
         if (string.IsNullOrWhiteSpace(projectName)) projectName = "Project";
 
-        var slotName = "RLoop_Test_" + ToSafeName(projectName);
+        var slotName = "ResoLoop_Test_" + ToSafeName(projectName);
         var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             [ConfigResolver.ProjectFileName] = """
@@ -60,11 +60,11 @@ public static class ProjectInitializer
             [Path.Combine("flux", "Main.pg")] = """
                 module Main
                 where {
-                    "Hello from rloop!"->display
+                    "Hello from resoloop!"->display
                 }
                 """ + "\n",
             [Path.Combine("flux", "protograph.toml")] = """
-                name = "rloop-project"
+                name = "resoloop-project"
                 version = "0.1.0"
 
                 [build.dev]
@@ -72,13 +72,13 @@ public static class ProjectInitializer
 
                 [dependencies]
                 """ + "\n",
-            [Path.Combine("flux", "rloop.flux.json")] = JsonSerializer.Serialize(new
+            [Path.Combine("flux", "resoloop.flux.json")] = JsonSerializer.Serialize(new
             {
                 schemaVersion = "1",
                 projectDirectory = ".",
                 parent = "$slot:root",
-                worldState = "../.rloop/state/" + ToSafeName(projectName).ToLowerInvariant() + ".json",
-                deployState = "../.rloop/flux-state/main.json",
+                worldState = "../.resoloop/state/" + ToSafeName(projectName).ToLowerInvariant() + ".json",
+                deployState = "../.resoloop/flux-state/main.json",
                 modules = new[] { new { name = "main", source = "Main.pg", module = "Main" } }
             }, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase }) + "\n",
             [Path.Combine("flux", ".gitignore")] = """
@@ -86,8 +86,30 @@ public static class ProjectInitializer
                 .protograph/
                 *.brson
                 """ + "\n",
-            [Path.Combine(".rloop", ".gitignore")] = "state/\nflux-state/\n"
+            [Path.Combine(".resoloop", ".gitignore")] = "state/\nflux-state/\n"
         };
+
+        var agentsPath = Path.Combine(root, "AGENTS.md");
+        if (!File.Exists(agentsPath))
+            files["AGENTS.md"] = """
+                # ResoLoop project guide
+
+                Use `resoloop` as the only mutation interface for Resonite content in this project. Start with `resoloop doctor --json`, then use the project skills under `.agents/skills/` for the requested workflow.
+
+                ## Required workflow
+
+                - Inspect unfamiliar Component types, members, methods, and Flux nodes through Reflection or Flux-SDK metadata. Never guess runtime names.
+                - Before mutation, run offline validation, strict validation when connected, and plan/diff. Re-run the same apply and confirm it converges without writes.
+                - Keep declarative content in `content/`, ProtoGraph source in `flux/`, and session state under `.resoloop/`.
+                - Prefer stable selectors such as `$slot:key`, `$component:key`, and `$member:key.Member`; pass `--state` after reconnecting.
+
+                ## Resonite safety
+
+                - Never delete or mutate `Root`, an unverified ID, or existing user content outside the requested ownership boundary.
+                - Put experiments below an unmistakable `ResoLoop_Test_*` Slot and clean only its exact verified ID.
+                - Review delete candidates before `--prune --yes`. Slot delete and Component remove always require explicit `--yes`.
+                - Treat ResoniteLink IDs as session-scoped and re-observe after a session restart.
+                """ + "\n";
 
         var skillHashes = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var skillName in BundledSkillManager.Names)
@@ -115,7 +137,7 @@ public static class ProjectInitializer
                 "Project initialization would overwrite existing files.",
                 ExitCodes.ValidationFailed,
                 new Dictionary<string, object?> { ["rootDirectory"] = root, ["conflicts"] = conflicts },
-                ["Move or reconcile the listed files, then run rloop init again. Existing files are never overwritten."]);
+                ["Move or reconcile the listed files, then run resoloop init again. Existing files are never overwritten."]);
 
         var created = new List<string>();
         Directory.CreateDirectory(root);
@@ -132,10 +154,10 @@ public static class ProjectInitializer
         return new ProjectInitResult(root, projectName, created, unchanged,
         [
             "Set RESONITE_LINK_URL to the current ResoniteLink WebSocket URL.",
-            "Run rloop doctor, then validate, diff, and apply content/main.json.",
+            "Run resoloop doctor, then validate, diff, and apply content/main.json.",
             "Restart Codex if it does not detect the project skills under .agents/skills immediately.",
-            "Generate scene artifacts with rloop capture content/main.json --camera main --output artifacts/main.svg --json.",
-            "For ProtoFlux, set RESONITE_MANAGED_DATA_PATH and use flux/rloop.flux.json."
+            "Generate scene artifacts with resoloop capture content/main.json --camera main --output artifacts/main.svg --json.",
+            "For ProtoFlux, set RESONITE_MANAGED_DATA_PATH and use flux/resoloop.flux.json."
         ]);
     }
 

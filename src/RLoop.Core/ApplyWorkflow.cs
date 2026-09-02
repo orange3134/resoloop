@@ -558,7 +558,7 @@ internal static class ApplyStateStore
         var projectConfig = ConfigResolver.FindProjectConfigPath(sourceDirectory);
         var projectRoot = projectConfig is null ? sourceDirectory : Path.GetDirectoryName(projectConfig)!;
         var key = Sanitize(document.Ownership?.Key ?? "unowned");
-        return Path.Combine(projectRoot, ".rloop", "state", key + ".json");
+        return Path.Combine(projectRoot, ".resoloop", "state", key + ".json");
     }
 
     public static ApplyState Load(string path, string ownershipKey)

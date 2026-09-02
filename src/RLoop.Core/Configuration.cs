@@ -15,7 +15,7 @@ public sealed record ConfigResolution(RLoopConfig Config, IReadOnlyDictionary<st
 
 public static class ConfigResolver
 {
-    public const string ProjectFileName = ".rloop.json";
+    public const string ProjectFileName = ".resoloop.json";
 
     public static ConfigResolution Resolve(
         string startDirectory,
@@ -26,7 +26,7 @@ public static class ConfigResolver
         getEnvironment ??= Environment.GetEnvironmentVariable;
         userProfile ??= Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
-        var userPath = Path.Combine(userProfile, ".rloop", "config.json");
+        var userPath = Path.Combine(userProfile, ".resoloop", "config.json");
         var projectPath = FindProjectConfigPath(startDirectory);
         var user = ReadConfig(userPath);
         var project = ReadConfig(projectPath);
@@ -61,8 +61,8 @@ public static class ConfigResolver
         }
 
         var url = Pick("url", "RESONITE_LINK_URL", x => x.ResoniteLinkUrl, "resoniteLinkUrl");
-        var flux = Pick("flux-executable", "RLOOP_FLUX_EXECUTABLE", x => x.FluxExecutable, "fluxExecutable") ?? "flux-sdk";
-        var helper = Pick("flux-deployer", "RLOOP_FLUX_DEPLOYER", x => x.FluxDeployerPath, "fluxDeployerPath");
+        var flux = Pick("flux-executable", "RESOLOOP_FLUX_EXECUTABLE", x => x.FluxExecutable, "fluxExecutable") ?? "flux-sdk";
+        var helper = Pick("flux-deployer", "RESOLOOP_FLUX_DEPLOYER", x => x.FluxDeployerPath, "fluxDeployerPath");
         var managed = Pick("library-path", "RESONITE_MANAGED_DATA_PATH", x => x.ResoniteManagedDataPath, "resoniteManagedDataPath");
         var logs = Pick("log-path", "RESONITE_LOG_PATH", x => x.ResoniteLogPath, "resoniteLogPath");
 
@@ -73,10 +73,10 @@ public static class ConfigResolver
                 throw new RLoopException("INVALID_TIMEOUT", $"Timeout must be a positive number of seconds, got '{timeoutText}'.", ExitCodes.InvalidArguments);
             sources["timeoutSeconds"] = "cli";
         }
-        else if (int.TryParse(getEnvironment("RLOOP_TIMEOUT_SECONDS"), out var envTimeout) && envTimeout > 0)
+        else if (int.TryParse(getEnvironment("RESOLOOP_TIMEOUT_SECONDS"), out var envTimeout) && envTimeout > 0)
         {
             timeout = envTimeout;
-            sources["timeoutSeconds"] = "environment:RLOOP_TIMEOUT_SECONDS";
+            sources["timeoutSeconds"] = "environment:RESOLOOP_TIMEOUT_SECONDS";
         }
 
         var commandTimeout = project.CommandTimeoutSeconds > 0 ? project.CommandTimeoutSeconds :
@@ -87,10 +87,10 @@ public static class ConfigResolver
                 throw new RLoopException("INVALID_COMMAND_TIMEOUT", $"Command timeout must be a positive number of seconds, got '{commandTimeoutText}'.", ExitCodes.InvalidArguments);
             sources["commandTimeoutSeconds"] = "cli";
         }
-        else if (int.TryParse(getEnvironment("RLOOP_COMMAND_TIMEOUT_SECONDS"), out var envCommandTimeout) && envCommandTimeout > 0)
+        else if (int.TryParse(getEnvironment("RESOLOOP_COMMAND_TIMEOUT_SECONDS"), out var envCommandTimeout) && envCommandTimeout > 0)
         {
             commandTimeout = envCommandTimeout;
-            sources["commandTimeoutSeconds"] = "environment:RLOOP_COMMAND_TIMEOUT_SECONDS";
+            sources["commandTimeoutSeconds"] = "environment:RESOLOOP_COMMAND_TIMEOUT_SECONDS";
         }
 
         return new ConfigResolution(new RLoopConfig(url, timeout, commandTimeout, flux, helper, managed, logs), sources);

@@ -16,7 +16,7 @@ public static partial class FluxManagedDataProbe
     public static async Task<FluxManagedDataProbeResult> RunAsync(IFluxTool flux, string? libraryPath,
         CancellationToken cancellationToken = default)
     {
-        var directory = Path.Combine(Path.GetTempPath(), "rloop-flux-doctor-" + Guid.NewGuid().ToString("N"));
+        var directory = Path.Combine(Path.GetTempPath(), "resoloop-flux-doctor-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         var source = Path.Combine(directory, "RLoopDoctor.pg");
         await File.WriteAllTextAsync(source, "module RLoopDoctor where { }\n", cancellationToken);

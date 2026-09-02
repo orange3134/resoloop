@@ -12,7 +12,7 @@ public sealed record SkillSyncResult(string RootDirectory, string Mode, bool Syn
 
 public static class BundledSkillManager
 {
-    public const string LockRelativePath = ".agents/skills/.rloop-bundled.json";
+    public const string LockRelativePath = ".agents/skills/.resoloop-bundled.json";
 
     public static IReadOnlyList<string> Names { get; } =
         ["resonite-build", "resonite-debug", "resonite-flux", "resonite-inspect"];
@@ -42,7 +42,7 @@ public static class BundledSkillManager
                 "Bundled skill sync stopped because one or more installed skills are modified or have no trusted lock.",
                 ExitCodes.ValidationFailed,
                 new Dictionary<string, object?> { ["rootDirectory"] = root, ["conflicts"] = conflicts },
-                ["Reconcile or back up the listed skills. rloop never overwrites an unverified user-edited skill."]);
+                ["Reconcile or back up the listed skills. resoloop never overwrites an unverified user-edited skill."]);
 
         var pending = entries.Where(entry => entry.Status is "missing" or "update-available").ToArray();
         if (!update)

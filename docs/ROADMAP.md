@@ -1,10 +1,10 @@
-# rloop development roadmap
+# resoloop development roadmap
 
-このロードマップは、小さな家ワールドとブロック崩しを `rloop apply` / Flux deployで実際に構築した結果を基準にしています。優先順位は、差分の収束、安全に再実行できること、結果を自動検証できること、反復時の観測量、表現力の順です。
+このロードマップは、小さな家ワールドとブロック崩しを `resoloop apply` / Flux deployで実際に構築した結果を基準にしています。優先順位は、差分の収束、安全に再実行できること、結果を自動検証できること、反復時の観測量、表現力の順です。
 
 ## 2026-08-31 実アイテム開発フィードバックの改善計画
 
-インスタントカメラ、テレポーターガン、チーム分けUIXパネルを、インストール済みのrloop skillだけを使って実際に構築・修正した結果を反映する。3事例の合計は約194分、993 command、136 failureだった。主な探索先はComponent/Member/SyncMethod、Flux node、interface型global binding、宣言値の表現、再接続後のstable Component、UIX固有の描画制約だった。
+インスタントカメラ、テレポーターガン、チーム分けUIXパネルを、インストール済みのresoloop skillだけを使って実際に構築・修正した結果を反映する。3事例の合計は約194分、993 command、136 failureだった。主な探索先はComponent/Member/SyncMethod、Flux node、interface型global binding、宣言値の表現、再接続後のstable Component、UIX固有の描画制約だった。
 
 ### P0: 宣言値とinteractionの確実な収束
 
@@ -58,7 +58,7 @@ ResoniteLink 0.13.1の`ComponentDefinition` / update modelはUIX Buttonの`Press
 - [x] `resonite-flux`へ0-node、interface global、element input＋module内global化、Dynamic Impulse bridge、portable root内module配置を追加する。
 - [x] bundled skillの配布hashをlockし、未編集の旧skillだけを安全に更新する`skills sync --check/--update`を追加する。利用者編集またはlockのない未知内容は`SKILL_SYNC_CONFLICT`として全更新前に保護する。
 - [x] 3事例から、壊れた版と修正版の最小offline fixtureを作る。camera quaternion、teleporter closure、UIX interface global/element bindingを機械判定する。
-- [x] live testは一意な`RLoop_Test_*`だけを作り、exact IDをfinallyでcleanupする。Rootや既存contentを変更しない。
+- [x] live testは一意な`ResoLoop_Test_*`だけを作り、exact IDをfinallyでcleanupする。Rootや既存contentを変更しない。
 - [x] **現行APIでのP0完了条件:** teleporter itemのclosure、再接続後のstable解決、runtime data保持、3事例のoffline fixture、apply／deploy fixtureの2回目mutation 0を確認する。
 - [ ] **上流API解除後の追加完了条件:** cameraの実ボタン撮影とUIX Dynamic Impulseをruntime interactionとして確認する。それまではstructural-only coverageとして総合結果から区別する。
 
@@ -85,8 +85,8 @@ Flux manifest binding:
 - [x] moduleの `in` / `out` 名を `source` / `drive` として宣言し、`$slot:key`、`$component:key`、`$member:key.MemberName`へ接続するmanifest schemaを追加する。global/elementの生成方式はProtoGraph宣言に従う。
 - [x] world stateのkey・path・type ordinalから接続先IDを再解決し、Flux-SDKのInputMap/OutputMapへ渡す。解決先IDが変わった場合もhashを更新して再deployする。
 - [x] 未解決binding、manifestと解決結果の不一致、member以外を対象にしたdriveをdeploy前の構造化エラーとして拒否する。
-- [x] オフライン契約テストに加え、専用 `RLoop_Test*` live fixtureで `Slot element` の正常deployとglobal referenceのtarget配線を確認する。
-- [ ] **上流API待ち:** Flux-SDK 1.9.0が `IButton global` の参照配線後に返す `Invalid component type` を解消し、PhysicalButtonへのglobal bindingをmodule全体の成功として完走させる。現状は公開SDK内で生成されるglobal参照ComponentがResonite側の型検証に失敗し、rloopから生成型を差し替える公開拡張点がない。`PhysicalButton element`として受けてmodule内でglobal化するpreflight済み回避策を維持する。
+- [x] オフライン契約テストに加え、専用 `ResoLoop_Test*` live fixtureで `Slot element` の正常deployとglobal referenceのtarget配線を確認する。
+- [ ] **上流API待ち:** Flux-SDK 1.9.0が `IButton global` の参照配線後に返す `Invalid component type` を解消し、PhysicalButtonへのglobal bindingをmodule全体の成功として完走させる。現状は公開SDK内で生成されるglobal参照ComponentがResonite側の型検証に失敗し、resoloopから生成型を差し替える公開拡張点がない。`PhysicalButton element`として受けてmodule内でglobal化するpreflight済み回避策を維持する。
 - [x] Flux入出力の宣言型とworld targetの型互換性、未結線状態をdeploy前に検証して構造化エラーにする。deploy後はmoduleとbinding targetを再観測して検証する。
 
 Safe interaction probe:
@@ -105,7 +105,7 @@ Safe interaction probe:
 - [x] staleな親Slot配下のpruneを1回の親Slot削除へ集約し、配下のstateをまとめてcheckpointする。
 - [x] doctorで「managed-data未設定」と「Flux-SDKの自動発見成功/解決不能」をbuild probeにより区別する。
 
-Flux bindingとinteraction probeは、型名・member名・メッセージを推測するとworldを壊す領域なので、pinned upstream確認、オフライン契約テスト、専用 `RLoop_Test*` live fixtureの順で進める。
+Flux bindingとinteraction probeは、型名・member名・メッセージを推測するとworldを壊す領域なので、pinned upstream確認、オフライン契約テスト、専用 `ResoLoop_Test*` live fixtureの順で進める。
 
 ## 実践で確認できたこと
 
@@ -141,9 +141,9 @@ Flux bindingとinteraction probeは、型名・member名・メッセージを推
 
 ### 3. mutation前のvalidateとplan
 
-- [x] `rloop validate <file>` で、接続なしにschema、値形状、key重複、未解決参照を検出する。
+- [x] `resoloop validate <file>` で、接続なしにschema、値形状、key重複、未解決参照を検出する。
 - [x] 接続先のReflection結果も使うstrict validation modeを追加する。
-- [x] `rloop plan <file>` でcreate/update/no-op/errorをmutation前に列挙する。
+- [x] `resoloop plan <file>` でcreate/update/no-op/errorをmutation前に列挙する。
 - [x] forward referenceを許可し、全参照を解決できてからmutationを開始する。
 - [x] schema versionを必須化し、互換性のない入力を明示的に拒否する。
 
@@ -155,7 +155,7 @@ Flux bindingとinteraction probeは、型名・member名・メッセージを推
 - [x] 複数の同型Componentをkeyとtype ordinalで一意に更新できるようにする。
 - [x] セッション変更を検出し、古いIDを拒否してkey/path/type ordinalから再解決する。
 - [x] 中断後に完了済み操作を再利用して再開できるcheckpointを追加する。
-- [x] rloopが所有するroot境界を宣言し、未確認の既存rootは明示的 `--adopt` なしに更新しない。
+- [x] resoloopが所有するroot境界を宣言し、未確認の既存rootは明示的 `--adopt` なしに更新しない。
 
 完了条件: 同じ宣言を別セッションから安全に再適用でき、途中失敗後も重複生成せずに再開できること。
 
@@ -163,21 +163,21 @@ Flux bindingとinteraction probeは、型名・member名・メッセージを推
 
 ### 5. 見た目と空間の検証
 
-- [x] 明示的なcamera、解像度、保存先を指定する `rloop capture` を、利用可能な公開APIだけで実装または連携する（0.13.1では決定的SVG投影、`screenshotAvailable: false`を明示）。
+- [x] 明示的なcamera、解像度、保存先を指定する `resoloop capture` を、利用可能な公開APIだけで実装または連携する（0.13.1では決定的SVG投影、`screenshotAvailable: false`を明示）。
 - [x] Slot群のworld bounds、配置、欠落material、無効参照を検査するscene summaryを追加する。
 - [x] camera bookmarkと代表viewをmanifestで宣言できるようにする。
 - [x] capture SVGとscene summary JSONを成果物としてCIから比較できる形式にする。
 
 ### 6. ギミックの動作検証
 
-- [x] Field/Referenceを読むassertionと、変更前後を監視する `rloop test` の仕様を作る。
+- [x] Field/Referenceを読むassertionと、変更前後を監視する `resoloop test` の仕様を作る。
 - [x] 公開APIで安全に可能な場合だけ、Button pressなどのinteraction probeを追加する。
 - [x] 鏡の例をfixture化し、ButtonToggleのtarget/member wiringと、probe利用時のon/off結果を検証する。
 - [x] runtime eventを呼び出せない環境では、構造検証までであることを明確に報告する。
 
 ### 7. 安全な差分収束
 
-- [x] `rloop diff` でcreate/update/rename/delete候補と理由をJSON化する。
+- [x] `resoloop diff` でcreate/update/rename/delete候補と理由をJSON化する。
 - [x] stable keyによるrenameを実装し、削除して作り直す挙動を避ける。
 - [x] 削除は所有境界内だけを対象にし、previewと明示的 `--prune --yes` を必須にする。
 - [x] 失敗時のrollback可否を操作単位で示し、非atomicな場合は復旧手順を出す。
@@ -215,8 +215,8 @@ Flux bindingとinteraction probeは、型名・member名・メッセージを推
 
 - [ ] immutableなversion付きdotnet tool packageを発行する。
 - [ ] Windows CIでbuild、offline test、package install smoke testを行う。
-- [ ] opt-in live test jobを用意し、必ず専用 `RLoop_Test*` 配下だけを扱う。
-- [ ] `rloop init` templateとCLI/schemaのversion互換性を診断する。
+- [ ] opt-in live test jobを用意し、必ず専用 `ResoLoop_Test*` 配下だけを扱う。
+- [ ] `resoloop init` templateとCLI/schemaのversion互換性を診断する。
 - [ ] changelog、upgrade guide、release automation、署名方針を整備する。
 
 ### 11. 診断と観測性
@@ -236,4 +236,4 @@ Flux bindingとinteraction probeは、型名・member名・メッセージを推
 5. screenshot/scene assertion/interaction probeで結果の検証ループを閉じる。
 6. 再利用構文、型・asset、ProtoFlux、配布基盤を順次広げる。
 
-旧house-world由来のP0/P1は完了しています。ブロック崩し由来の次期P0では、stable Flux binding基盤、binding型互換性・未結線preflight、interface globalの事前拒否、transactional `set-member` probe、実module child IDの再観測、transform管理ポリシー、stable key migration、親Slot prune集約、managed-data build probeまで完了しました。Dynamic ImpulseとCallInputの実発火は、ResoniteLink 0.13.1がcallable SyncMethodまたは汎用event APIを公開しないため上流API待ちです。ResoniteLinkにtransaction、framebuffer、汎用event APIがない制約は、非atomic checkpoint recovery、決定的SVG、structural-only capabilityとして明示しています。引き続きrloopが管理する専用の `RLoop_Test*` Slotから導入し、`validate --strict` と `diff --changes-only` を先に実行する運用を推奨します。
+旧house-world由来のP0/P1は完了しています。ブロック崩し由来の次期P0では、stable Flux binding基盤、binding型互換性・未結線preflight、interface globalの事前拒否、transactional `set-member` probe、実module child IDの再観測、transform管理ポリシー、stable key migration、親Slot prune集約、managed-data build probeまで完了しました。Dynamic ImpulseとCallInputの実発火は、ResoniteLink 0.13.1がcallable SyncMethodまたは汎用event APIを公開しないため上流API待ちです。ResoniteLinkにtransaction、framebuffer、汎用event APIがない制約は、非atomic checkpoint recovery、決定的SVG、structural-only capabilityとして明示しています。引き続きresoloopが管理する専用の `ResoLoop_Test*` Slotから導入し、`validate --strict` と `diff --changes-only` を先に実行する運用を推奨します。

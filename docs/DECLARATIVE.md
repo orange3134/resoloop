@@ -1,6 +1,6 @@
-# rloop schema v1 authoring
+# resoloop schema v1 authoring
 
-`rloop`は複数のJSON sourceを展開してから、schema v1として一括検証します。展開は接続なしで行われ、循環include、未解決parameter、stable key衝突、10,000 node／10 MiB／64 source fileの上限違反をmutation前に拒否します。
+`resoloop`は複数のJSON sourceを展開してから、schema v1として一括検証します。展開は接続なしで行われ、循環include、未解決parameter、stable key衝突、10,000 node／10 MiB／64 source fileの上限違反をmutation前に拒否します。
 
 ## Include、parameter、prototype、repeat
 
@@ -10,7 +10,7 @@
   "schemaVersion": "1",
   "ownership": { "key": "my-world" },
   "parameters": { "spacing": 1.5 },
-  "variables": { "rootName": "RLoop_Test_MyWorld" },
+  "variables": { "rootName": "ResoLoop_Test_MyWorld" },
   "prototypes": {
     "box": {
       "slot": { "key": "box-${i}", "name": "Box ${i}", "position": [0, 0, 0] },
@@ -47,7 +47,7 @@ Componentの`fields`はapplyごとに収束させます。runtimeが更新する
 
 ## Transform管理とstable key migration
 
-既存Slotの配置を宣言へ取り込むときは、rloopが管理するtransformを明示的に狭められます。
+既存Slotの配置を宣言へ取り込むときは、resoloopが管理するtransformを明示的に狭められます。
 
 ~~~json
 {
@@ -108,10 +108,10 @@ local `texture`、`audio`、ResoniteLink `ImportMeshJSON`は公開import APIを�
 ~~~
 
 ~~~powershell
-rloop scene summary content/main.json --output artifacts/scene.json --json
-rloop capture content/main.json --camera main --output artifacts/main.svg --json
-rloop test content/main.json --json
-rloop test content/main.json --probe --yes --json
+resoloop scene summary content/main.json --output artifacts/scene.json --json
+resoloop capture content/main.json --camera main --output artifacts/main.svg --json
+resoloop test content/main.json --json
+resoloop test content/main.json --probe --yes --json
 ~~~
 
 ResoniteLink 0.13.1にframebuffer/screenshot APIはないため、`capture`は明示cameraから決定的なSVG投影とscene JSONを生成し、結果の `screenshotAvailable` をfalseにします。CIではこの2成果物を比較できます。`scene summary`は宣言上のworld bounds、配置、material欠落、無効参照を報告します。
@@ -139,10 +139,10 @@ assertionはmember値に加え、`$component:key`の存在と`kind: "child-count
 ## Diff、rename、prune、recovery
 
 ~~~powershell
-rloop diff content/main.json --json
-rloop diff content/main.json --changes-only --json
-rloop diff content/main.json --deletes-only --json
-rloop apply content/main.json --prune --yes --json
+resoloop diff content/main.json --json
+resoloop diff content/main.json --changes-only --json
+resoloop diff content/main.json --deletes-only --json
+resoloop apply content/main.json --prune --yes --json
 ~~~
 
 `diff`はcreate/update/rename/delete/no-op、理由、list要素のadded/removedを返し、worldを変更しません。JSONの `changes` にはno-op以外が常に入り、`--changes-only` / `--creates-only` / `--deletes-only` / `--summary` は `operations` の表示だけを絞ります。SyncObject listは子memberを構造値へ正規化して比較します。renameはstable keyで同一Slotを追跡してnameを更新します。delete候補はstateに記録されたownership root内の対象だけです。通常applyは削除しません。`--prune --yes`では、staleな親Slotがある場合は配下のSlot / Componentを個別削除せず、最上位のstale親Slotを1回削除して対応するstateをまとめてcheckpointします。親に含まれないstale Componentだけは個別に削除します。
@@ -151,11 +151,11 @@ ResoniteLinkのoperationはtransactionではありません。結果は常に `a
 
 ## Flux module manifest
 
-[examples/flux/rloop.flux.json](../examples/flux/rloop.flux.json)を参照してください。moduleごとにsource、Flux module path、`dependsOn`を宣言します。依存cycleは事前に拒否され、topological orderで成功buildだけをdeployします。
+[examples/flux/resoloop.flux.json](../examples/flux/resoloop.flux.json)を参照してください。moduleごとにsource、Flux module path、`dependsOn`を宣言します。依存cycleは事前に拒否され、topological orderで成功buildだけをdeployします。
 
 ~~~powershell
-rloop flux deploy-manifest examples/flux/rloop.flux.json --json
-rloop flux watch examples/flux/rloop.flux.json --json
+resoloop flux deploy-manifest examples/flux/resoloop.flux.json --json
+resoloop flux watch examples/flux/resoloop.flux.json --json
 ~~~
 
 parentに `$slot:key` を使う場合は`worldState`または`--state`が必要です。現在sessionなら保存IDを検証し、sessionが変わっていれば保存pathから再解決します。module input/outputは次のようにstable bindingとして宣言できます。
@@ -172,14 +172,14 @@ parentに `$slot:key` を使う場合は`worldState`または`--state`が必要�
 }
 ~~~
 
-`source`はFlux moduleの `in` 名、`drive`は `out` 名をkeyにします。source targetはslot/component/member、drive targetはmemberだけです。rloopはworld stateから現在のIDを再解決し、Flux-SDKのInputMap/OutputMapへ渡します。binding宣言と解決結果が一致しない場合はdeployしません。deploy stateはsource、binding、transitive dependencyのhash、置換後module child IDを保存し、no-op/updateと非atomic recoveryを報告します。結果の`parentSlotId`はdeploy先、各moduleの`moduleSlotIdBefore` / `moduleSlotIdAfter`はparent直下を再観測した実module childです。接続が変わっても再観測したchildとhashが一致すればno-opになります。watchは変更を検出して成功buildだけを検証済みparentへ再deployします。
+`source`はFlux moduleの `in` 名、`drive`は `out` 名をkeyにします。source targetはslot/component/member、drive targetはmemberだけです。resoloopはworld stateから現在のIDを再解決し、Flux-SDKのInputMap/OutputMapへ渡します。binding宣言と解決結果が一致しない場合はdeployしません。deploy stateはsource、binding、transitive dependencyのhash、置換後module child IDを保存し、no-op/updateと非atomic recoveryを報告します。結果の`parentSlotId`はdeploy先、各moduleの`moduleSlotIdBefore` / `moduleSlotIdAfter`はparent直下を再観測した実module childです。接続が変わっても再観測したchildとhashが一致すればno-opになります。watchは変更を検出して成功buildだけを検証済みparentへ再deployします。
 
 manifest deployはsource headerの`in`/`out` signatureとbindingを一対一で照合してからbuild/deployへ進み、方向、world target型、driveのmember可否を検査します。build結果の`Packing 0 ProtoFlux nodes`は`FLUX_EMPTY_MODULE`、未結線portは`FLUX_MODULE_PORT_UNBOUND`です。Flux-SDK 1.9.xの`IButton global`のようなinterface globalは既知の非原子的失敗を避けるためdeploy前に拒否されます。concrete Componentの`element` inputからmodule内で`asDrivenGlobal`するか、eventだけならDynamic Impulse bridgeを選びます。
 
 ## Portable item audit
 
 ~~~powershell
-rloop item audit Root/MyItem --strict --json
+resoloop item audit Root/MyItem --strict --json
 ~~~
 
 Grabbableを保存する前に、root以下のSlot、Component、nested memberを参照閉包として検査します。root外の通常参照とFlux参照は保存後に切れるerror、Userなど再取得前提の参照はruntime-context warning、`--allow-external`で指定したIDまたはstable selectorは明示許可として分類されます。strict modeではwarningも不合格です。Grabbable、Flux module、runtime targetを同じ保存rootへ収めてから監査してください。

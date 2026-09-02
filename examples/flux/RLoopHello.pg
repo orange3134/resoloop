@@ -1,4 +1,0 @@
-module RLoopHello
-where {
-    "Hello from rloop!"->display
-}

@@ -698,7 +698,7 @@ public static class ValueCodec
             return new Link.Field_Enum { EnumType = type, Value = ValidateEnumValue(type, values, enumResponse.Definition.IsFlags, raw) };
         }
         throw new RLoopException("VALUE_TYPE_UNSUPPORTED", $"Field type '{type}' is not supported by the v0.1 converter.", ExitCodes.ValidationFailed,
-            suggestions: ["Use rloop type describe to confirm the runtime type, then open an issue with this type."]);
+            suggestions: ["Use resoloop type describe to confirm the runtime type, then open an issue with this type."]);
     }
 
     internal static string ValidateEnumValue(string type, IReadOnlyDictionary<string, long> values, bool isFlags, string raw)

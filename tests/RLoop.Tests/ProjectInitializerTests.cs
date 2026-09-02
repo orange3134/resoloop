@@ -4,7 +4,7 @@ namespace RLoop.Tests;
 
 public sealed class ProjectInitializerTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "rloop-init-tests-" + Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "resoloop-init-tests-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
     public void CreatesPortableStarterProject()
@@ -12,16 +12,17 @@ public sealed class ProjectInitializerTests : IDisposable
         var result = ProjectInitializer.Initialize(_root);
 
         Assert.Equal(Path.GetFullPath(_root), result.RootDirectory);
-        Assert.Equal(12, result.Created.Count);
-        Assert.True(File.Exists(Path.Combine(_root, ".rloop.json")));
+        Assert.Equal(13, result.Created.Count);
+        Assert.True(File.Exists(Path.Combine(_root, ".resoloop.json")));
         var apply = ApplyDocument.Load(Path.Combine(_root, "content", "main.json"));
         Assert.Equal("1", apply.SchemaVersion);
         Assert.False(string.IsNullOrWhiteSpace(apply.Ownership?.Key));
         Assert.Equal("root", apply.Slot!.Key);
-        Assert.StartsWith("RLoop_Test_", apply.Slot!.Name);
+        Assert.StartsWith("ResoLoop_Test_", apply.Slot!.Name);
         Assert.Equal("FrooxEngine.Grabbable", Assert.Single(apply.Components!).Type);
         Assert.Contains("module Main", File.ReadAllText(Path.Combine(_root, "flux", "Main.pg")));
-        Assert.True(File.Exists(Path.Combine(_root, "flux", "rloop.flux.json")));
+        Assert.True(File.Exists(Path.Combine(_root, "flux", "resoloop.flux.json")));
+        Assert.Contains("resoloop doctor --json", File.ReadAllText(Path.Combine(_root, "AGENTS.md")));
         Assert.NotNull(apply.Cameras!["main"]);
         foreach (var skillName in new[] { "resonite-build", "resonite-debug", "resonite-flux", "resonite-inspect" })
         {
@@ -46,7 +47,7 @@ public sealed class ProjectInitializerTests : IDisposable
     public void TreatsLineEndingOnlyChangesAsUnchanged()
     {
         ProjectInitializer.Initialize(_root);
-        var configPath = Path.Combine(_root, ".rloop.json");
+        var configPath = Path.Combine(_root, ".resoloop.json");
         File.WriteAllText(configPath, File.ReadAllText(configPath).Replace("\n", "\r\n", StringComparison.Ordinal));
 
         var result = ProjectInitializer.Initialize(_root);
@@ -56,10 +57,25 @@ public sealed class ProjectInitializerTests : IDisposable
     }
 
     [Fact]
+    public void PreservesExistingAgentInstructions()
+    {
+        Directory.CreateDirectory(_root);
+        var agentsPath = Path.Combine(_root, "AGENTS.md");
+        File.WriteAllText(agentsPath, "user instructions");
+
+        var result = ProjectInitializer.Initialize(_root);
+
+        Assert.Equal("user instructions", File.ReadAllText(agentsPath));
+        Assert.DoesNotContain("AGENTS.md", result.Created);
+        Assert.DoesNotContain("AGENTS.md", result.Unchanged);
+        Assert.True(File.Exists(Path.Combine(_root, ".resoloop.json")));
+    }
+
+    [Fact]
     public void RefusesConflictsBeforeWritingAnyOtherFile()
     {
         Directory.CreateDirectory(_root);
-        File.WriteAllText(Path.Combine(_root, ".rloop.json"), "user content");
+        File.WriteAllText(Path.Combine(_root, ".resoloop.json"), "user content");
 
         var ex = Assert.Throws<RLoopException>(() => ProjectInitializer.Initialize(_root));
 
@@ -78,7 +94,7 @@ public sealed class ProjectInitializerTests : IDisposable
 
         Assert.Equal("INIT_FILE_EXISTS", ex.Code);
         Assert.Contains(".agents/skills/resonite-build/SKILL.md", Assert.IsType<List<string>>(ex.Context!["conflicts"]));
-        Assert.False(File.Exists(Path.Combine(_root, ".rloop.json")));
+        Assert.False(File.Exists(Path.Combine(_root, ".resoloop.json")));
     }
 
     [Fact]
@@ -96,7 +112,7 @@ public sealed class ProjectInitializerTests : IDisposable
     public void SkillSyncUpdateIsNoOpWhenAlreadyCurrent()
     {
         ProjectInitializer.Initialize(_root);
-        var lockPath = Path.Combine(_root, ".agents", "skills", ".rloop-bundled.json");
+        var lockPath = Path.Combine(_root, ".agents", "skills", ".resoloop-bundled.json");
         var before = File.GetLastWriteTimeUtc(lockPath);
 
         var result = BundledSkillManager.Sync(_root, update: true);
@@ -115,7 +131,7 @@ public sealed class ProjectInitializerTests : IDisposable
         File.WriteAllText(skillPath, oldBundled);
         var oldHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
             System.Text.Encoding.UTF8.GetBytes(oldBundled)));
-        var lockPath = Path.Combine(_root, ".agents", "skills", ".rloop-bundled.json");
+        var lockPath = Path.Combine(_root, ".agents", "skills", ".resoloop-bundled.json");
         File.WriteAllText(lockPath, $$"""
             { "schemaVersion": 1, "skills": { "resonite-build": "{{oldHash}}" } }
             """);

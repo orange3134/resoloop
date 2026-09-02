@@ -329,7 +329,7 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
     }
 
     private static string ResolveStatePath(FluxModuleManifest manifest, string manifestPath) => Path.GetFullPath(
-        manifest.DeployState ?? Path.Combine(".rloop", "flux-state", Path.GetFileNameWithoutExtension(manifestPath) + ".json"),
+        manifest.DeployState ?? Path.Combine(".resoloop", "flux-state", Path.GetFileNameWithoutExtension(manifestPath) + ".json"),
         Path.GetDirectoryName(manifestPath)!);
     private static DeployState LoadState(string path)
     {
