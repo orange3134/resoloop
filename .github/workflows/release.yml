@@ -66,14 +66,34 @@ jobs:
           & (Join-Path $toolPath "resoloop.exe") skills sync $projectPath --check
           & (Join-Path $toolPath "resoloop.exe") validate (Join-Path $projectPath "content/main.json") --json
 
-      - name: Verify public corresponding source
+      - name: Verify bundled corresponding source
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          $visibility = gh api "repos/$env:GITHUB_REPOSITORY" --jq .visibility
-          if ($visibility -ne "public") {
-            throw "NuGet publication is blocked while the AGPL corresponding-source repository is not public."
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $package = "artifacts/ResoLoop.$env:RELEASE_VERSION.nupkg"
+          $required = @(
+            "source/src/RLoop.Cli/Program.cs",
+            "source/src/RLoop.Cli/RLoop.Cli.csproj",
+            "source/src/RLoop.Core/RLoop.Core.csproj",
+            "source/src/RLoop.ResoniteLink/RLoop.ResoniteLink.csproj",
+            "source/src/RLoop.Flux/RLoop.Flux.csproj",
+            "source/src/RLoop.Flux.Deployer/RLoop.Flux.Deployer.fsproj",
+            "source/Directory.Build.props",
+            "source/Directory.Packages.props",
+            "source/global.json",
+            "source/NuGet.Config",
+            "source/ResoLoop.slnx"
+          )
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($package)
+          try {
+            $entries = @($archive.Entries | ForEach-Object FullName)
+            $missing = @($required | Where-Object { $_ -notin $entries })
+            if ($missing.Count -gt 0) {
+              throw "NuGet package is missing corresponding source: $($missing -join ', ')"
+            }
+          }
+          finally {
+            $archive.Dispose()
           }
 
       - name: NuGet login
@@ -86,7 +106,7 @@ jobs:
         shell: pwsh
         run: dotnet nuget push "artifacts/ResoLoop.$env:RELEASE_VERSION.nupkg" --api-key "${{ steps.nuget.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json
 
-      - name: Create private repository release
+      - name: Create repository release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}

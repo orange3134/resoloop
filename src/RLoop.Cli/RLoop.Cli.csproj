@@ -29,5 +29,13 @@
     <None Include="../../README.md" Pack="true" PackagePath="\" />
     <None Include="../../LICENSE" Pack="true" PackagePath="\" />
     <None Include="../../docs/QUICKSTART.md" Pack="true" PackagePath="docs/" />
+    <None Include="../../src/**/*"
+          Exclude="../../src/**/bin/**/*;../../src/**/obj/**/*"
+          Pack="true"
+          PackagePath="source/src/" />
+    <None Include="../../skills/codex/**/*" Pack="true" PackagePath="source/skills/codex/" />
+    <None Include="../../Directory.Build.props;../../Directory.Packages.props;../../global.json;../../NuGet.Config;../../ResoLoop.slnx"
+          Pack="true"
+          PackagePath="source/" />
   </ItemGroup>
 </Project>

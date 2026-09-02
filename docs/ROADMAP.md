@@ -214,10 +214,10 @@ Flux bindingとinteraction probeは、型名・member名・メッセージを推
 ### 10. versioned release
 
 - [ ] immutableなversion付きdotnet tool packageを発行する。
-- [ ] Windows CIでbuild、offline test、package install smoke testを行う。
+- [x] Windows CIでbuild、offline test、package install smoke testを行う。
 - [ ] opt-in live test jobを用意し、必ず専用 `ResoLoop_Test*` 配下だけを扱う。
 - [ ] `resoloop init` templateとCLI/schemaのversion互換性を診断する。
-- [ ] changelog、upgrade guide、release automation、署名方針を整備する。
+- [ ] changelog、upgrade guide、署名方針を整備する。GitHub OIDCによるNuGet Trusted PublishingとGitHub prerelease作成のautomationは実装済み。
 
 ### 11. 診断と観測性
 

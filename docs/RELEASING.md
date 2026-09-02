@@ -10,7 +10,7 @@ ResoLoop is distributed as a framework-dependent .NET global tool. Users need th
 
 The preview release workflow uses GitHub OIDC and a short-lived NuGet API key. It does not use a stored long-lived API key.
 
-The GitHub repository may remain private while preparing the preview. Because the distributed tool is AGPL-3.0-or-later, the workflow refuses to publish the binary package to public nuget.org until the corresponding-source repository is public.
+The GitHub repository may remain private. Because the distributed tool is AGPL-3.0-or-later, every NuGet package includes the matching project source and build files under `source/`. The release workflow verifies those entries before publication, so package recipients can inspect, modify, and rebuild the released version without access to the private repository.
 
 Create a nuget.org trusted-publishing policy with these exact values:
 
@@ -25,7 +25,7 @@ In the GitHub repository, create an Actions variable named `NUGET_USER` containi
 
 ## Publish an immutable preview
 
-Confirm CI succeeds on the exact commit and make the repository public, then dispatch `.github/workflows/release.yml` with a new SemVer prerelease version such as `0.1.0-preview.1`. The workflow rebuilds and tests the commit, performs an installed-tool smoke test, verifies public corresponding-source access, publishes the immutable package to nuget.org, and creates a GitHub prerelease.
+Confirm CI succeeds on the exact commit, then dispatch `.github/workflows/release.yml` with a new SemVer prerelease version such as `0.1.0-preview.1`. The workflow rebuilds and tests the commit, performs an installed-tool smoke test, verifies the bundled corresponding source, publishes the immutable package to nuget.org, and creates a GitHub prerelease.
 
 ~~~powershell
 gh workflow run release.yml --repo orange3134/resoloop -f version=0.1.0-preview.1
