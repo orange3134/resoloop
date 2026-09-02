@@ -15,4 +15,7 @@
     <ProjectReference Include="../../src/RLoop.ResoniteLink/RLoop.ResoniteLink.csproj" />
     <ProjectReference Include="../../src/RLoop.Cli/RLoop.Cli.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="../fixtures/**/*" Link="fixtures/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

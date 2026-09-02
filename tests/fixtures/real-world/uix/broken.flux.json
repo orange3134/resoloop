@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "1",
+  "modules": [
+    {
+      "name": "team-panel",
+      "source": "broken.pg",
+      "module": "TeamPanel",
+      "bindings": {
+        "TouchButton": { "target": "$component:button", "mode": "source" }
+      }
+    }
+  ]
+}

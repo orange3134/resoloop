@@ -12,14 +12,6 @@ public sealed record ProjectInitResult(
 
 public static class ProjectInitializer
 {
-    private static readonly string[] BundledSkillNames =
-    [
-        "resonite-build",
-        "resonite-debug",
-        "resonite-flux",
-        "resonite-inspect"
-    ];
-
     public static ProjectInitResult Initialize(string targetDirectory)
     {
         var root = Path.GetFullPath(targetDirectory);
@@ -97,8 +89,15 @@ public static class ProjectInitializer
             [Path.Combine(".rloop", ".gitignore")] = "state/\nflux-state/\n"
         };
 
-        foreach (var skillName in BundledSkillNames)
-            files[Path.Combine(".agents", "skills", skillName, "SKILL.md")] = LoadBundledSkill(skillName);
+        var skillHashes = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var skillName in BundledSkillManager.Names)
+        {
+            var content = BundledSkillManager.LoadBundledSkill(skillName);
+            files[Path.Combine(".agents", "skills", skillName, "SKILL.md")] = content;
+            skillHashes[skillName] = BundledSkillManager.Hash(content);
+        }
+        files[BundledSkillManager.LockRelativePath.Replace('/', Path.DirectorySeparatorChar)] =
+            BundledSkillManager.SerializeLock(skillHashes);
 
         var conflicts = new List<string>();
         var unchanged = new List<string>();
@@ -138,15 +137,6 @@ public static class ProjectInitializer
             "Generate scene artifacts with rloop capture content/main.json --camera main --output artifacts/main.svg --json.",
             "For ProtoFlux, set RESONITE_MANAGED_DATA_PATH and use flux/rloop.flux.json."
         ]);
-    }
-
-    private static string LoadBundledSkill(string skillName)
-    {
-        var resourceName = $"RLoop.Core.Skills.{skillName}.SKILL.md";
-        using var stream = typeof(ProjectInitializer).Assembly.GetManifestResourceStream(resourceName)
-            ?? throw new InvalidOperationException($"Bundled skill resource was not found: {resourceName}");
-        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-        return reader.ReadToEnd();
     }
 
     private static string ToSafeName(string name)

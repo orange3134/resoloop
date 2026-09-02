@@ -80,7 +80,7 @@ public sealed record ApplyDocument(
     private static readonly string[] KnownProperties =
     [
         "schemaVersion", "ownership", "key", "slot", "parent", "name", "position", "rotation", "scale",
-        "managedFields", "preserveWorldTransform", "migrateFrom", "components", "children", "type", "fields",
+        "managedFields", "preserveWorldTransform", "relocationTransform", "migrateFrom", "components", "children", "type", "fields",
         "initialFields", "identityFields", "assets", "cameras", "tests", "assertions", "probe", "arguments",
         "method", "kind", "target", "value", "restore", "safe", "expected", "exists", "phase", "componentType",
         "count", "delta", "timeoutMs", "pollMs"
@@ -142,7 +142,8 @@ public sealed record ApplySlotSpec(
     string? Key = null,
     IReadOnlyList<string>? ManagedFields = null,
     bool PreserveWorldTransform = false,
-    string? MigrateFrom = null);
+    string? MigrateFrom = null,
+    string RelocationTransform = "local");
 
 public sealed record ApplyComponentSpec(
     string Type,
@@ -306,6 +307,9 @@ public static class ApplyDocumentValidator
             foreach (var field in slot.ManagedFields ?? [])
                 if (field is not ("position" or "rotation" or "scale"))
                     Issue("APPLY_MANAGED_FIELD_INVALID", $"Managed Slot field '{field}' is not supported.", path + ".slot.managedFields");
+            if (slot.RelocationTransform is not ("local" or "world"))
+                Issue("APPLY_RELOCATION_TRANSFORM_INVALID", "relocationTransform must be 'local' or 'world'.",
+                    path + ".slot.relocationTransform");
             if (!string.IsNullOrWhiteSpace(slot.MigrateFrom))
             {
                 if (string.IsNullOrWhiteSpace(slot.Key))
@@ -531,7 +535,8 @@ public static class ApplyDocumentValidator
 internal sealed record ApplyStateSlot(string Id, string Path);
 internal sealed record ApplyStateComponent(string Id, string SlotKey, string Type, int TypeOrdinal,
     int? ComponentIndex = null, IReadOnlyList<string>? MemberNames = null,
-    IReadOnlyDictionary<string, string>? IdentityValues = null);
+    IReadOnlyDictionary<string, string>? IdentityValues = null,
+    IReadOnlyDictionary<string, string>? ReferenceSelectors = null);
 internal sealed record ApplyStateAsset(string Kind, string SourceHash, string Url);
 
 internal sealed class ApplyState

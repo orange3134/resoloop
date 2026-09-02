@@ -77,6 +77,7 @@ URLがなければRESONITE_LINK_URL_MISSINGを返します。設定例は[exampl
 New-Item -ItemType Directory MyResoniteProject
 Set-Location MyResoniteProject
 rloop init .
+rloop skills sync --check
 $env:RESONITE_LINK_URL="ws://localhost:<current-port>"
 rloop doctor
 rloop validate content/main.json --json
@@ -158,7 +159,9 @@ rloop apply examples/house-world.json --json
 
 schema v1では、top-levelに `schemaVersion: "1"`、`ownership.key`、root `slot.key`が必要です。ownershipごとのstateは既定でproject内の `.rloop/state/<ownership>.json` に保存され、途中経過もcheckpointされます。このdirectoryは `rloop init` が生成するignore設定によりversion controlから除外されます。
 
-`children` でSlot階層を宣言できます。SlotとComponentの明示的 `key` はrename、親変更、セッション変更後の再解決に使われます。stable Slotの親変更はIDを維持する`relocate`、stable Componentの親Slot変更は作成・参照再解決・旧Component削除としてplan/applyされます。同じSlotに同型Componentを複数宣言する場合は、それぞれにkeyが必要です。`identityFields`へ不変な管理memberを指定すると、同型Componentの挿入後も再接続時に誤接続せず再解決できます。`fields`は毎回収束させる値、`initialFields`はComponent新規作成時だけ設定してruntime dataを上書きしない値です。`managedFields`はrloopが収束させるposition/rotation/scaleを限定し、`preserveWorldTransform`は既存Slotの現在のlocal transform値を保持します。key変更時は`migrateFrom`でworld objectを作り直さずstateを移行できます。fieldから `$slot:key`、`$component:key`、`$member:key.MemberName`、`$asset:key` を参照でき、forward referenceも利用できます。旧 `$ref:key` も互換です。vector、quaternion、colorはJSON array/objectがcanonicalで、従来のcomma stringも互換入力として受理されます。
+`children` でSlot階層を宣言できます。SlotとComponentの明示的 `key` はrename、親変更、セッション変更後の再解決に使われます。stable Slotの親変更はIDを維持する`relocate`、stable Componentの親Slot変更は作成・参照再解決・旧Component削除としてplan/applyされます。同じSlotに同型Componentを複数宣言する場合は、それぞれにkeyが必要です。`identityFields`へ不変な管理memberを指定でき、managed reference topologyもstateへ保存されるため、同型Componentの挿入後も再接続時に誤接続せず再解決できます。`fields`は毎回収束させる値、`initialFields`はComponent新規作成時だけ設定してruntime dataを上書きしない値です。`managedFields`はrloopが収束させるposition/rotation/scaleを限定し、`preserveWorldTransform`は既存Slotの現在のlocal transform値を保持します。親変更時は`relocationTransform: "local"`が既定で、`"world"`なら旧world transformから新しいlocal transformを計算して以後保持します。planのrelocate理由にも選択したpolicyが表示されます。key変更時は`migrateFrom`でworld objectを作り直さずstateを移行できます。fieldから `$slot:key`、`$component:key`、`$member:key.MemberName`、`$asset:key` を参照でき、forward referenceも利用できます。旧 `$ref:key` も互換です。vector、quaternion、colorはJSON array/objectがcanonicalで、従来のcomma stringも互換入力として受理されます。
+
+`inspect`、`slot`、`component`、`item audit`でもstable selectorを使用できます。例: `rloop component inspect '$component:controller' --state .rloop/state/item.json --json`。raw IDは接続単位、stable selectorはstateのpath、型、identity、reference topologyから現在のIDへ再解決されます。
 
 include、parameter/variable、prototype/instance、repeat、asset、camera、assertionの仕様は[docs/DECLARATIVE.md](docs/DECLARATIVE.md)にまとめています。house fixtureは3ファイルへ分割し、22個のboxと4本のtable legをprototype化しました。展開結果69 Slot・148 Componentを維持したまま、宣言量は46,178 byteから42,430 byteへ8.1%減っています。
 
@@ -215,9 +218,12 @@ skills/codexには次のworkflow Skillがあります。
 
 ~~~powershell
 rloop init .
+rloop skills sync --check
+# 更新が必要で、利用者編集との競合がないことを確認後
+rloop skills sync --update
 ~~~
 
-既存のskillが同じ内容ならスキップし、内容が異なる場合はほかの初期化対象と同様に `INIT_FILE_EXISTS` で停止して上書きしません。Codexはcurrent directoryからrepository rootまでの `.agents/skills/` を読み込むため、このskillsは対象project内でだけ利用されます。詳細は[OpenAI公式のskill discovery仕様](https://developers.openai.com/codex/skills#where-codex-loads-local-skills)を参照してください。CLI commandはprimitive、Skillはworkflowです。SkillはComponent/member名を推測せず、先にruntime Reflectionするよう指示します。
+`rloop init`はskill内容と配布hashを`.agents/skills/.rloop-bundled.json`へ記録します。`skills sync --check`はread-onlyで差分を検査し、`--update`は現在内容が前回配布hashと一致する未編集skillだけを更新します。利用者編集またはlockのない未知内容は`SKILL_SYNC_CONFLICT`で全更新前に停止します。Codexはcurrent directoryからrepository rootまでの `.agents/skills/` を読み込むため、このskillsは対象project内でだけ利用されます。CLI commandはprimitive、Skillはworkflowです。
 
 ## Tests
 

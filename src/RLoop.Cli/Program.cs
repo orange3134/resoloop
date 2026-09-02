@@ -41,6 +41,29 @@ public static class Program
                 return ExitCodes.Success;
             }
 
+            if (parsed.Positionals[0].Equals("skills", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!parsed.Positional(1, "skills subcommand").Equals("sync", StringComparison.OrdinalIgnoreCase))
+                    throw UnknownCommand(string.Join(' ', parsed.Positionals));
+                if (parsed.Has("check") == parsed.Has("update"))
+                    throw new RLoopException("SKILL_SYNC_MODE_REQUIRED",
+                        "skills sync requires exactly one of --check or --update.", ExitCodes.InvalidArguments);
+                if (parsed.Positionals.Count > 3)
+                    throw new RLoopException("UNEXPECTED_ARGUMENT", "skills sync accepts at most one target directory.", ExitCodes.InvalidArguments);
+                var target = parsed.Positionals.Count > 2 ? parsed.Positionals[2] : Environment.CurrentDirectory;
+                var result = BundledSkillManager.Sync(target, parsed.Has("update"));
+                if (!result.Synchronized)
+                    throw new RLoopException("SKILL_SYNC_REQUIRED", "Bundled skills or their lock need synchronization.",
+                        ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["report"] = result },
+                        ["Review the reported paths, then run rloop skills sync --update."]);
+                output.Success(result, writer =>
+                {
+                    writer.WriteLine($"skills {result.Mode}: synchronized={result.Synchronized}");
+                    foreach (var skill in result.Skills) writer.WriteLine($"  {skill.Status,-20} {skill.Path}");
+                });
+                return ExitCodes.Success;
+            }
+
             var cliConfig = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
             {
                 ["url"] = parsed.Option("url"), ["timeout"] = parsed.Option("timeout"),
@@ -315,19 +338,24 @@ public static class Program
             }
             case "find":
             {
+                var under = args.Option("under");
+                if (under?.StartsWith('$') == true)
+                    under = await world.ResolveSlotSelectorAsync(under, args.Option("state"), cancellationToken);
                 var matches = await world.FindAsync(args.Option("name"), args.Has("exact"), args.Option("component"),
                     args.IntOption("depth", 8, -1, 64), cancellationToken,
-                    new FindOptions(args.Option("under"), args.Has("direct-children"), args.Has("exclude-reference-only")));
+                    new FindOptions(under, args.Has("direct-children"), args.Has("exclude-reference-only")));
                 output.Success(matches, w => { foreach (var x in matches) w.WriteLine($"{x.Id}\t{x.Path}\t{string.Join(", ", x.Components.Select(c => c.Type))}"); });
                 break;
             }
             case "inspect":
             {
+                var slotSelector = await world.ResolveSlotSelectorAsync(args.Positional(1, "Slot ID, path, or $slot:key"),
+                    args.Option("state"), cancellationToken);
                 var componentFilter = args.Option("component");
                 var memberFilter = args.Option("member");
                 if (args.Has("components-only") || componentFilter is not null || memberFilter is not null)
                 {
-                    var components = await world.InspectComponentsAsync(args.Positional(1, "Slot ID or path"),
+                    var components = await world.InspectComponentsAsync(slotSelector,
                         args.IntOption("depth", 1, 0, 64), componentFilter, memberFilter,
                         args.Has("exclude-reference-only"), cancellationToken);
                     output.Success(new { count = components.Count, components }, writer =>
@@ -337,7 +365,7 @@ public static class Program
                 }
                 else
                 {
-                    var slot = await world.InspectAsync(args.Positional(1, "Slot ID or path"),
+                    var slot = await world.InspectAsync(slotSelector,
                         args.IntOption("depth", 1, 0, 64), args.Has("members"), cancellationToken,
                         args.Has("exclude-reference-only"));
                     output.Success(slot);
@@ -422,7 +450,9 @@ public static class Program
                         allowed.Add(await world.ResolveSlotIdAsync(value, cancellationToken));
                     else allowed.Add(value);
                 }
-                var report = await world.AuditItemAsync(args.Positional(2, "Item root Slot ID or path"), allowed,
+                var auditRoot = await world.ResolveSlotSelectorAsync(args.Positional(2, "Item root Slot ID, path, or $slot:key"),
+                    args.Option("state"), cancellationToken);
+                var report = await world.AuditItemAsync(auditRoot, allowed,
                     args.Has("strict"), cancellationToken);
                 if (!report.Portable)
                     throw new RLoopException("ITEM_NOT_PORTABLE", $"Item root '{report.RootName}' contains references that will not travel with it.",
@@ -446,7 +476,7 @@ public static class Program
         {
             case "create":
             {
-                var parent = await world.ResolveSlotIdAsync(args.Option("parent") ?? "Root", ct);
+                var parent = await world.ResolveSlotSelectorAsync(args.Option("parent") ?? "Root", args.Option("state"), ct);
                 var result = await client.CreateSlotAsync(new SlotCreateRequest(parent, args.RequireOption("name"),
                     ParseVector(args, "position"), ParseQuaternion(args, "rotation"), ParseVector(args, "scale"), args.Option("id")), ct);
                 output.Success(new { id = result, parentId = parent, name = args.Option("name") }, w => w.WriteLine(result));
@@ -454,7 +484,7 @@ public static class Program
             }
             case "set":
             {
-                var id = await world.ResolveSlotIdAsync(args.Positional(2, "Slot ID or path"), ct);
+                var id = await world.ResolveSlotSelectorAsync(args.Positional(2, "Slot ID, path, or $slot:key"), args.Option("state"), ct);
                 if (args.Option("name") is null && args.Option("position") is null && args.Option("rotation") is null && args.Option("scale") is null)
                     throw new RLoopException("UPDATE_EMPTY", "slot set requires at least one of --name, --position, --rotation, or --scale.", ExitCodes.InvalidArguments);
                 await client.UpdateSlotAsync(new SlotUpdateRequest(id, args.Option("name"), ParseVector(args, "position"), ParseQuaternion(args, "rotation"), ParseVector(args, "scale")), ct);
@@ -464,7 +494,7 @@ public static class Program
             case "delete":
             {
                 RequireYes(args, "slot delete");
-                var id = await world.ResolveSlotIdAsync(args.Positional(2, "Slot ID or path"), ct);
+                var id = await world.ResolveSlotSelectorAsync(args.Positional(2, "Slot ID, path, or $slot:key"), args.Option("state"), ct);
                 if (id == "Root") throw new RLoopException("ROOT_DELETE_FORBIDDEN", "World Root cannot be deleted.", ExitCodes.ValidationFailed);
                 await client.DeleteSlotAsync(id, ct);
                 output.Success(new { id, deleted = true });
@@ -479,11 +509,21 @@ public static class Program
         var sub = args.Positional(1, "component subcommand").ToLowerInvariant();
         switch (sub)
         {
-            case "list": output.Success(await world.ListComponentsAsync(args.Positional(2, "Slot ID or path"), ct)); break;
-            case "inspect": output.Success(await client.GetComponentAsync(args.Positional(2, "Component ID"), ct)); break;
+            case "list":
+            {
+                var slotId = await world.ResolveSlotSelectorAsync(args.Positional(2, "Slot ID, path, or $slot:key"), args.Option("state"), ct);
+                output.Success(await world.ListComponentsAsync(slotId, ct));
+                break;
+            }
+            case "inspect":
+            {
+                var componentId = await world.ResolveComponentSelectorAsync(args.Positional(2, "Component ID or $component:key"), args.Option("state"), ct);
+                output.Success(await client.GetComponentAsync(componentId, ct));
+                break;
+            }
             case "add":
             {
-                var slotId = await world.ResolveSlotIdAsync(args.Positional(2, "Slot ID or path"), ct);
+                var slotId = await world.ResolveSlotSelectorAsync(args.Positional(2, "Slot ID, path, or $slot:key"), args.Option("state"), ct);
                 var type = args.Positional(3, "Component type");
                 var fields = ParseAssignments(args.Options("set"));
                 var result = await client.AddComponentAsync(slotId, type, fields, ct);
@@ -492,7 +532,7 @@ public static class Program
             }
             case "set":
             {
-                var componentId = args.Positional(2, "Component ID");
+                var componentId = await world.ResolveComponentSelectorAsync(args.Positional(2, "Component ID or $component:key"), args.Option("state"), ct);
                 var member = args.Positional(3, "Member name");
                 var value = args.Positional(4, "Member value");
                 await client.SetComponentMemberAsync(componentId, member, value, ct);
@@ -502,7 +542,7 @@ public static class Program
             case "remove":
             {
                 RequireYes(args, "component remove");
-                var componentId = args.Positional(2, "Component ID");
+                var componentId = await world.ResolveComponentSelectorAsync(args.Positional(2, "Component ID or $component:key"), args.Option("state"), ct);
                 await client.RemoveComponentAsync(componentId, ct);
                 output.Success(new { componentId, removed = true });
                 break;
@@ -769,11 +809,12 @@ rloop find (--name TEXT [--exact] | --component TYPE) [--under SLOT] [--direct-c
   [--exclude-reference-only] [--depth 8] [--json]
 """,
             "inspect" => """
-rloop inspect SLOT [--depth 1] [--members] [--json]
-rloop inspect SLOT [--component TYPE] [--member NAME] [--components-only]
+rloop inspect SLOT|$slot:key [--state WORLD_STATE] [--depth 1] [--members] [--json]
+rloop inspect SLOT|$slot:key [--state WORLD_STATE] [--component TYPE] [--member NAME] [--components-only]
   [--exclude-reference-only] [--depth 1] [--json]
 
 Component/member filters return a bounded flat component view with count and Slot paths.
+Stable selectors are resolved to the current connection ID from --state.
 """,
             _ => null
         };
@@ -783,13 +824,14 @@ rloop 0.1 - agent-first Resonite CLI loop
 
 Project setup:
   rloop init [DIRECTORY] [--json]
+  rloop skills sync [DIRECTORY] (--check | --update) [--json]
   rloop doctor [--url ws://localhost:PORT] [--json]
 
 Connection and observation:
   rloop status|ping [--url ws://localhost:PORT] [--json]
   rloop hierarchy [--depth 2] [--include-components] [--json]
   rloop find (--name TEXT [--exact] | --component TYPE) [--under SLOT] [--direct-children] [--depth 8] [--json]
-  rloop inspect SLOT [--depth 1] [--members] [--component TYPE] [--member NAME] [--components-only] [--json]
+  rloop inspect SLOT|$slot:key [--state WORLD_STATE] [--depth 1] [--members] [--component TYPE] [--member NAME] [--components-only] [--json]
   rloop scene summary FILE.json [--output summary.json]
   rloop capture FILE.json --camera BOOKMARK [--output capture.svg] [--width 1280 --height 720]
 
@@ -798,7 +840,7 @@ Editing:
   rloop slot set SLOT [--name NAME] [--position x,y,z] [--rotation x,y,z,w] [--scale x,y,z]
   rloop slot delete SLOT --yes
   rloop component list SLOT
-  rloop component inspect COMPONENT_ID
+  rloop component inspect COMPONENT_ID|$component:key [--state WORLD_STATE]
   rloop component add SLOT TYPE [--set Member=value ...]
   rloop component set COMPONENT_ID MEMBER VALUE
   rloop component remove COMPONENT_ID --yes

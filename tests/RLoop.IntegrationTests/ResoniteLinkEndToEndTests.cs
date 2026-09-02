@@ -54,12 +54,14 @@ public sealed class ResoniteLinkEndToEndTests
         var statePath = Path.Combine(directory, "state.json");
         await File.WriteAllTextAsync(initialPath, $$$"""
             { "schemaVersion":"1", "ownership":{"key":"live-root-move-{{{suffix}}}"},
-              "slot":{"key":"root","name":"Managed","parent":"Root/{{{containerName}}}/ParentA"},
+              "slot":{"key":"root","name":"Managed","parent":"Root/{{{containerName}}}/ParentA",
+                      "position":[2,0,0],"relocationTransform":"world"},
               "children":[{"slot":{"key":"stale","name":"Stale"}}] }
             """);
         await File.WriteAllTextAsync(desiredPath, $$$"""
             { "schemaVersion":"1", "ownership":{"key":"live-root-move-{{{suffix}}}"},
-              "slot":{"key":"root","name":"Managed","parent":"Root/{{{containerName}}}/ParentB"}, "children":[] }
+              "slot":{"key":"root","name":"Managed","parent":"Root/{{{containerName}}}/ParentB",
+                      "position":[2,0,0],"relocationTransform":"world"}, "children":[] }
             """);
 
         await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(30));
@@ -68,8 +70,8 @@ public sealed class ResoniteLinkEndToEndTests
         try
         {
             containerId = await client.CreateSlotAsync(new SlotCreateRequest("Root", containerName));
-            var parentAId = await client.CreateSlotAsync(new SlotCreateRequest(containerId, "ParentA"));
-            var parentBId = await client.CreateSlotAsync(new SlotCreateRequest(containerId, "ParentB"));
+            var parentAId = await client.CreateSlotAsync(new SlotCreateRequest(containerId, "ParentA", new Vector3Value(10, 0, 0)));
+            var parentBId = await client.CreateSlotAsync(new SlotCreateRequest(containerId, "ParentB", new Vector3Value(20, 0, 0)));
             var world = new WorldService(client);
             var initial = await world.ApplyAsync(ApplyDocument.Load(initialPath), new ApplyOptions(statePath));
 
@@ -82,6 +84,8 @@ public sealed class ResoniteLinkEndToEndTests
             Assert.Empty((await client.GetSlotAsync(parentAId, 1, false)).Children);
             var moved = Assert.Single((await client.GetSlotAsync(parentBId, 2, false)).Children);
             Assert.Equal(initial.SlotId, moved.Id);
+            Assert.NotNull(moved.Position);
+            Assert.Equal(-8f, moved.Position!.X, 3);
             Assert.Empty(moved.Children);
         }
         finally
@@ -159,6 +163,9 @@ public sealed class ResoniteLinkEndToEndTests
             Assert.Equal(1, first.SlotsCreated);
             Assert.Equal(1, first.ComponentsAdded);
             Assert.True(File.Exists(statePath));
+            Assert.Equal(slotId, await world.ResolveSlotSelectorAsync("$slot:root", statePath));
+            Assert.Equal(Assert.Single((await client.GetSlotAsync(slotId, 0, false)).Components).Id,
+                await world.ResolveComponentSelectorAsync("$component:grabbable", statePath));
 
             var second = await world.ApplyAsync(ApplyDocument.Load(documentPath), new ApplyOptions(statePath, Profile: true));
             Assert.Equal(0, second.SlotsCreated);

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Numerics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -48,6 +49,33 @@ public sealed class WorldService(IResoniteClient client)
             currentPath += "/" + part;
         }
         return currentId;
+    }
+
+    public async Task<string> ResolveSlotSelectorAsync(string selector, string? stateFile = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (!selector.StartsWith('$')) return await ResolveSlotIdAsync(selector, cancellationToken);
+        var syntax = StableSelectorSyntax.Parse(selector);
+        if (syntax.Kind != "slot")
+            throw new RLoopException("STABLE_SELECTOR_KIND_MISMATCH",
+                $"Selector '{selector}' does not identify a Slot.", ExitCodes.InvalidArguments);
+        var state = RequireStateFile(stateFile, selector);
+        var session = await client.GetSessionInfoAsync(cancellationToken);
+        return (await ResolveStableReferenceAsync(state, selector, session.UniqueSessionId, cancellationToken)).Id;
+    }
+
+    public async Task<string> ResolveComponentSelectorAsync(string selector, string? stateFile = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (!selector.StartsWith('$'))
+            return (await client.GetComponentAsync(selector, cancellationToken)).Id;
+        var syntax = StableSelectorSyntax.Parse(selector);
+        if (syntax.Kind != "component")
+            throw new RLoopException("STABLE_SELECTOR_KIND_MISMATCH",
+                $"Selector '{selector}' does not identify a Component.", ExitCodes.InvalidArguments);
+        var state = RequireStateFile(stateFile, selector);
+        var session = await client.GetSessionInfoAsync(cancellationToken);
+        return (await ResolveStableReferenceAsync(state, selector, session.UniqueSessionId, cancellationToken)).Id;
     }
 
     public async Task<SlotInfo> InspectAsync(string selector, int depth, bool includeComponentData,
@@ -126,10 +154,15 @@ public sealed class WorldService(IResoniteClient client)
         return result;
     }
 
-    public async Task<ResolvedWorldReference> ResolveStableReferenceAsync(string stateFile, string selector,
-        string? currentConnectionId, CancellationToken cancellationToken = default)
+    public Task<ResolvedWorldReference> ResolveStableReferenceAsync(string stateFile, string selector,
+        string? currentConnectionId, CancellationToken cancellationToken = default) =>
+        ResolveStableReferenceCoreAsync(stateFile, selector, currentConnectionId, new HashSet<string>(StringComparer.Ordinal), cancellationToken);
+
+    private async Task<ResolvedWorldReference> ResolveStableReferenceCoreAsync(string stateFile, string selector,
+        string? currentConnectionId, HashSet<string> resolvingComponents, CancellationToken cancellationToken)
     {
-        if (selector.StartsWith("$slot:", StringComparison.Ordinal))
+        var syntax = StableSelectorSyntax.Parse(selector);
+        if (syntax.Kind == "slot")
         {
             var stable = StableReferenceResolver.ResolveSlot(stateFile, selector);
             string id;
@@ -143,66 +176,78 @@ public sealed class WorldService(IResoniteClient client)
             return new ResolvedWorldReference(selector, id, "slot", "[FrooxEngine]FrooxEngine.Slot", stable.Path);
         }
 
-        var memberPrefix = selector.StartsWith("$member:", StringComparison.Ordinal);
-        var componentSelector = selector;
-        string? memberName = null;
-        if (memberPrefix)
-        {
-            var body = selector[8..];
-            var separator = body.LastIndexOf('.');
-            if (separator <= 0)
-                throw new RLoopException("FLUX_BINDING_MEMBER_INVALID", $"Binding target '{selector}' must use $member:key.MemberName.", ExitCodes.ValidationFailed);
-            componentSelector = "$component:" + body[..separator];
-            memberName = body[(separator + 1)..];
-        }
-        else if (!selector.StartsWith("$component:", StringComparison.Ordinal))
-            throw new RLoopException("FLUX_BINDING_TARGET_UNSTABLE",
-                $"Binding target '{selector}' is not a stable world reference.", ExitCodes.ValidationFailed,
-                suggestions: ["Use $slot:key, $component:key, or $member:key.MemberName from the configured worldState."]);
+        var componentSelector = "$component:" + syntax.Key;
+        var memberName = syntax.MemberName;
 
         var stableComponent = StableReferenceResolver.ResolveComponent(stateFile, componentSelector);
-        ComponentInfo? component = null;
-        if (stableComponent.SessionId == currentConnectionId && !string.IsNullOrWhiteSpace(stableComponent.Id))
+        var firstVisit = resolvingComponents.Add(stableComponent.Key);
+        try
         {
-            try { component = await client.GetComponentAsync(stableComponent.Id, cancellationToken); }
-            catch (RLoopException ex) when (ex.Code is "COMPONENT_NOT_FOUND" or "RESONITE_OPERATION_FAILED") { }
-        }
-        if (component is null)
-        {
-            var stableSlot = StableReferenceResolver.ResolveSlot(stateFile, "$slot:" + stableComponent.SlotKey);
-            var slotId = await ResolveSlotIdAsync(stableSlot.Path, cancellationToken);
-            var slot = await client.GetSlotAsync(slotId, 0, true, cancellationToken);
-            var matching = StableComponentCandidates(slot.Components, stableComponent.Type, stableComponent.ComponentIndex,
-                stableComponent.MemberNames, stableComponent.IdentityValues);
-            if (matching.Length == 0 && stableComponent.MemberNames is null && stableComponent.IdentityValues is null)
+            ComponentInfo? component = null;
+            if (stableComponent.SessionId == currentConnectionId && !string.IsNullOrWhiteSpace(stableComponent.Id))
             {
-                var legacy = slot.Components.Where(summary => TypeNamesEquivalent(summary.Type, stableComponent.Type)).ToArray();
-                matching = stableComponent.TypeOrdinal >= 0 && stableComponent.TypeOrdinal < legacy.Length
-                    ? [legacy[stableComponent.TypeOrdinal]] : [];
+                try { component = await client.GetComponentAsync(stableComponent.Id, cancellationToken); }
+                catch (RLoopException ex) when (ex.Code is "COMPONENT_NOT_FOUND" or "RESONITE_OPERATION_FAILED") { }
             }
-            if (matching.Length == 0)
-                throw new RLoopException("FLUX_BINDING_COMPONENT_NOT_FOUND",
-                    $"Stable component '{stableComponent.Key}' could not be re-resolved on '{stableSlot.Path}'.", ExitCodes.NotFound,
-                    new Dictionary<string, object?> { ["selector"] = selector, ["slotPath"] = stableSlot.Path,
-                        ["type"] = stableComponent.Type, ["typeOrdinal"] = stableComponent.TypeOrdinal });
-            if (matching.Length > 1)
-                throw new RLoopException("STABLE_COMPONENT_AMBIGUOUS",
-                    $"Stable component '{stableComponent.Key}' matches multiple Components on '{stableSlot.Path}'.",
-                    ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["selector"] = selector,
-                        ["slotPath"] = stableSlot.Path, ["candidateIds"] = matching.Select(candidate => candidate.Id).ToArray() },
-                    ["Add identityFields containing immutable managed values that uniquely identify this Component."]);
-            component = await client.GetComponentAsync(matching[0].Id, cancellationToken);
-        }
+            if (component is null)
+            {
+                var stableSlot = StableReferenceResolver.ResolveSlot(stateFile, "$slot:" + stableComponent.SlotKey);
+                var slotId = await ResolveSlotIdAsync(stableSlot.Path, cancellationToken);
+                var slot = await client.GetSlotAsync(slotId, 0, true, cancellationToken);
+                Dictionary<string, string>? referenceTargets = null;
+                if (firstVisit && stableComponent.ReferenceSelectors is { Count: > 0 })
+                {
+                    referenceTargets = new Dictionary<string, string>(StringComparer.Ordinal);
+                    foreach (var reference in stableComponent.ReferenceSelectors)
+                    {
+                        var targetSyntax = StableSelectorSyntax.Parse(reference.Value);
+                        if (targetSyntax.Kind != "slot" && resolvingComponents.Contains(targetSyntax.Key)) continue;
+                        var target = await ResolveStableReferenceCoreAsync(stateFile, reference.Value, currentConnectionId,
+                            resolvingComponents, cancellationToken);
+                        referenceTargets[reference.Key] = target.Id;
+                    }
+                }
+                var matching = StableComponentCandidates(slot.Components, stableComponent.Type, stableComponent.ComponentIndex,
+                    stableComponent.MemberNames, stableComponent.IdentityValues, referenceTargets);
+                if (matching.Length == 0 && stableComponent.MemberNames is null && stableComponent.IdentityValues is null)
+                {
+                    var legacy = slot.Components.Where(summary => TypeNamesEquivalent(summary.Type, stableComponent.Type)).ToArray();
+                    matching = stableComponent.TypeOrdinal >= 0 && stableComponent.TypeOrdinal < legacy.Length
+                        ? [legacy[stableComponent.TypeOrdinal]] : [];
+                }
+                if (matching.Length == 0)
+                    throw new RLoopException("FLUX_BINDING_COMPONENT_NOT_FOUND",
+                        $"Stable component '{stableComponent.Key}' could not be re-resolved on '{stableSlot.Path}'.", ExitCodes.NotFound,
+                        new Dictionary<string, object?> { ["selector"] = selector, ["slotPath"] = stableSlot.Path,
+                            ["type"] = stableComponent.Type, ["typeOrdinal"] = stableComponent.TypeOrdinal });
+                if (matching.Length > 1)
+                    throw new RLoopException("STABLE_COMPONENT_AMBIGUOUS",
+                        $"Stable component '{stableComponent.Key}' matches multiple Components on '{stableSlot.Path}'.",
+                        ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["selector"] = selector,
+                            ["slotPath"] = stableSlot.Path, ["candidateIds"] = matching.Select(candidate => candidate.Id).ToArray() },
+                        ["Add identityFields or a stable managed reference that uniquely identifies this Component."]);
+                component = await client.GetComponentAsync(matching[0].Id, cancellationToken);
+            }
 
-        if (memberName is null)
-            return new ResolvedWorldReference(selector, component.Id, "component", component.Type);
-        var member = component.Members.FirstOrDefault(pair => pair.Key.Equals(memberName, StringComparison.OrdinalIgnoreCase));
-        if (string.IsNullOrWhiteSpace(member.Key) || string.IsNullOrWhiteSpace(member.Value.Id))
-            throw new RLoopException("FLUX_BINDING_MEMBER_NOT_FOUND",
-                $"Member '{memberName}' was not found on stable component '{stableComponent.Key}'.", ExitCodes.NotFound,
-                suggestions: component.Members.Keys.Take(30).ToArray());
-        return new ResolvedWorldReference(selector, member.Value.Id!, "member", member.Value.Type ?? member.Value.TargetType);
+            if (memberName is null)
+                return new ResolvedWorldReference(selector, component.Id, "component", component.Type);
+            var member = component.Members.FirstOrDefault(pair => pair.Key.Equals(memberName, StringComparison.OrdinalIgnoreCase));
+            if (string.IsNullOrWhiteSpace(member.Key) || string.IsNullOrWhiteSpace(member.Value.Id))
+                throw new RLoopException("FLUX_BINDING_MEMBER_NOT_FOUND",
+                    $"Member '{memberName}' was not found on stable component '{stableComponent.Key}'.", ExitCodes.NotFound,
+                    suggestions: component.Members.Keys.Take(30).ToArray());
+            return new ResolvedWorldReference(selector, member.Value.Id!, "member", member.Value.Type ?? member.Value.TargetType);
+        }
+        finally
+        {
+            if (firstVisit) resolvingComponents.Remove(stableComponent.Key);
+        }
     }
+
+    private static string RequireStateFile(string? stateFile, string selector) =>
+        !string.IsNullOrWhiteSpace(stateFile) ? stateFile : throw new RLoopException(
+            "WORLD_STATE_REQUIRED", $"Selector '{selector}' requires --state WORLD_STATE.", ExitCodes.InvalidArguments,
+            suggestions: ["Pass the apply world-state file that contains this stable key."]);
 
     public async Task<ItemAuditReport> AuditItemAsync(string selector, IReadOnlyCollection<string>? allowedExternalIds = null,
         bool strict = false, CancellationToken cancellationToken = default)
@@ -709,6 +754,7 @@ public sealed class WorldService(IResoniteClient client)
             migrations.Slots, migrations.Components);
         var rootSpec = new ApplyNodeSpec(document.Slot, document.Components, document.Children);
         BuildNode(prepared, rootSpec, null, parent, NormalizeParentPath(parentSelector), true);
+        await PrepareRelocationTransformsAsync(prepared, NormalizeParentPath(parentSelector), cancellationToken);
         BuildAssetPlans(prepared);
         BuildComponentPlans(prepared);
         BuildDeletionPlans(prepared);
@@ -742,7 +788,7 @@ public sealed class WorldService(IResoniteClient client)
         var migratedFrom = prepared.SlotMigrations.GetValueOrDefault(stableKey);
         prepared.Entries.Add(new ApplyPlanEntry(planAction, "slot", path, stableKey,
             Reason: action == "create" ? "managed Slot does not exist" : action == "relocate" ?
-                $"stable key '{stableKey}' preserves identity while the parent changes; current local transform policy remains in effect" : planAction == "rename" ?
+                $"stable key '{stableKey}' preserves identity while the parent changes; relocationTransform={spec.Slot.RelocationTransform}" : planAction == "rename" ?
                 $"stable key '{stableKey}' preserves identity while the name changes from '{existing!.Name}' to '{spec.Slot.Name}'" :
                 action == "update" ? "one or more managed transforms differ" : migratedFrom is not null ?
                 $"stable key migrated from '{migratedFrom}' without recreating the Slot" : "Slot already matches"));
@@ -765,8 +811,11 @@ public sealed class WorldService(IResoniteClient client)
                 var stableKey = spec.Key ?? $"{node.StableKey}/component:{normalizedType}:{ordinal}";
                 prepared.State.Components.TryGetValue(stableKey, out var stateComponent);
                 var relocating = stateComponent is not null && stateComponent.SlotKey != node.StableKey;
+                var topologyTargets = stateComponent is null ? null :
+                    ResolveStateTopologyTargets(prepared, stateComponent, new HashSet<string>(StringComparer.Ordinal));
                 var existing = relocating ? null :
-                    MatchComponent(node.Existing?.Components ?? [], spec.Type, ordinal, stateComponent, prepared.SameSession);
+                    MatchComponent(node.Existing?.Components ?? [], spec.Type, ordinal, stateComponent, prepared.SameSession,
+                        topologyTargets);
                 var componentIndex = existing is null
                     ? (node.Existing?.Components.Count ?? 0) + prepared.Components.Count(candidate => candidate.Node == node && candidate.Existing is null)
                     : node.Existing!.Components.ToList().FindIndex(candidate => candidate.Id == existing.Id);
@@ -776,7 +825,8 @@ public sealed class WorldService(IResoniteClient client)
                 {
                     var sourceSlot = FindStateSlot(prepared, stateComponent!.SlotKey);
                     runtime.RelocationSource = sourceSlot is null ? null :
-                        MatchComponent(sourceSlot.Components, spec.Type, ordinal, stateComponent, prepared.SameSession);
+                        MatchComponent(sourceSlot.Components, spec.Type, ordinal, stateComponent, prepared.SameSession,
+                            topologyTargets);
                     if (runtime.RelocationSource?.Id == existing?.Id) runtime.RelocationSource = null;
                 }
                 prepared.Components.Add(runtime);
@@ -1001,44 +1051,35 @@ public sealed class WorldService(IResoniteClient client)
         IReadOnlyDictionary<string, string> assets,
         CancellationToken cancellationToken)
     {
-        if (value.StartsWith("$ref:", StringComparison.Ordinal) || value.StartsWith("$component:", StringComparison.Ordinal))
+        if (StableSelectorSyntax.TryParse(value, out var stable))
         {
-            var key = value[(value.IndexOf(':') + 1)..];
-            return components.TryGetValue(key, out var component) && component.Id is not null
-                ? component.Id
-                : throw UnknownApplyReference(value, components.Keys);
-        }
-        if (value.StartsWith("$slot:", StringComparison.Ordinal))
-        {
-            var key = value[6..];
-            return slots.TryGetValue(key, out var slot) && slot.Id is not null
-                ? slot.Id : throw new RLoopException("APPLY_REFERENCE_NOT_FOUND", $"Slot reference '{value}' could not be resolved.", ExitCodes.ValidationFailed);
+            if (stable!.Kind == "component")
+                return components.TryGetValue(stable.Key, out var component) && component.Id is not null
+                    ? component.Id : throw UnknownApplyReference(value, components.Keys);
+            if (stable.Kind == "slot")
+                return slots.TryGetValue(stable.Key, out var slot) && slot.Id is not null
+                    ? slot.Id : throw new RLoopException("APPLY_REFERENCE_NOT_FOUND", $"Slot reference '{value}' could not be resolved.", ExitCodes.ValidationFailed);
+            if (!components.TryGetValue(stable.Key, out var memberComponent) || memberComponent.Id is null)
+                throw UnknownApplyReference(value, components.Keys);
+            var memberName = stable.MemberName!;
+            if (memberComponent.MemberIds.TryGetValue(memberName, out var cached)) return cached;
+            if (memberComponent.Existing?.Members is not null && memberComponent.Existing.Members.TryGetValue(memberName, out var summaryMember) &&
+                !string.IsNullOrWhiteSpace(summaryMember.Id))
+            {
+                memberComponent.MemberIds[memberName] = summaryMember.Id;
+                return summaryMember.Id;
+            }
+            var inspected = await client.GetComponentAsync(memberComponent.Id, cancellationToken);
+            foreach (var member in inspected.Members.Where(x => !string.IsNullOrWhiteSpace(x.Value.Id)))
+                memberComponent.MemberIds[member.Key] = member.Value.Id!;
+            if (memberComponent.MemberIds.TryGetValue(memberName, out var id)) return id;
+            throw new RLoopException("APPLY_MEMBER_REFERENCE_NOT_FOUND", $"Member reference '{value}' was not found.", ExitCodes.ValidationFailed);
         }
         if (value.StartsWith("$asset:", StringComparison.Ordinal))
         {
             var key = value[7..];
             return assets.TryGetValue(key, out var url) ? url : throw new RLoopException(
                 "APPLY_REFERENCE_NOT_FOUND", $"Asset reference '{value}' could not be resolved.", ExitCodes.ValidationFailed);
-        }
-        if (value.StartsWith("$member:", StringComparison.Ordinal))
-        {
-            var selector = value[8..];
-            var separator = selector.LastIndexOf('.');
-            if (separator <= 0 || !components.TryGetValue(selector[..separator], out var component) || component.Id is null)
-                throw UnknownApplyReference(value, components.Keys);
-            var memberName = selector[(separator + 1)..];
-            if (component.MemberIds.TryGetValue(memberName, out var cached)) return cached;
-            if (component.Existing?.Members is not null && component.Existing.Members.TryGetValue(memberName, out var summaryMember) &&
-                !string.IsNullOrWhiteSpace(summaryMember.Id))
-            {
-                component.MemberIds[memberName] = summaryMember.Id;
-                return summaryMember.Id;
-            }
-            var inspected = await client.GetComponentAsync(component.Id, cancellationToken);
-            foreach (var member in inspected.Members.Where(x => !string.IsNullOrWhiteSpace(x.Value.Id)))
-                component.MemberIds[member.Key] = member.Value.Id!;
-            if (component.MemberIds.TryGetValue(memberName, out var id)) return id;
-            throw new RLoopException("APPLY_MEMBER_REFERENCE_NOT_FOUND", $"Member reference '{value}' was not found.", ExitCodes.ValidationFailed);
         }
         return value;
     }
@@ -1053,11 +1094,10 @@ public sealed class WorldService(IResoniteClient client)
         if (value.ValueKind == JsonValueKind.String)
         {
             var text = value.GetString() ?? string.Empty;
-            var key = text.StartsWith("$ref:", StringComparison.Ordinal) ? text[5..] :
-                text.StartsWith("$component:", StringComparison.Ordinal) ? text[11..] :
-                text.StartsWith("$member:", StringComparison.Ordinal) ? MemberKey(text[8..]) : null;
-            if (key is not null) return components.TryGetValue(key, out var runtime) && runtime.Id is not null;
-            if (text.StartsWith("$slot:", StringComparison.Ordinal)) return slots.TryGetValue(text[6..], out var slot) && slot.Id is not null;
+            if (StableSelectorSyntax.TryParse(text, out var stable))
+                return stable!.Kind == "slot"
+                    ? slots.TryGetValue(stable.Key, out var slot) && slot.Id is not null
+                    : components.TryGetValue(stable.Key, out var runtime) && runtime.Id is not null;
             return true;
         }
         if (value.ValueKind == JsonValueKind.Array) return value.EnumerateArray().All(x => CanResolve(x, components, slots));
@@ -1072,29 +1112,26 @@ public sealed class WorldService(IResoniteClient client)
         if (value.ValueKind == JsonValueKind.String)
         {
             var text = value.GetString() ?? string.Empty;
-            if (text.StartsWith("$ref:", StringComparison.Ordinal) || text.StartsWith("$component:", StringComparison.Ordinal))
+            if (StableSelectorSyntax.TryParse(text, out var stable))
             {
-                var key = text[(text.IndexOf(':') + 1)..];
-                if (components.TryGetValue(key, out var target) && target.Existing is not null) { raw = target.Existing.Id; return true; }
-                raw = string.Empty; return false;
-            }
-            if (text.StartsWith("$slot:", StringComparison.Ordinal))
-            {
-                if (slots.TryGetValue(text[6..], out var target) && target.Existing is not null) { raw = target.Existing.Id; return true; }
+                if (stable!.Kind == "component")
+                {
+                    if (components.TryGetValue(stable.Key, out var target) && target.Existing is not null) { raw = target.Existing.Id; return true; }
+                    raw = string.Empty; return false;
+                }
+                if (stable.Kind == "slot")
+                {
+                    if (slots.TryGetValue(stable.Key, out var target) && target.Existing is not null) { raw = target.Existing.Id; return true; }
+                    raw = string.Empty; return false;
+                }
+                if (components.TryGetValue(stable.Key, out var memberTarget) &&
+                    memberTarget.Existing?.Members is not null && memberTarget.Existing.Members.TryGetValue(stable.MemberName!, out var member) &&
+                    !string.IsNullOrWhiteSpace(member.Id)) { raw = member.Id; return true; }
                 raw = string.Empty; return false;
             }
             if (text.StartsWith("$asset:", StringComparison.Ordinal))
             {
                 if (assets.TryGetValue(text[7..], out var url)) { raw = url; return true; }
-                raw = string.Empty; return false;
-            }
-            if (text.StartsWith("$member:", StringComparison.Ordinal))
-            {
-                var selector = text[8..];
-                var separator = selector.LastIndexOf('.');
-                if (separator > 0 && components.TryGetValue(selector[..separator], out var target) &&
-                    target.Existing?.Members is not null && target.Existing.Members.TryGetValue(selector[(separator + 1)..], out var member) &&
-                    !string.IsNullOrWhiteSpace(member.Id)) { raw = member.Id; return true; }
                 raw = string.Empty; return false;
             }
             raw = text; return true;
@@ -1223,7 +1260,7 @@ public sealed class WorldService(IResoniteClient client)
         prepared.State.Slots.TryGetValue(slotKey, out var stateSlot) ? FindManagedSlot(prepared, stateSlot) : null;
 
     private static ComponentSummary? MatchComponent(IReadOnlyList<ComponentSummary> components, string type, int ordinal,
-        ApplyStateComponent? state, bool sameSession)
+        ApplyStateComponent? state, bool sameSession, IReadOnlyDictionary<string, string>? referenceTargets = null)
     {
         if (state is not null && sameSession)
         {
@@ -1231,7 +1268,7 @@ public sealed class WorldService(IResoniteClient client)
             if (byId is not null) return byId;
         }
         var matches = StableComponentCandidates(components, state?.Type ?? type, state?.ComponentIndex,
-            state?.MemberNames, state?.IdentityValues);
+            state?.MemberNames, state?.IdentityValues, referenceTargets);
         if (matches.Length > 1 && state is not null && (state.MemberNames is not null || state.IdentityValues is not null))
             throw new RLoopException("STABLE_COMPONENT_AMBIGUOUS",
                 $"Stable Component on Slot '{state.SlotKey}' matches multiple runtime Components.", ExitCodes.ValidationFailed,
@@ -1245,8 +1282,47 @@ public sealed class WorldService(IResoniteClient client)
         return requestedOrdinal >= 0 && requestedOrdinal < matches.Length ? matches[requestedOrdinal] : null;
     }
 
+    private static IReadOnlyDictionary<string, string>? ResolveStateTopologyTargets(PreparedApply prepared,
+        ApplyStateComponent state, HashSet<string> resolving)
+    {
+        if (state.ReferenceSelectors is not { Count: > 0 } || !resolving.Add(state.SlotKey + "\n" + state.Id)) return null;
+        try
+        {
+            var result = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var reference in state.ReferenceSelectors)
+            {
+                var target = ResolveStateReferenceId(prepared, reference.Value, resolving);
+                if (target is not null) result[reference.Key] = target;
+            }
+            return result.Count == 0 ? null : result;
+        }
+        finally
+        {
+            resolving.Remove(state.SlotKey + "\n" + state.Id);
+        }
+    }
+
+    private static string? ResolveStateReferenceId(PreparedApply prepared, string selector, HashSet<string> resolving)
+    {
+        if (!StableSelectorSyntax.TryParse(selector, out var syntax)) return null;
+        if (syntax!.Kind == "slot")
+            return prepared.State.Slots.TryGetValue(syntax.Key, out var slotState)
+                ? FindManagedSlot(prepared, slotState)?.Id : null;
+        if (!prepared.State.Components.TryGetValue(syntax.Key, out var componentState)) return null;
+        var slot = FindStateSlot(prepared, componentState.SlotKey);
+        if (slot is null) return null;
+        var referenceTargets = ResolveStateTopologyTargets(prepared, componentState, resolving);
+        var matches = StableComponentCandidates(slot.Components, componentState.Type, componentState.ComponentIndex,
+            componentState.MemberNames, componentState.IdentityValues, referenceTargets);
+        if (matches.Length != 1) return null;
+        if (syntax.Kind == "component") return matches[0].Id;
+        return matches[0].Members?.FirstOrDefault(member =>
+            member.Key.Equals(syntax.MemberName, StringComparison.OrdinalIgnoreCase)).Value?.Id;
+    }
+
     private static ComponentSummary[] StableComponentCandidates(IReadOnlyList<ComponentSummary> components, string type,
-        int? componentIndex, IReadOnlyList<string>? memberNames, IReadOnlyDictionary<string, string>? identityValues)
+        int? componentIndex, IReadOnlyList<string>? memberNames, IReadOnlyDictionary<string, string>? identityValues,
+        IReadOnlyDictionary<string, string>? referenceTargets = null)
     {
         var candidates = components.Where(component => TypeNamesEquivalent(component.Type, type)).ToArray();
         if (memberNames is not null)
@@ -1254,6 +1330,10 @@ public sealed class WorldService(IResoniteClient client)
         if (identityValues is not null)
             candidates = candidates.Where(component => identityValues.All(identity =>
                 component.Members?.TryGetValue(identity.Key, out var value) == true && MemberMatchesRaw(value, identity.Value))).ToArray();
+        if (referenceTargets is not null)
+            candidates = candidates.Where(component => referenceTargets.All(reference =>
+                component.Members?.TryGetValue(reference.Key, out var value) == true &&
+                value.Kind == "reference" && value.TargetId == reference.Value)).ToArray();
         if (candidates.Length <= 1) return candidates;
         if ((identityValues is null || identityValues.Count == 0) && componentIndex is >= 0 && componentIndex < components.Count)
         {
@@ -1274,13 +1354,31 @@ public sealed class WorldService(IResoniteClient client)
             identityValues = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var name in component.Spec.IdentityFields)
             {
+                if (TryGetReferenceSelector(component.Spec, name, out _)) continue;
                 if (resolvedFields?.TryGetValue(name, out var resolved) == true) identityValues[name] = resolved;
                 else if (component.AppliedOnCreate?.TryGetValue(name, out var initial) == true) identityValues[name] = initial;
                 else if (component.Existing?.Members?.TryGetValue(name, out var current) == true) identityValues[name] = MemberRaw(current);
             }
         }
+        var referenceSelectors = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var name in memberNames)
+            if (TryGetReferenceSelector(component.Spec, name, out var selector)) referenceSelectors[name] = selector;
         return new ApplyStateComponent(id, component.Node.StableKey, component.ResolvedType ?? component.Spec.Type,
-            component.TypeOrdinal, component.ComponentIndex, memberNames, identityValues);
+            component.TypeOrdinal, component.ComponentIndex, memberNames, identityValues,
+            referenceSelectors.Count == 0 ? null : referenceSelectors);
+    }
+
+    private static bool TryGetReferenceSelector(ApplyComponentSpec component, string memberName, out string selector)
+    {
+        selector = string.Empty;
+        JsonElement value;
+        if (component.Fields?.TryGetValue(memberName, out value) != true &&
+            component.InitialFields?.TryGetValue(memberName, out value) != true) return false;
+        if (value.ValueKind != JsonValueKind.String) return false;
+        var raw = value.GetString() ?? string.Empty;
+        if (!StableSelectorSyntax.TryParse(raw, out var parsed) || parsed!.Kind == "member" && parsed.MemberName is null) return false;
+        selector = raw;
+        return true;
     }
 
     private static bool SlotNeedsUpdate(SlotInfo existing, ApplySlotSpec desired) =>
@@ -1289,19 +1387,104 @@ public sealed class WorldService(IResoniteClient client)
         ManagesTransform(desired, "rotation") && desired.Rotation is not null && !QuaternionEquals(existing.Rotation, desired.Rotation) ||
         ManagesTransform(desired, "scale") && desired.Scale is not null && !VectorEquals(existing.Scale, desired.Scale);
 
+    private async Task PrepareRelocationTransformsAsync(PreparedApply prepared, string parentPath,
+        CancellationToken cancellationToken)
+    {
+        if (!prepared.Nodes.Any(node => node.SlotAction == "relocate" && node.Spec.RelocationTransform == "world")) return;
+        var externalParentWorld = await WorldTransformAtPathAsync(parentPath, cancellationToken);
+        var finalWorld = new Dictionary<NodeRuntime, Matrix4x4>();
+        foreach (var node in prepared.Nodes)
+        {
+            var parentWorld = node.Parent is null ? externalParentWorld : finalWorld[node.Parent];
+            Matrix4x4 local;
+            if (node.SlotAction == "relocate" && node.Spec.RelocationTransform == "world")
+            {
+                if (!prepared.State.Slots.TryGetValue(node.StableKey, out var previous))
+                    throw new RLoopException("APPLY_RELOCATION_STATE_MISSING",
+                        $"World-transform relocation for '{node.StableKey}' requires its previous stable path.",
+                        ExitCodes.ValidationFailed);
+                var oldWorld = await WorldTransformAtPathAsync(previous.Path, cancellationToken);
+                if (!Matrix4x4.Invert(parentWorld, out var inverseParent))
+                    throw new RLoopException("APPLY_RELOCATION_PARENT_NONINVERTIBLE",
+                        $"Cannot preserve world transform for '{node.StableKey}' because the new parent transform is non-invertible.",
+                        ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["parentPath"] = parentPath });
+                local = oldWorld * inverseParent;
+                if (!Matrix4x4.Decompose(local, out var scale, out var rotation, out var position))
+                    throw new RLoopException("APPLY_RELOCATION_TRANSFORM_DECOMPOSE_FAILED",
+                        $"Cannot decompose the preserved local transform for '{node.StableKey}'.", ExitCodes.ValidationFailed);
+                rotation = Quaternion.Normalize(rotation);
+                node.RelocationPosition = new Vector3Value(position.X, position.Y, position.Z);
+                node.RelocationRotation = new QuaternionValue(rotation.X, rotation.Y, rotation.Z, rotation.W);
+                node.RelocationScale = new Vector3Value(scale.X, scale.Y, scale.Z);
+            }
+            else
+            {
+                local = EffectiveLocalTransform(node);
+            }
+            finalWorld[node] = local * parentWorld;
+        }
+    }
+
+    private async Task<Matrix4x4> WorldTransformAtPathAsync(string path, CancellationToken cancellationToken)
+    {
+        var parts = NormalizePath(path).Split('/', StringSplitOptions.RemoveEmptyEntries).Skip(1).ToArray();
+        var currentId = "Root";
+        var currentPath = "Root";
+        var world = Matrix4x4.Identity;
+        foreach (var part in parts)
+        {
+            var current = await client.GetSlotAsync(currentId, 1, false, cancellationToken);
+            var matches = current.Children.Where(child => child.Name.Equals(part, StringComparison.Ordinal)).ToArray();
+            if (matches.Length != 1)
+                throw new RLoopException(matches.Length == 0 ? "SLOT_PATH_NOT_FOUND" : "SLOT_PATH_AMBIGUOUS",
+                    $"Cannot resolve transform path segment '{part}' below '{currentPath}'.", ExitCodes.ValidationFailed,
+                    new Dictionary<string, object?> { ["path"] = path, ["candidateIds"] = matches.Select(match => match.Id).ToArray() });
+            var child = matches[0];
+            world = LocalTransform(child.Position, child.Rotation, child.Scale) * world;
+            currentId = child.Id;
+            currentPath += "/" + part;
+        }
+        return world;
+    }
+
+    private static Matrix4x4 EffectiveLocalTransform(NodeRuntime node)
+    {
+        var position = node.Existing?.Position ?? new Vector3Value(0, 0, 0);
+        var rotation = node.Existing?.Rotation ?? new QuaternionValue(0, 0, 0, 1);
+        var scale = node.Existing?.Scale ?? new Vector3Value(1, 1, 1);
+        if (node.Existing is null || ManagesTransform(node.Spec, "position") && node.Spec.Position is not null)
+            position = node.Spec.Position?.ToVector3("position") ?? position;
+        if (node.Existing is null || ManagesTransform(node.Spec, "rotation") && node.Spec.Rotation is not null)
+            rotation = node.Spec.Rotation?.ToQuaternion("rotation") ?? rotation;
+        if (node.Existing is null || ManagesTransform(node.Spec, "scale") && node.Spec.Scale is not null)
+            scale = node.Spec.Scale?.ToVector3("scale") ?? scale;
+        return LocalTransform(position, rotation, scale);
+    }
+
+    private static Matrix4x4 LocalTransform(Vector3Value? position, QuaternionValue? rotation, Vector3Value? scale)
+    {
+        position ??= new Vector3Value(0, 0, 0);
+        rotation ??= new QuaternionValue(0, 0, 0, 1);
+        scale ??= new Vector3Value(1, 1, 1);
+        return Matrix4x4.CreateScale(scale.X, scale.Y, scale.Z) *
+               Matrix4x4.CreateFromQuaternion(new Quaternion(rotation.X, rotation.Y, rotation.Z, rotation.W)) *
+               Matrix4x4.CreateTranslation(position.X, position.Y, position.Z);
+    }
+
     private static SlotUpdateRequest CreateSlotUpdate(NodeRuntime node, string rootParentId)
     {
         var existing = node.Existing!;
         return new SlotUpdateRequest(existing.Id,
             existing.Name == node.Spec.Name ? null : node.Spec.Name,
-            ManagesTransform(node.Spec, "position") && node.Spec.Position is not null && !VectorEquals(existing.Position, node.Spec.Position) ? node.Spec.Position.ToVector3("position") : null,
-            ManagesTransform(node.Spec, "rotation") && node.Spec.Rotation is not null && !QuaternionEquals(existing.Rotation, node.Spec.Rotation) ? node.Spec.Rotation.ToQuaternion("rotation") : null,
-            ManagesTransform(node.Spec, "scale") && node.Spec.Scale is not null && !VectorEquals(existing.Scale, node.Spec.Scale) ? node.Spec.Scale.ToVector3("scale") : null,
+            node.RelocationPosition ?? (ManagesTransform(node.Spec, "position") && node.Spec.Position is not null && !VectorEquals(existing.Position, node.Spec.Position) ? node.Spec.Position.ToVector3("position") : null),
+            node.RelocationRotation ?? (ManagesTransform(node.Spec, "rotation") && node.Spec.Rotation is not null && !QuaternionEquals(existing.Rotation, node.Spec.Rotation) ? node.Spec.Rotation.ToQuaternion("rotation") : null),
+            node.RelocationScale ?? (ManagesTransform(node.Spec, "scale") && node.Spec.Scale is not null && !VectorEquals(existing.Scale, node.Spec.Scale) ? node.Spec.Scale.ToVector3("scale") : null),
             node.SlotAction == "relocate" ? node.Parent?.Id ?? rootParentId : null);
     }
 
     private static bool ManagesTransform(ApplySlotSpec slot, string field) =>
-        !slot.PreserveWorldTransform && (slot.ManagedFields is null || slot.ManagedFields.Contains(field, StringComparer.Ordinal));
+        !slot.PreserveWorldTransform && slot.RelocationTransform != "world" &&
+        (slot.ManagedFields is null || slot.ManagedFields.Contains(field, StringComparer.Ordinal));
 
     private static StateMigrations ApplyStateMigrations(ApplyDocument document, ApplyState state)
     {
@@ -1430,6 +1613,9 @@ public sealed class WorldService(IResoniteClient client)
         public string Path { get; } = path;
         public string SlotAction { get; } = slotAction;
         public string? Id { get; set; }
+        public Vector3Value? RelocationPosition { get; set; }
+        public QuaternionValue? RelocationRotation { get; set; }
+        public Vector3Value? RelocationScale { get; set; }
     }
 
     private sealed class ComponentRuntime(ApplyComponentSpec spec, NodeRuntime node, ComponentSummary? existing,

@@ -1,0 +1,5 @@
+module TeamPanel
+in TouchButton: IButton global
+where {
+    TouchButton->display
+}

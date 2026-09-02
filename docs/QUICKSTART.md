@@ -44,7 +44,7 @@ MyResoniteProject/
    └─ .gitignore        # Flux生成物を除外
 ~~~
 
-`rloop init` は既存ファイルを上書きしません。同じ内容ならスキップし、内容が違うファイルがあれば `INIT_FILE_EXISTS` で、ほかのファイルを書き始める前に停止します。
+`rloop init` は既存ファイルを上書きしません。同じ内容ならスキップし、内容が違うファイルがあれば `INIT_FILE_EXISTS` で、ほかのファイルを書き始める前に停止します。同梱skillの配布hashもlockへ記録されます。
 
 ## 3. ResoniteLinkへ接続する
 
@@ -75,7 +75,7 @@ rloop inspect $slotId --members --json
 
 `content/main.json` のposition、scale、Component fieldsなどを編集して、validateとplanを通してから同じapplyを再実行します。stateは `.rloop/state/` にcheckpointされ、変更なしの対象にはworld書き込みを行いません。
 
-既存の手動配置を保つSlotには`preserveWorldTransform: true`、一部のtransformだけをrloopに収束させる場合は`managedFields: ["scale"]`のように指定できます。stable keyを変更するときは新keyへ`migrateFrom: "old-key"`を一時的に追加すると、world objectを作り直さずstateを移行できます。
+既存の手動配置を保つSlotには`preserveWorldTransform: true`、一部のtransformだけをrloopに収束させる場合は`managedFields: ["scale"]`のように指定できます。親変更でworld位置を保つ場合は`relocationTransform: "world"`、local値を維持する場合は既定の`"local"`を使います。stable keyを変更するときは新keyへ`migrateFrom: "old-key"`を一時的に追加すると、world objectを作り直さずstateを移行できます。
 
 ~~~powershell
 rloop validate content/main.json --json
@@ -146,9 +146,10 @@ rloop inspect $slotId --depth 2 --members --json
 
 ~~~powershell
 rloop init .
+rloop skills sync --check
 ~~~
 
-Codexはcurrent directoryからrepository rootまでの `.agents/skills/` を読み込むため、これらのskillはこのproject内でだけ利用されます。既存ファイルは上書きせず、同じ内容ならスキップし、異なる場合は `INIT_FILE_EXISTS` で停止します。`.agents/skills/` をversion controlに含めれば、チームで同じworkflowを共有できます。以前の手順で `$env:USERPROFILE\.codex\skills\` へコピー済みの場合、そのpersonal copyを削除するまでglobalにも表示されます。Codexが変更を検出しない場合は再起動してください。詳細は[OpenAI公式のskill discovery仕様](https://developers.openai.com/codex/skills#where-codex-loads-local-skills)を参照してください。
+Codexはcurrent directoryからrepository rootまでの `.agents/skills/` を読み込むため、これらのskillはこのproject内でだけ利用されます。`skills sync --check`で配布hashとの差分を読み取り専用確認でき、`skills sync --update`は前回hashと一致する未編集skillだけを更新します。利用者編集は`SKILL_SYNC_CONFLICT`として保護されます。`.agents/skills/` とlockをversion controlに含めれば、チームで同じworkflowを共有できます。Codexが変更を検出しない場合は再起動してください。
 
 エージェントには、対象project directory、実現したい内容、変更してよい範囲を伝えます。安全な基本ループは次のとおりです。
 

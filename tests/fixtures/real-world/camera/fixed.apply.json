@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "1",
+  "ownership": { "key": "camera-fixed" },
+  "slot": {
+    "key": "root",
+    "name": "RLoop_Test_CameraFixture",
+    "parent": "Root",
+    "rotation": [0, 0, 0, 1]
+  },
+  "children": [
+    {
+      "slot": { "key": "output", "name": "Output" }
+    }
+  ],
+  "tests": [
+    {
+      "name": "camera-output-count",
+      "assertions": [
+        { "kind": "child-count", "target": "$slot:output", "name": "Photo", "count": 0 }
+      ]
+    }
+  ]
+}

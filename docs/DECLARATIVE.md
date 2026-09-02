@@ -67,7 +67,7 @@ Componentの`fields`はapplyごとに収束させます。runtimeが更新する
 }
 ~~~
 
-`managedFields`に指定できるのは`position`、`rotation`、`scale`です。省略時は、宣言されたtransformをすべて管理します。既存Slotで`preserveWorldTransform: true`を指定すると、この3つのlocal値を更新しません。新規Slotの作成時は初期値として宣言値を適用します。座標系を変換してworld-spaceを再計算するものではありません。`preserveWorldTransform`と`managedFields`を併記した場合は保持を優先します。Slot名はどちらの設定にも関係なく管理されます。stable keyを保った親変更はplanで`relocate`となり、ResoniteLinkのParent更新でSlot IDを維持します。親変更時もlocal値が基準です。
+`managedFields`に指定できるのは`position`、`rotation`、`scale`です。省略時は、宣言されたtransformをすべて管理します。既存Slotで`preserveWorldTransform: true`を指定すると、この3つのlocal値を更新しません。`preserveWorldTransform`と`managedFields`を併記した場合は保持を優先します。Slot名はどちらの設定にも関係なく管理されます。stable keyを保った親変更はplanで`relocate`となり、ResoniteLinkのParent更新でSlot IDを維持します。`relocationTransform`は`local`（既定）または`world`です。`local`は現在のlocal値／通常のmanaged fieldを新親でも使います。`world`は旧Slotと新親のRootからのtransform chainを観測し、world matrixを維持するlocal position/rotation/scaleへ再計算します。`world`指定の既存transformは以後管理対象外になり、2回目applyで宣言localへ戻りません。新規Slotにはどちらのpolicyでも宣言値を初期値として適用します。
 
 Slot / Componentの明示keyを変更する場合は、新key側へ`migrateFrom`で旧keyを1つ指定できます。stateだけを移行するため、対応するworld objectを削除・再作成しません。旧keyと新keyの両方がstateにある場合、旧keyを同じ宣言内に残した場合、移行元を複数箇所で使った場合は曖昧な移行としてvalidationまたはplanで拒否します。移行を適用してcheckpointされた後は`migrateFrom`を削除できます。
 

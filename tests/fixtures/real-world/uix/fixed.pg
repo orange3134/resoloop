@@ -1,0 +1,5 @@
+module TeamPanel
+in TouchButton: PhysicalButton element
+where {
+    TouchButton->display
+}

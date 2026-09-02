@@ -13,24 +13,26 @@
 - [x] `tests[].assertions`欠落をNullReferenceExceptionにせず、`APPLY_TEST_ASSERTIONS_MISSING`として報告する。
 - [x] `$component:key`自体の存在assertion、子Slot数・実行前後の増分・Component型filterを持つassertionを追加する。
 - [x] method probeの`arguments`をschema、example、helpへ明記し、未知propertyには近い正式名をsuggestする。
-- [ ] public SyncMethodを対象にしたWorldDelegate bindingを宣言・diff・apply・再読取できるようにする。ResoniteLink 0.13.1が直接更新を公開しない場合は、所有root内の検証済み一時worker、finally cleanup、checkpoint recoveryをadapterへ閉じ込める。
-- [ ] `dynamic-impulse` probeを、一度限り・`safe: true`・`--probe --yes`・optional value/reference payload付きで追加する。
+- [ ] **上流API待ち:** public SyncMethodを対象にしたWorldDelegate bindingを宣言・diff・apply・再読取できるようにする。
+- [ ] **上流API待ち:** `dynamic-impulse` probeを、一度限り・`safe: true`・`--probe --yes`・optional value/reference payload付きで追加する。
+
+ResoniteLink 0.13.1の`ComponentDefinition` / update modelはUIX Buttonの`Pressed`などの`SyncDelegate` memberを公開しないため、WorldDelegateのtarget methodを検証済みmemberとして読み書きできない。また、`DynamicImpulseHelper.TriggerDynamicImpulse`と`CallInput.Trigger`はCLR上ではpublicでもResoniteLinkから呼べる`SyncMethodDefinition`として公開されず、汎用event送信APIも存在しない。したがって、現行の公開APIだけでは安全な宣言・差分・再読取・一度限りの発火を構成できない。raw message、非公開member名、decompile由来の呼出しを実装へ持ち込まず、ResoniteLinkがSyncDelegate更新、汎用event、または該当triggerのcallable SyncMethodを公開した時点で再開する。
 
 ### P0: stable identity、relocation、runtime state
 
 - [x] stable Slotの親変更を`relocate`としてplanへ表示する。pinned upstreamでParent更新を検証し、直接reparent可能ならIDを維持する。不可ならcreate、managed reference/Flux再配線、旧対象削除をcheckpoint付きで実施する。
 - [x] stable Componentを別Slotへ移した場合を`recreate-and-rebind`として扱い、旧Componentをstateから失う前に参照更新と削除を完了する。
-- [ ] relocation時にlocal transformとworld transformのどちらを維持するかを宣言・planへ表示する。
+- [x] relocation時にlocal transformとworld transformのどちらを維持するかを`relocationTransform`で宣言し、planへ表示する。`world`はRootからの旧Slot／新親matrixを使ってlocal transformを再計算し、2回目applyでも保持する。
 - [x] Componentへ`initialFields`を追加し、新規作成時だけ初期値を設定する。adopt、再apply、既存runtime dataへは再適用しない。
-- [ ] session変更後のComponent再解決をtype ordinalだけに依存させず、component index、管理member、reference topology、optional `identityFields`で一意性を確認する。曖昧時は誤接続せず`STABLE_COMPONENT_AMBIGUOUS`を返す。
-- [ ] apply/test/inspect/component primitiveが同じ`$slot:key`、`$component:key`、`$member:key.Member`とworld state解決を利用する。
+- [x] session変更後のComponent再解決へmanaged reference topologyを加える。component index、管理member、optional `identityFields`と組み合わせ、複数候補が残る場合は誤接続せず`STABLE_COMPONENT_AMBIGUOUS`を返す。
+- [x] apply/test/inspect/component primitiveが共通のstable selector構文を利用し、CLI primitiveは`--state`から`$slot:key`、`$component:key`を現在のIDへ再解決する。
 
 ### P0: portable item closure
 
 - [x] Grabbable付き保存rootについて、subtree内Component、Flux module、Flux bindings、runtime targetの参照閉包を検査する`item audit`を追加する。
 - [x] 外部参照をrequired world element、addressable asset、runtime context、明示許可へ分類し、保存後に切れる参照だけをactionable errorにする。
 - [x] Flux module自身またはbinding targetがportable root外にある場合、deploy/verify前に警告またはstrict errorを返す。
-- [ ] テレポーターガンfixtureで、外側のMain/Runtimeを不合格、Grabbable配下へ移した状態を合格とする。
+- [x] テレポーターガンfixtureで、外側のMain/Runtimeを不合格、Grabbable配下へ移した状態を合格とする。
 
 ### P0: Flux discoveryとdeploy preflight
 
@@ -54,12 +56,15 @@
 
 - [x] `resonite-build`へcamera Z+、single/double sided、UIX Graphic分離、world-space背景material、Grabbable保存境界、GripPose、`initialFields`、runtime clone migrationを追加する。
 - [x] `resonite-flux`へ0-node、interface global、element input＋module内global化、Dynamic Impulse bridge、portable root内module配置を追加する。
-- [ ] bundled skillのhash/versionをlockし、未編集の旧skillだけを安全に更新する`skills sync --check/--update`を追加する。利用者編集は競合として保護する。
-- [ ] 3事例から、壊れた版と修正版の最小offline fixtureを作る。
+- [x] bundled skillの配布hashをlockし、未編集の旧skillだけを安全に更新する`skills sync --check/--update`を追加する。利用者編集またはlockのない未知内容は`SKILL_SYNC_CONFLICT`として全更新前に保護する。
+- [x] 3事例から、壊れた版と修正版の最小offline fixtureを作る。camera quaternion、teleporter closure、UIX interface global/element bindingを機械判定する。
 - [x] live testは一意な`RLoop_Test_*`だけを作り、exact IDをfinallyでcleanupする。Rootや既存contentを変更しない。
-- [ ] P0完了条件は、cameraの実ボタン撮影、teleporter itemのclosure、UIX Dynamic Impulse、再接続後のstable解決、runtime data保持、全fixtureの2回目apply mutation 0を確認すること。
+- [x] **現行APIでのP0完了条件:** teleporter itemのclosure、再接続後のstable解決、runtime data保持、3事例のoffline fixture、apply／deploy fixtureの2回目mutation 0を確認する。
+- [ ] **上流API解除後の追加完了条件:** cameraの実ボタン撮影とUIX Dynamic Impulseをruntime interactionとして確認する。それまではstructural-only coverageとして総合結果から区別する。
 
 2026-08-31実装結果: offline unit 87件とintegration harness 5件が成功し、`localhost:22599`でもlive integration 5件が成功した。一意なテストrootでSlot Parent更新時のID維持、所有rootのrelocationと旧子prune、apply 2回目mutation 0、strict item auditを確認した。Flux-SDK 1.9.0の`froox-docs --json`が同名`ToLower`で例外になることも再現し、通常metadata parserで回避した。未完了のinteraction 2項目は、ResoniteLink 0.13.1がUIX `SyncDelegate`をdefinition/updateへ公開せず、Dynamic Impulse helperと`CallInput.Trigger`も呼び出し可能なSyncMethodに公開しないためである。raw protocolを推測せず、現状はstructural-onlyとしてskillsとKnown limitationsへ明記した。
+
+2026-09-02実装結果: 現行公開APIで進行可能なP0を完了した。offline unit 105件とintegration harness 5件が成功し、`localhost:21876`のResonite 2026.9.1.1216 / ResoniteLink 0.13.1.0でもlive integration 5件が成功した。実機ではworld transformを維持するownership root relocation、旧子prune、stable Slot/Component selector、2回目apply mutation 0を確認した。残る未完了チェックは上流API待ちのWorldDelegate、Dynamic Impulse、`CallInput.Trigger`、Flux-SDKの`IButton global`、camera実ボタン撮影、UIX runtime impulseだけである。
 
 ## 2026-08-28 ブロック崩しフィードバックの改善計画
 
@@ -81,16 +86,16 @@ Flux manifest binding:
 - [x] world stateのkey・path・type ordinalから接続先IDを再解決し、Flux-SDKのInputMap/OutputMapへ渡す。解決先IDが変わった場合もhashを更新して再deployする。
 - [x] 未解決binding、manifestと解決結果の不一致、member以外を対象にしたdriveをdeploy前の構造化エラーとして拒否する。
 - [x] オフライン契約テストに加え、専用 `RLoop_Test*` live fixtureで `Slot element` の正常deployとglobal referenceのtarget配線を確認する。
-- [ ] Flux-SDK 1.9.0が `IButton global` の参照配線後に返す `Invalid component type` を解消し、PhysicalButtonへのglobal bindingをmodule全体の成功として完走させる。
-- [ ] Flux入出力の宣言型とworld targetの型互換性、未結線状態をdeploy前後に検証して構造化エラーにする。
+- [ ] **上流API待ち:** Flux-SDK 1.9.0が `IButton global` の参照配線後に返す `Invalid component type` を解消し、PhysicalButtonへのglobal bindingをmodule全体の成功として完走させる。現状は公開SDK内で生成されるglobal参照ComponentがResonite側の型検証に失敗し、rloopから生成型を差し替える公開拡張点がない。`PhysicalButton element`として受けてmodule内でglobal化するpreflight済み回避策を維持する。
+- [x] Flux入出力の宣言型とworld targetの型互換性、未結線状態をdeploy前に検証して構造化エラーにする。deploy後はmoduleとbinding targetを再観測して検証する。
 
 Safe interaction probe:
 
 - [x] `safe: true` とCLIの `--probe --yes` を必須にし、無許可probeを拒否する。
 - [x] fieldを一時変更し、after assertionをpollした後、成功・失敗・cancel時に元値を復元して再読取確認する `set-member` transactional probeを追加する。
 - [x] オフラインで成功時・assertion失敗時の復元を検証し、専用live fixtureでも一時変更と復元を確認する。
-- [ ] Dynamic Impulseとvalue/reference付きDynamic Impulseを、一度限り・明示許可付きで送信するprobeを追加する。
-- [ ] ProtoFluxのCallInputをReflectionで能力確認したうえで、安全に一度だけ起動するprobeを追加する。
+- [ ] **上流API待ち:** Dynamic Impulseとvalue/reference付きDynamic Impulseを、一度限り・明示許可付きで送信するprobeを追加する。ResoniteLink 0.13.1にはDynamic Impulse送信message/event APIが公開されておらず、汎用SyncMethod invocationにも対象操作が露出していない。
+- [ ] **上流API待ち:** ProtoFluxのCallInputをReflectionで能力確認したうえで、安全に一度だけ起動するprobeを追加する。ResoniteLink 0.13.1のReflectionでは `CallInput.Trigger` が呼び出し可能なSyncMethodとして列挙されず、公開APIだけでは起動できない。
 
 ### 次の実装候補
 
@@ -231,4 +236,4 @@ Flux bindingとinteraction probeは、型名・member名・メッセージを推
 5. screenshot/scene assertion/interaction probeで結果の検証ループを閉じる。
 6. 再利用構文、型・asset、ProtoFlux、配布基盤を順次広げる。
 
-旧house-world由来のP0/P1は完了しています。ブロック崩し由来の次期P0では、stable Flux binding基盤、transactional `set-member` probe、実module child IDの再観測、transform管理ポリシー、stable key migration、親Slot prune集約、managed-data build probeまで完了しました。残件はFlux-SDK 1.9.0のglobal input型解決、binding型互換性・未結線検査、Dynamic Impulse、CallInputです。ResoniteLinkにtransaction、framebuffer、汎用event APIがない制約は、非atomic checkpoint recovery、決定的SVG、structural-only capabilityとして明示しています。引き続きrloopが管理する専用の `RLoop_Test*` Slotから導入し、`validate --strict` と `diff --changes-only` を先に実行する運用を推奨します。
+旧house-world由来のP0/P1は完了しています。ブロック崩し由来の次期P0では、stable Flux binding基盤、binding型互換性・未結線preflight、interface globalの事前拒否、transactional `set-member` probe、実module child IDの再観測、transform管理ポリシー、stable key migration、親Slot prune集約、managed-data build probeまで完了しました。Dynamic ImpulseとCallInputの実発火は、ResoniteLink 0.13.1がcallable SyncMethodまたは汎用event APIを公開しないため上流API待ちです。ResoniteLinkにtransaction、framebuffer、汎用event APIがない制約は、非atomic checkpoint recovery、決定的SVG、structural-only capabilityとして明示しています。引き続きrloopが管理する専用の `RLoop_Test*` Slotから導入し、`validate --strict` と `diff --changes-only` を先に実行する運用を推奨します。

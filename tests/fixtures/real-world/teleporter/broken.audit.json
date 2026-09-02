@@ -1,0 +1,24 @@
+{
+  "id": "S_Item",
+  "name": "Teleporter",
+  "parentId": "Root",
+  "position": null,
+  "rotation": null,
+  "scale": null,
+  "isActive": true,
+  "isPersistent": true,
+  "tag": null,
+  "isReferenceOnly": false,
+  "path": "Root/Teleporter",
+  "components": [
+    { "id": "C_Grab", "type": "FrooxEngine.Grabbable", "members": {} },
+    {
+      "id": "C_Flux",
+      "type": "FrooxEngine.ProtoFlux.DynamicImpulseReceiver",
+      "members": {
+        "Runtime": { "kind": "reference", "id": "M_Runtime", "targetId": "C_ExternalRuntime", "targetType": "FrooxEngine.Component" }
+      }
+    }
+  ],
+  "children": []
+}

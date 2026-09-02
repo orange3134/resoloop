@@ -5,8 +5,45 @@ namespace RLoop.Core;
 public sealed record StableSlotReference(string Key, string Id, string Path, string? SessionId, string OwnershipKey);
 public sealed record StableComponentReference(string Key, string Id, string SlotKey, string Type, int TypeOrdinal,
     string? SessionId, string OwnershipKey, int? ComponentIndex = null,
-    IReadOnlyList<string>? MemberNames = null, IReadOnlyDictionary<string, string>? IdentityValues = null);
+    IReadOnlyList<string>? MemberNames = null, IReadOnlyDictionary<string, string>? IdentityValues = null,
+    IReadOnlyDictionary<string, string>? ReferenceSelectors = null);
 public sealed record ResolvedWorldReference(string Selector, string Id, string Kind, string? Type, string? Path = null);
+public sealed record StableSelector(string Original, string Kind, string Key, string? MemberName = null);
+
+public static class StableSelectorSyntax
+{
+    public static bool TryParse(string value, out StableSelector? selector)
+    {
+        selector = null;
+        if (value.StartsWith("$slot:", StringComparison.Ordinal))
+        {
+            var key = value[6..];
+            if (key.Length > 0) selector = new StableSelector(value, "slot", key);
+        }
+        else if (value.StartsWith("$component:", StringComparison.Ordinal) || value.StartsWith("$ref:", StringComparison.Ordinal))
+        {
+            var offset = value.StartsWith("$component:", StringComparison.Ordinal) ? 11 : 5;
+            var key = value[offset..];
+            if (key.Length > 0) selector = new StableSelector(value, "component", key);
+        }
+        else if (value.StartsWith("$member:", StringComparison.Ordinal))
+        {
+            var body = value[8..];
+            var separator = body.LastIndexOf('.');
+            if (separator > 0 && separator < body.Length - 1)
+                selector = new StableSelector(value, "member", body[..separator], body[(separator + 1)..]);
+        }
+        return selector is not null;
+    }
+
+    public static StableSelector Parse(string value)
+    {
+        if (TryParse(value, out var selector)) return selector!;
+        throw new RLoopException("STABLE_SELECTOR_INVALID",
+            $"Stable selector '{value}' is invalid.", ExitCodes.InvalidArguments,
+            suggestions: ["Use $slot:key, $component:key, or $member:key.MemberName."]);
+    }
+}
 
 public static class StableReferenceResolver
 {
@@ -40,11 +77,15 @@ public static class StableReferenceResolver
         {
             if (!root.GetProperty("components").TryGetProperty(key, out var component))
                 throw new RLoopException("STABLE_COMPONENT_NOT_FOUND", $"Stable component key '{key}' is not present in '{path}'.", ExitCodes.NotFound);
-            var memberNames = component.TryGetProperty("memberNames", out var memberNamesElement)
+            var memberNames = component.TryGetProperty("memberNames", out var memberNamesElement) && memberNamesElement.ValueKind == JsonValueKind.Array
                 ? memberNamesElement.EnumerateArray().Select(value => value.GetString() ?? string.Empty).Where(value => value.Length > 0).ToArray()
                 : null;
-            var identityValues = component.TryGetProperty("identityValues", out var identityElement)
+            var identityValues = component.TryGetProperty("identityValues", out var identityElement) && identityElement.ValueKind == JsonValueKind.Object
                 ? identityElement.EnumerateObject().ToDictionary(property => property.Name,
+                    property => property.Value.GetString() ?? string.Empty, StringComparer.Ordinal)
+                : null;
+            var referenceSelectors = component.TryGetProperty("referenceSelectors", out var referenceElement) && referenceElement.ValueKind == JsonValueKind.Object
+                ? referenceElement.EnumerateObject().ToDictionary(property => property.Name,
                     property => property.Value.GetString() ?? string.Empty, StringComparer.Ordinal)
                 : null;
             return new StableComponentReference(key, component.GetProperty("id").GetString() ?? string.Empty,
@@ -54,7 +95,7 @@ public static class StableReferenceResolver
                 root.TryGetProperty("sessionId", out var session) ? session.GetString() : null,
                 root.GetProperty("ownershipKey").GetString() ?? string.Empty,
                 component.TryGetProperty("componentIndex", out var index) && index.ValueKind == JsonValueKind.Number ? index.GetInt32() : null,
-                memberNames, identityValues);
+                memberNames, identityValues, referenceSelectors);
         }, reference);
     }
 

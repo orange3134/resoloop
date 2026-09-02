@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "1",
+  "ownership": { "key": "teleporter-fixed" },
+  "slot": { "key": "root", "name": "RLoop_Test_TeleporterFixture", "parent": "Root" },
+  "components": [
+    { "key": "grabbable", "type": "FrooxEngine.Grabbable", "fields": {} },
+    { "key": "controller", "type": "Test.Source", "fields": { "Target": "$component:runtime" } }
+  ],
+  "children": [
+    {
+      "slot": { "key": "runtime-slot", "name": "Runtime" },
+      "components": [
+        { "key": "runtime", "type": "Test.Target", "fields": { "Enabled": true } }
+      ]
+    }
+  ]
+}

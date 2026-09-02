@@ -89,6 +89,48 @@ public sealed class ApplyWorkflowTests : IDisposable
     }
 
     [Fact]
+    public async Task FixedCameraFixtureConvergesWithoutSecondApplyWrites()
+    {
+        var fixture = Path.Combine(AppContext.BaseDirectory, "fixtures", "real-world", "camera", "fixed.apply.json");
+        var document = ApplyDocument.Load(fixture);
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "camera-fixture.state.json");
+        await service.ApplyAsync(document, new ApplyOptions(state));
+        client.ResetWriteCounts();
+
+        var second = await service.ApplyAsync(document, new ApplyOptions(state));
+
+        Assert.Equal(0, second.SlotsCreated);
+        Assert.Equal(0, second.SlotsUpdated);
+        Assert.Equal(0, second.ComponentsAdded);
+        Assert.Equal(0, second.ComponentsUpdated);
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Fact]
+    public async Task FixedTeleporterFixtureIsPortableAndConvergesWithoutSecondApplyWrites()
+    {
+        var fixture = Path.Combine(AppContext.BaseDirectory, "fixtures", "real-world", "teleporter", "fixed.apply.json");
+        var document = ApplyDocument.Load(fixture);
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "teleporter-fixture.state.json");
+        var first = await service.ApplyAsync(document, new ApplyOptions(state));
+        client.ResetWriteCounts();
+
+        var second = await service.ApplyAsync(document, new ApplyOptions(state));
+        var audit = await service.AuditItemAsync(first.SlotId, strict: true);
+
+        Assert.True(audit.Portable);
+        Assert.Equal(0, second.SlotsCreated);
+        Assert.Equal(0, second.SlotsUpdated);
+        Assert.Equal(0, second.ComponentsAdded);
+        Assert.Equal(0, second.ComponentsUpdated);
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Fact]
     public async Task TestSupportsComponentExistenceAndFilteredChildCount()
     {
         var path = Path.Combine(_root, "existence-tests.json");
@@ -306,6 +348,82 @@ public sealed class ApplyWorkflowTests : IDisposable
         Assert.Equal(originalId, resolved.Id);
         Assert.Equal(0, reapplied.ComponentsAdded);
         Assert.Equal(1, reapplied.ComponentsUnchanged);
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Fact]
+    public async Task StableSelectorsResolveThroughTheSameSlotAndComponentEntryPoints()
+    {
+        var path = Path.Combine(_root, "shared-selectors.json");
+        File.WriteAllText(path, """
+            { "schemaVersion":"1", "ownership":{"key":"shared-selectors"},
+              "slot":{"key":"root","name":"Managed","parent":"Root"},
+              "components":[{"key":"target","type":"Test.Target","fields":{"Enabled":true}}] }
+            """);
+        var document = ApplyDocument.Load(path);
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "shared-selectors.state.json");
+        var applied = await service.ApplyAsync(document, new ApplyOptions(state));
+        var componentId = Assert.Single(Assert.Single(client.Root.Children).Components).Id;
+
+        Assert.Equal(applied.SlotId, await service.ResolveSlotSelectorAsync("$slot:root", state));
+        Assert.Equal(componentId, await service.ResolveComponentSelectorAsync("$component:target", state));
+        Assert.Equal(applied.SlotId, await service.ResolveSlotSelectorAsync(applied.SlotId));
+        Assert.Equal(componentId, await service.ResolveComponentSelectorAsync(componentId));
+        var error = await Assert.ThrowsAsync<RLoopException>(() => service.ResolveSlotSelectorAsync("$slot:root"));
+        Assert.Equal("WORLD_STATE_REQUIRED", error.Code);
+    }
+
+    [Theory]
+    [InlineData("$slot:root", "slot", "root", null)]
+    [InlineData("$component:target", "component", "target", null)]
+    [InlineData("$ref:legacy", "component", "legacy", null)]
+    [InlineData("$member:target.Enabled", "member", "target", "Enabled")]
+    public void StableSelectorSyntaxIsSharedAcrossWorkflows(string raw, string kind, string key, string? member)
+    {
+        var selector = StableSelectorSyntax.Parse(raw);
+
+        Assert.Equal(kind, selector.Kind);
+        Assert.Equal(key, selector.Key);
+        Assert.Equal(member, selector.MemberName);
+    }
+
+    [Fact]
+    public async Task ReferenceTopologyResolvesSameTypeComponentAfterInsertionAndSessionChange()
+    {
+        var path = Path.Combine(_root, "reference-topology.json");
+        File.WriteAllText(path, """
+            { "schemaVersion":"1", "ownership":{"key":"reference-topology"},
+              "slot":{"key":"root","name":"Managed","parent":"Root"},
+              "components":[
+                {"key":"source-a","type":"Test.Source","fields":{"Target":"$slot:target-a"}},
+                {"key":"source-b","type":"Test.Source","fields":{"Target":"$slot:target-b"}}
+              ],
+              "children":[
+                {"slot":{"key":"target-a","name":"TargetA"}},
+                {"slot":{"key":"target-b","name":"TargetB"}}
+              ] }
+            """);
+        var document = ApplyDocument.Load(path);
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "reference-topology.state.json");
+        await service.ApplyAsync(document, new ApplyOptions(state));
+        var root = Assert.Single(client.Root.Children);
+        var targetA = root.Children.Single(slot => slot.Name == "TargetA");
+        var targetB = root.Children.Single(slot => slot.Name == "TargetB");
+        var sourceB = root.Components.Single(component => component.Members["Target"].TargetId == targetB.Id);
+        client.PrependComponent(root, "Test.Source", new Dictionary<string, string> { ["Target"] = targetA.Id });
+        client.SessionId = "session-2";
+        client.ResetWriteCounts();
+
+        var resolved = await service.ResolveStableReferenceAsync(state, "$component:source-b", client.SessionId);
+        var reapplied = await service.ApplyAsync(document, new ApplyOptions(state));
+
+        Assert.Equal(sourceB.Id, resolved.Id);
+        Assert.Equal(0, reapplied.ComponentsAdded);
+        Assert.Equal(2, reapplied.ComponentsUnchanged);
         Assert.Equal(0, client.Writes);
     }
 
@@ -667,6 +785,57 @@ public sealed class ApplyWorkflowTests : IDisposable
     }
 
     [Fact]
+    public async Task WorldTransformRelocationRecomputesLocalTransformAndConverges()
+    {
+        var initialPath = Path.Combine(_root, "world-relocation-initial.json");
+        File.WriteAllText(initialPath, """
+            { "schemaVersion":"1", "ownership":{"key":"world-relocation"},
+              "slot":{"key":"root","name":"Managed","parent":"Root/ParentA","position":[2,0,0],
+                      "relocationTransform":"world"} }
+            """);
+        var desiredPath = Path.Combine(_root, "world-relocation-desired.json");
+        File.WriteAllText(desiredPath, """
+            { "schemaVersion":"1", "ownership":{"key":"world-relocation"},
+              "slot":{"key":"root","name":"Managed","parent":"Root/ParentB","position":[2,0,0],
+                      "relocationTransform":"world"} }
+            """);
+        var client = new FakeResoniteClient();
+        await client.CreateSlotAsync(new SlotCreateRequest("Root", "ParentA", new Vector3Value(10, 0, 0)));
+        await client.CreateSlotAsync(new SlotCreateRequest("Root", "ParentB", new Vector3Value(20, 0, 0)));
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "world-relocation.state.json");
+        var initial = await service.ApplyAsync(ApplyDocument.Load(initialPath), new ApplyOptions(state));
+
+        var plan = await service.PlanApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(state));
+        var moved = await service.ApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(state));
+        client.ResetWriteCounts();
+        var reapplied = await service.ApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(state));
+
+        var slot = Assert.Single(client.Root.Children.Single(parent => parent.Name == "ParentB").Children);
+        Assert.Equal(initial.SlotId, moved.SlotId);
+        Assert.Contains(plan.Operations, operation => operation.Action == "relocate" &&
+            operation.Reason?.Contains("relocationTransform=world", StringComparison.Ordinal) == true);
+        Assert.NotNull(slot.Position);
+        Assert.Equal(-8f, slot.Position!.X, 4);
+        Assert.Equal(0, reapplied.SlotsUpdated);
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Fact]
+    public async Task ValidationRejectsUnknownRelocationTransformPolicy()
+    {
+        var path = Path.Combine(_root, "invalid-relocation-transform.json");
+        File.WriteAllText(path, """
+            { "schemaVersion":"1", "ownership":{"key":"invalid-relocation"},
+              "slot":{"key":"root","name":"Managed","parent":"Root","relocationTransform":"screen"} }
+            """);
+
+        var result = await ApplyDocumentValidator.ValidateAsync(ApplyDocument.Load(path));
+
+        Assert.Contains(result.Issues, issue => issue.Code == "APPLY_RELOCATION_TRANSFORM_INVALID");
+    }
+
+    [Fact]
     public async Task AssetImportIsContentAddressedAndAssetReferenceUpdatesOnChange()
     {
         var asset = Path.Combine(_root, "texture.bin");
@@ -1019,7 +1188,8 @@ public sealed class ApplyWorkflowTests : IDisposable
             foreach (var field in fields)
             {
                 var id = component.Id + ":" + field.Key;
-                if (field.Value.StartsWith("C", StringComparison.Ordinal))
+                if (field.Key is "Target" or "Mesh" or "TargetValue" ||
+                    field.Value.StartsWith("C", StringComparison.Ordinal) || field.Value.StartsWith("S", StringComparison.Ordinal))
                     component.Members[field.Key] = new MemberValue("reference", id, TargetId: field.Value);
                 else
                 {
