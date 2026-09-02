@@ -54,15 +54,18 @@ public static class BundledSkillManager
         {
             var path = Path.Combine(root, entry.Path.Replace('/', Path.DirectorySeparatorChar));
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, LoadBundledSkill(entry.Name), new UTF8Encoding(false));
+            File.WriteAllText(path, NormalizeLineEndings(LoadBundledSkill(entry.Name)), new UTF8Encoding(false));
             updated.Add(entry.Path);
         }
         Directory.CreateDirectory(Path.GetDirectoryName(lockPath)!);
         var skillHashes = Names.ToDictionary(name => name, name => Hash(LoadBundledSkill(name)), StringComparer.Ordinal);
         var serializedLock = SerializeLock(skillHashes);
-        if (!File.Exists(lockPath) || !string.Equals(File.ReadAllText(lockPath), serializedLock, StringComparison.Ordinal))
+        if (!File.Exists(lockPath) || !string.Equals(
+                NormalizeLineEndings(File.ReadAllText(lockPath)),
+                NormalizeLineEndings(serializedLock),
+                StringComparison.Ordinal))
         {
-            File.WriteAllText(lockPath, serializedLock, new UTF8Encoding(false));
+            File.WriteAllText(lockPath, NormalizeLineEndings(serializedLock), new UTF8Encoding(false));
             updated.Add(LockRelativePath);
         }
         var finalEntries = entries.Select(entry => entry with
@@ -87,7 +90,11 @@ public static class BundledSkillManager
         JsonSerializer.Serialize(new BundledSkillLock(1, hashes), JsonOptions) + "\n";
 
     internal static string Hash(string content) => Convert.ToHexString(SHA256.HashData(
-        Encoding.UTF8.GetBytes(content.Replace("\r\n", "\n", StringComparison.Ordinal))));
+        Encoding.UTF8.GetBytes(NormalizeLineEndings(content))));
+
+    private static string NormalizeLineEndings(string content) =>
+        content.Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace("\r", "\n", StringComparison.Ordinal);
 
     private static Dictionary<string, string> LoadLock(string path)
     {

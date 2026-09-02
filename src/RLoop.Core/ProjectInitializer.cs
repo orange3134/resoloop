@@ -147,7 +147,7 @@ public static class ProjectInitializer
             if (unchanged.Contains(normalized, StringComparer.OrdinalIgnoreCase)) continue;
             var path = Path.Combine(root, relativePath);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            File.WriteAllText(path, NormalizeLineEndings(content), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
             created.Add(normalized);
         }
 
@@ -168,5 +168,9 @@ public static class ProjectInitializer
     }
 
     private static bool ContentEquals(string left, string right) =>
-        left.Replace("\r\n", "\n", StringComparison.Ordinal) == right.Replace("\r\n", "\n", StringComparison.Ordinal);
+        NormalizeLineEndings(left) == NormalizeLineEndings(right);
+
+    private static string NormalizeLineEndings(string content) =>
+        content.Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace("\r", "\n", StringComparison.Ordinal);
 }
