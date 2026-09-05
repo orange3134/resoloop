@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "1",
+  "ownership": { "key": "capture-example" },
+  "slot": { "key": "root", "name": "ResoLoop_Test_CaptureExample" },
+  "cameras": {
+    "main": {
+      "position": [0, 2, -6],
+      "target": [0, 1, 0],
+      "fieldOfView": 60,
+      "width": 1280,
+      "height": 720
+    }
+  }
+}

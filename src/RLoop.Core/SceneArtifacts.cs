@@ -15,8 +15,7 @@ public sealed record CaptureArtifact(string Source, string Camera, int Width, in
     string SummaryOutput, string Format, bool ScreenshotAvailable, string Capability, SceneSummary Summary);
 
 /// <summary>
-/// Produces deterministic declaration-space artifacts. ResoniteLink 0.13.1 has no public framebuffer API,
-/// so capture intentionally emits an SVG camera projection and identifies that capability in its result.
+/// Produces deterministic declaration-space artifacts. For live screenshots use LiveCaptureService.
 /// </summary>
 public static class SceneArtifactService
 {
@@ -107,7 +106,7 @@ public static class SceneArtifactService
             throw new RLoopException("CAPTURE_RESOLUTION_INVALID", "Capture width and height must be between 64 and 8192.", ExitCodes.ValidationFailed);
         var fullOutput = Path.GetFullPath(output);
         if (!Path.GetExtension(fullOutput).Equals(".svg", StringComparison.OrdinalIgnoreCase))
-            throw new RLoopException("CAPTURE_FORMAT_UNSUPPORTED", "Public-API capture currently emits deterministic .svg wireframes.", ExitCodes.ValidationFailed);
+            throw new RLoopException("CAPTURE_FORMAT_UNSUPPORTED", "Offline projection requires .svg; use live capture for .png/.jpg.", ExitCodes.ValidationFailed);
         Directory.CreateDirectory(Path.GetDirectoryName(fullOutput)!);
         var summary = await SummarizeAsync(document, cancellationToken);
         var svg = RenderSvg(summary, camera, actualWidth, actualHeight, cameraName);

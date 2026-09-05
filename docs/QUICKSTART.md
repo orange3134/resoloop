@@ -100,10 +100,11 @@ cameraとtestsを宣言した場合は、apply後にCIで比較可能な成果�
 ~~~powershell
 resoloop scene summary content/main.json --output artifacts/scene.json --json
 resoloop capture content/main.json --camera main --output artifacts/main.svg --json
+resoloop capture content/main.json --camera main --output artifacts/main.jpg --json
 resoloop test content/main.json --json
 ~~~
 
-ResoniteLink 0.13.1にはscreenshot APIがないため、SVGは最終レンダリングではなく決定的な空間投影です。interaction probeはmanifestの `safe: true` と `--probe --yes` の両方があるときだけ呼ばれ、利用不能ならstructural-onlyと報告されます。
+`.jpg` / `.png` は専用InteractiveCameraで撮影したゲーム内画像です。標準の読み取り先はPictures/Resoniteで、異なる場合は `--screenshots-dir DIR` を指定します。写真の書き出し中は他のカメラで撮影せず、PNGがゲーム側でJPEGに変換される場合は `.jpg` を使ってください。SVGは従来どおりオフラインの空間投影です。interaction probeはmanifestの `safe: true` と `--probe --yes` の両方があるときだけ呼ばれ、利用不能ならstructural-onlyと報告されます。
 
 ## 5. ProtoFluxを使う（任意）
 

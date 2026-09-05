@@ -110,11 +110,14 @@ local `texture`、`audio`、ResoniteLink `ImportMeshJSON`は公開import APIを�
 ~~~powershell
 resoloop scene summary content/main.json --output artifacts/scene.json --json
 resoloop capture content/main.json --camera main --output artifacts/main.svg --json
+resoloop capture content/main.json --camera main --output artifacts/main.jpg --json
 resoloop test content/main.json --json
 resoloop test content/main.json --probe --yes --json
 ~~~
 
-ResoniteLink 0.13.1にframebuffer/screenshot APIはないため、`capture`は明示cameraから決定的なSVG投影とscene JSONを生成し、結果の `screenshotAvailable` をfalseにします。CIではこの2成果物を比較できます。`scene summary`は宣言上のworld bounds、配置、material欠落、無効参照を報告します。
+`capture` の `.jpg` / `.png` 出力は明示cameraのworld座標・注視点・縦画角から専用InteractiveCameraを作り、公開Captureメソッドで撮影します。ローカルのPictures/Resoniteから完成した新規画像を読み取り、`screenshotAvailable: true` を返します。別の保存先は `--screenshots-dir DIR`、待ち時間は `--capture-timeout 60` で指定できます。元の写真は残し、専用Slotはfinallyで削除します。manifestは自動applyしません。撮影中は他の写真撮影を避けてください。PNGがゲーム側でJPEGに変換される場合は `.jpg` を指定するか、Keep Original Screenshot Formatを有効にします。詳細はREADMEのIn-game screenshotsを参照してください。
+
+`.svg` 出力は従来の決定的なオフライン投影で、`screenshotAvailable: false` です。CIではSVGとscene JSONを比較できます。`scene summary`と撮影のscene JSONは宣言上のworld bounds、配置、material欠落、無効参照を報告します。
 
 通常の`test`はField/Reference構造だけを検証します。probeはmanifestで `safe: true`、CLIで `--probe --yes` の両方が必要です。公開Reflectionにmethodがなければ呼び出さず、`structuralOnly: true`と未評価のafter assertionを明示します。methodが利用可能ならpublic SyncMethod APIで呼び、after assertionをtimeoutまでpollします。
 

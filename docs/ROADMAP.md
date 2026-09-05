@@ -163,7 +163,7 @@ Flux bindingとinteraction probeは、型名・member名・メッセージを推
 
 ### 5. 見た目と空間の検証
 
-- [x] 明示的なcamera、解像度、保存先を指定する `resoloop capture` を、利用可能な公開APIだけで実装または連携する（0.13.1では決定的SVG投影、`screenshotAvailable: false`を明示）。
+- [x] 明示的なcamera、解像度、保存先を指定する `resoloop capture` を公開APIで実装する。InteractiveCamera.Captureとローカル写真書き出しによるJPEG/PNG撮影に対応。決定的SVG投影もオフライン用途として維持する。
 - [x] Slot群のworld bounds、配置、欠落material、無効参照を検査するscene summaryを追加する。
 - [x] camera bookmarkと代表viewをmanifestで宣言できるようにする。
 - [x] capture SVGとscene summary JSONを成果物としてCIから比較できる形式にする。

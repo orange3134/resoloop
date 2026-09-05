@@ -5,6 +5,24 @@ namespace RLoop.Tests;
 
 public sealed class ConfigurationTests : IDisposable
 {
+    [Fact]
+    public void ScreenshotDirectoryUsesCliEnvironmentProjectUserPrecedence()
+    {
+        var user = Path.Combine(_root, "user");
+        Directory.CreateDirectory(Path.Combine(user, ".resoloop"));
+        File.WriteAllText(Path.Combine(user, ".resoloop", "config.json"), "{\"screenshotsDirectory\":\"user-photos\"}");
+        var project = Path.Combine(_root, ".resoloop.json");
+        File.WriteAllText(project, "{\"screenshotsDirectory\":\"project-photos\"}");
+        var cli = new Dictionary<string, string?> { ["screenshots-dir"] = "cli-photos" };
+        string? Env(string key) => key == "RESOLOOP_SCREENSHOTS_DIR" ? "env-photos" : null;
+        Assert.Equal("cli-photos", ConfigResolver.Resolve(_root, cli, Env, user).Config.ScreenshotsDirectory);
+        cli.Clear();
+        Assert.Equal("env-photos", ConfigResolver.Resolve(_root, cli, Env, user).Config.ScreenshotsDirectory);
+        Assert.Equal("project-photos", ConfigResolver.Resolve(_root, cli, _ => null, user).Config.ScreenshotsDirectory);
+        File.Delete(project);
+        Assert.Equal("user-photos", ConfigResolver.Resolve(_root, cli, _ => null, user).Config.ScreenshotsDirectory);
+    }
+
     private readonly string _root = Path.Combine(Path.GetTempPath(), "resoloop-tests-" + Guid.NewGuid().ToString("N"));
 
     public ConfigurationTests() => Directory.CreateDirectory(_root);

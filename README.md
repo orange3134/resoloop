@@ -189,6 +189,7 @@ resoloop apply content/main.json --profile --json
 resoloop diff content/main.json --json
 resoloop scene summary content/main.json --output artifacts/scene.json --json
 resoloop capture content/main.json --camera main --output artifacts/main.svg --json
+resoloop capture content/main.json --camera main --output artifacts/main.jpg --json
 resoloop test content/main.json --json
 ~~~
 
@@ -268,12 +269,31 @@ resoloop logs --tail 200 --json
 - FLUX_SDK_NOT_FOUND: flux-sdkをglobal toolとして導入、またはRESOLOOP_FLUX_EXECUTABLEを設定
 - Flux type error: RESONITE_MANAGED_DATA_PATHまたは --library-path を確認
 
+## In-game screenshots
+
+`capture FILE.json --camera BOOKMARK --output capture.jpg` はブックマークのworld座標・注視点・縦画角と解像度を使って撮影します。manifestを自動applyする操作ではないため、必要なコンテンツを先にapplyしてください。Reflectionで `InteractiveCamera.Capture()` を確認し、専用の `ResoLoop_Test_Capture_*` Slotにカメラを生成します。撮影後は失敗時もそのSlotだけを削除します。既存のカメラは変更しません。
+
+~~~powershell
+resoloop capture content/main.json --camera main --output artifacts/main.jpg --url ws://localhost:<current-port> --json
+resoloop capture content/main.json --camera main --output artifacts/main.png --screenshots-dir 'C:\Users\YOUR_NAME\Pictures\Resonite' --width 1280 --height 720 --capture-timeout 60 --json
+~~~
+
+標準の読み取り先はWindowsのPictures既知フォルダ配下の `Resonite` です。保存先が異なる場合や別PCの場合は、その写真フォルダをローカルから読み取れる `--screenshots-dir` で指定してください。新規フォルダはResoniteの初回書き出しを待ちます。元の写真は残し、完成した画像だけを `--output` へコピーします。PNGがJPEGに変換される設定では `.jpg` を使うか、ResoniteのKeep Original Screenshot Formatを有効にしてください。形式・解像度が違う場合はエラーになります。
+
+OneDriveなどで保存先が異なる環境は、環境変数 `RESOLOOP_SCREENSHOTS_DIR` または `.resoloop.json` / `%USERPROFILE%\.resoloop\config.json` の `screenshotsDirectory` に保存先を設定できます。優先順位はCLI → 環境変数 → project設定 → user設定です。[examples/capture.json](examples/capture.json)は原点付近を撮る最小例です。
+
+同じ写真フォルダを使うresoloopの同時撮影は拒否します。撮影中は他のカメラや手動の写真撮影を避けてください。公開APIには撮影要求と保存ファイルを対応付けるIDがないため、撮影前後の新規ファイル差分で検出し、複数候補があれば `CAPTURE_AMBIGUOUS` を返します。画像が届かない場合は `CAPTURE_EXPORT_TIMEOUT`（exit 8）となります。対象ワールドが表示中か、レンダラーが動作しているか、保存先が正しいか確認してください。`--capture-timeout` は書き出し待ち時間、`--command-timeout` は接続・準備を含めた全体の上限です。
+
+成功時は `screenshotAvailable: true`、`format: jpeg` または `png` を返します。併記する `.scene.json` はmanifest上の要約です。オフラインの比較には従来の `--output capture.svg` を使えます。
+
+撮影の実機テストは `RESOLOOP_RUN_INTEGRATION=1` と `RESOLOOP_RUN_CAPTURE_INTEGRATION=1` の両方を設定して実行します。`RESONITE_LINK_URL` と必要に応じて `RESOLOOP_SCREENSHOTS_DIR` を指定し、`dotnet test tests/RLoop.IntegrationTests --filter FullyQualifiedName~CaptureIntegrationTests` を実行してください。専用Slotは削除されますが、ゲームが保存した写真は写真フォルダに残ります。
+
 ## Known limitations
 
 - ResoniteLink 0.13.1自体がBetaで、breaking changeの可能性があります。
 - applyはschema v1のJSONのみです。operationは非atomicでrollbackはできませんが、操作単位のcheckpointと再実行手順を返します。
 - List更新は公開API上whole-member replacementです。`diff`は要素added/removedを表示してから一括更新します。SyncObject要素は子memberを含む構造値へ正規化して比較します。
-- ResoniteLink 0.13.1にscreenshot APIがないため、captureは決定的なcamera-space SVGで、最終レンダリング画像ではありません。結果は `screenshotAvailable: false` を明示します。
+- `capture --output capture.jpg` / `.png` は専用のInteractiveCameraでゲーム内画像を撮影し、ローカルの写真書き出しを読み取ります。Resoniteのレンダラーと写真保存先へのアクセスが必要です。`.svg` は引き続きオフライン投影で、`screenshotAvailable: false` です。
 - logsはLink protocolからのstreamではなく、明示されたローカルlog fileのtailです。
 - runtime probeは `safe: true` と `--probe --yes` の二重許可が必要です。public Reflectionに公開されたSyncMethodを呼ぶ `method` probeに加え、fieldを一時変更してafter assertionをpollし、`finally`で元の値へ戻して復元確認する `set-member` probeを利用できます。公開されないinteractionはstructural-onlyです。
 - ResoniteLink 0.13.1はUIXの`SyncDelegate` memberをComponent definition/update modelへ公開せず、Dynamic Impulse helperと`CallInput.Trigger`も呼び出し可能なSyncMethodとして公開しません。resoloopはraw messageやmember名を推測せず、これらのinteractionをstructural-onlyとして報告します。

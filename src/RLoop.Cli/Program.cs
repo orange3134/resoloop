@@ -82,7 +82,8 @@ public static class Program
                 ["url"] = parsed.Option("url"), ["timeout"] = parsed.Option("timeout"),
                 ["command-timeout"] = parsed.Option("command-timeout"),
                 ["flux-executable"] = parsed.Option("flux-executable"), ["flux-deployer"] = parsed.Option("flux-deployer"),
-                ["library-path"] = parsed.Option("library-path"), ["log-path"] = parsed.Option("log-path")
+                ["library-path"] = parsed.Option("library-path"), ["log-path"] = parsed.Option("log-path"),
+                ["screenshots-dir"] = parsed.Option("screenshots-dir")
             };
             var resolution = ConfigResolver.Resolve(Environment.CurrentDirectory, cliConfig);
             commandCancellation = CancellationTokenSource.CreateLinkedTokenSource(userCancellation.Token);
@@ -142,9 +143,23 @@ public static class Program
                     captureOutput = explicitCaptureOutput is not null || document.SourcePath is null
                         ? Path.GetFullPath(captureOutput)
                         : Path.GetFullPath(captureOutput, Path.GetDirectoryName(document.SourcePath)!);
-                var result = await SceneArtifactService.CaptureAsync(document, camera, captureOutput,
-                    parsed.Option("width") is null ? null : parsed.IntOption("width", 1280, 64, 8192),
-                    parsed.Option("height") is null ? null : parsed.IntOption("height", 720, 64, 8192), commandToken);
+                int? width = parsed.Option("width") is null ? null : parsed.IntOption("width", 1280, 64, 8192);
+                int? height = parsed.Option("height") is null ? null : parsed.IntOption("height", 720, 64, 8192);
+                CaptureArtifact result;
+                if (Path.GetExtension(captureOutput).Equals(".svg", StringComparison.OrdinalIgnoreCase))
+                    result = await SceneArtifactService.CaptureAsync(document, camera, captureOutput, width, height, commandToken);
+                else
+                {
+                    var captureUri = ConfigResolver.RequireUrl(resolution.Config);
+                    if (!captureUri.IsLoopback && resolution.Config.ScreenshotsDirectory is null)
+                        throw new RLoopException("CAPTURE_DIRECTORY_REQUIRED", "Remote Resonite requires --screenshots-dir pointing to its locally accessible screenshot export folder.", ExitCodes.InvalidArguments);
+                    var screenshots = resolution.Config.ScreenshotsDirectory ??
+                        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Resonite");
+                    await using var captureClient = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds));
+                    await captureClient.ConnectAsync(captureUri, TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds), commandToken);
+                    result = await new LiveCaptureService(captureClient).CaptureAsync(document, camera, captureOutput,
+                        screenshots, width, height, parsed.IntOption("capture-timeout", 60, 1, 600), commandToken);
+                }
                 output.Success(result, writer => writer.WriteLine($"captured {result.Format} {result.Width}x{result.Height} -> {result.Output}"));
                 return ExitCodes.Success;
             }
@@ -847,7 +862,8 @@ Connection and observation:
   resoloop find (--name TEXT [--exact] | --component TYPE) [--under SLOT] [--direct-children] [--depth 8] [--json]
   resoloop inspect SLOT|$slot:key [--state WORLD_STATE] [--depth 1] [--members] [--component TYPE] [--member NAME] [--components-only] [--json]
   resoloop scene summary FILE.json [--output summary.json]
-  resoloop capture FILE.json --camera BOOKMARK [--output capture.svg] [--width 1280 --height 720]
+  resoloop capture FILE.json --camera BOOKMARK [--output capture.jpg] [--width 1280 --height 720]
+    [--screenshots-dir DIR] [--capture-timeout 60] (live .png/.jpg; offline .svg)
 
 Editing:
   resoloop slot create --name NAME [--parent SLOT] [--position x,y,z] [--rotation x,y,z,w] [--scale x,y,z]

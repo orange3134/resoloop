@@ -9,7 +9,8 @@ public sealed record RLoopConfig(
     string? FluxExecutable = null,
     string? FluxDeployerPath = null,
     string? ResoniteManagedDataPath = null,
-    string? ResoniteLogPath = null);
+    string? ResoniteLogPath = null,
+    string? ScreenshotsDirectory = null);
 
 public sealed record ConfigResolution(RLoopConfig Config, IReadOnlyDictionary<string, string> Sources);
 
@@ -65,6 +66,7 @@ public static class ConfigResolver
         var helper = Pick("flux-deployer", "RESOLOOP_FLUX_DEPLOYER", x => x.FluxDeployerPath, "fluxDeployerPath");
         var managed = Pick("library-path", "RESONITE_MANAGED_DATA_PATH", x => x.ResoniteManagedDataPath, "resoniteManagedDataPath");
         var logs = Pick("log-path", "RESONITE_LOG_PATH", x => x.ResoniteLogPath, "resoniteLogPath");
+        var screenshots = Pick("screenshots-dir", "RESOLOOP_SCREENSHOTS_DIR", x => x.ScreenshotsDirectory, "screenshotsDirectory");
 
         var timeout = project.TimeoutSeconds > 0 ? project.TimeoutSeconds : user.TimeoutSeconds > 0 ? user.TimeoutSeconds : 30;
         if (cli.TryGetValue("timeout", out var timeoutText) && !string.IsNullOrWhiteSpace(timeoutText))
@@ -93,7 +95,7 @@ public static class ConfigResolver
             sources["commandTimeoutSeconds"] = "environment:RESOLOOP_COMMAND_TIMEOUT_SECONDS";
         }
 
-        return new ConfigResolution(new RLoopConfig(url, timeout, commandTimeout, flux, helper, managed, logs), sources);
+        return new ConfigResolution(new RLoopConfig(url, timeout, commandTimeout, flux, helper, managed, logs, screenshots), sources);
     }
 
     public static Uri RequireUrl(RLoopConfig config)

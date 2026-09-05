@@ -156,7 +156,7 @@ public static class ProjectInitializer
             "Set RESONITE_LINK_URL to the current ResoniteLink WebSocket URL.",
             "Run resoloop doctor, then validate, diff, and apply content/main.json.",
             "Restart Codex if it does not detect the project skills under .agents/skills immediately.",
-            "Generate scene artifacts with resoloop capture content/main.json --camera main --output artifacts/main.svg --json.",
+            "Capture the live world with resoloop capture content/main.json --camera main --output artifacts/main.jpg --json; use .svg for offline projection.",
             "For ProtoFlux, set RESONITE_MANAGED_DATA_PATH and use flux/resoloop.flux.json."
         ]);
     }
