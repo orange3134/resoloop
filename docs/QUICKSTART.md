@@ -104,7 +104,7 @@ resoloop capture content/main.json --camera main --output artifacts/main.jpg --j
 resoloop test content/main.json --json
 ~~~
 
-`.jpg` / `.png` は専用InteractiveCameraで撮影したゲーム内画像です。標準の読み取り先はPictures/Resoniteで、異なる場合は `--screenshots-dir DIR` を指定します。写真の書き出し中は他のカメラで撮影せず、PNGがゲーム側でJPEGに変換される場合は `.jpg` を使ってください。SVGは従来どおりオフラインの空間投影です。interaction probeはmanifestの `safe: true` と `--probe --yes` の両方があるときだけ呼ばれ、利用不能ならstructural-onlyと報告されます。
+`.jpg` / `.png` は専用InteractiveCameraで撮影したゲーム内画像です。標準の読み取り先はResonite本体と同じPictures/Resoniteで、OneDriveへリダイレクトされた既存の書き出し先も自動検出します。異なる場合は `--screenshots-dir DIR` を指定します。写真の書き出し中は他のカメラで撮影せず、PNGがゲーム側でJPEGに変換される場合は `.jpg` を使ってください。SVGは従来どおりオフラインの空間投影です。interaction probeはmanifestの `safe: true` と `--probe --yes` の両方があるときだけ呼ばれ、利用不能ならstructural-onlyと報告されます。
 
 ## 5. ProtoFluxを使う（任意）
 

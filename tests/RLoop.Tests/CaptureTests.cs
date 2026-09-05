@@ -106,5 +106,33 @@ public sealed class CaptureTests : IDisposable
         using var next = new ScreenshotExport(_root);
     }
 
+    [Fact]
+    public void ScreenshotDirectoryMatchesResoniteKnownFolderConvention()
+    {
+        var pictures = Path.Combine(_root, "Pictures");
+        Directory.CreateDirectory(pictures);
+
+        var result = ScreenshotDirectoryResolver.ResolveDefault(pictures, _root, _ => null);
+
+        Assert.Equal(Path.Combine(pictures, "Resonite"), result);
+    }
+
+    [Fact]
+    public void ScreenshotDirectoryFindsActiveLocalizedOneDrivePicturesFolder()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var pictures = Path.Combine(_root, "Pictures");
+        var oneDrive = Path.Combine(_root, "OneDrive");
+        var active = Path.Combine(oneDrive, "画像", "Resonite");
+        Directory.CreateDirectory(pictures);
+        Directory.CreateDirectory(active);
+        File.WriteAllBytes(Path.Combine(active, "2026-09-05 10.13.34.jpg"), [0xff, 0xd8, 0xff, 0xd9]);
+        string? Env(string key) => key is "OneDriveConsumer" or "OneDrive" ? oneDrive : null;
+
+        var result = ScreenshotDirectoryResolver.ResolveDefault(pictures, _root, Env);
+
+        Assert.Equal(active, result);
+    }
+
     public void Dispose() => Directory.Delete(_root, true);
 }

@@ -115,7 +115,7 @@ resoloop test content/main.json --json
 resoloop test content/main.json --probe --yes --json
 ~~~
 
-`capture` の `.jpg` / `.png` 出力は明示cameraのworld座標・注視点・縦画角から専用InteractiveCameraを作り、公開Captureメソッドで撮影します。ローカルのPictures/Resoniteから完成した新規画像を読み取り、`screenshotAvailable: true` を返します。別の保存先は `--screenshots-dir DIR`、待ち時間は `--capture-timeout 60` で指定できます。元の写真は残し、専用Slotはfinallyで削除します。manifestは自動applyしません。撮影中は他の写真撮影を避けてください。PNGがゲーム側でJPEGに変換される場合は `.jpg` を指定するか、Keep Original Screenshot Formatを有効にします。詳細はREADMEのIn-game screenshotsを参照してください。
+`capture` の `.jpg` / `.png` 出力は明示cameraのworld座標・注視点・縦画角から専用InteractiveCameraを作り、公開Captureメソッドで撮影します。Resonite本体と同じPictures/Resonite（既存のOneDriveリダイレクト先も自動検出）から完成した新規画像を読み取り、`screenshotAvailable: true` を返します。別の保存先は `--screenshots-dir DIR`、待ち時間は `--capture-timeout 60` で指定できます。元の写真は残し、専用Slotはfinallyで削除します。manifestは自動applyしません。撮影中は他の写真撮影を避けてください。PNGがゲーム側でJPEGに変換される場合は `.jpg` を指定するか、Keep Original Screenshot Formatを有効にします。詳細はREADMEのIn-game screenshotsを参照してください。
 
 `.svg` 出力は従来の決定的なオフライン投影で、`screenshotAvailable: false` です。CIではSVGとscene JSONを比較できます。`scene summary`と撮影のscene JSONは宣言上のworld bounds、配置、material欠落、無効参照を報告します。
 

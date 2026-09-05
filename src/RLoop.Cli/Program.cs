@@ -153,8 +153,7 @@ public static class Program
                     var captureUri = ConfigResolver.RequireUrl(resolution.Config);
                     if (!captureUri.IsLoopback && resolution.Config.ScreenshotsDirectory is null)
                         throw new RLoopException("CAPTURE_DIRECTORY_REQUIRED", "Remote Resonite requires --screenshots-dir pointing to its locally accessible screenshot export folder.", ExitCodes.InvalidArguments);
-                    var screenshots = resolution.Config.ScreenshotsDirectory ??
-                        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Resonite");
+                    var screenshots = resolution.Config.ScreenshotsDirectory ?? ScreenshotDirectoryResolver.ResolveDefault();
                     await using var captureClient = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds));
                     await captureClient.ConnectAsync(captureUri, TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds), commandToken);
                     result = await new LiveCaptureService(captureClient).CaptureAsync(document, camera, captureOutput,

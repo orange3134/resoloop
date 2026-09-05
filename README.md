@@ -278,7 +278,7 @@ resoloop capture content/main.json --camera main --output artifacts/main.jpg --u
 resoloop capture content/main.json --camera main --output artifacts/main.png --screenshots-dir 'C:\Users\YOUR_NAME\Pictures\Resonite' --width 1280 --height 720 --capture-timeout 60 --json
 ~~~
 
-標準の読み取り先はWindowsのPictures既知フォルダ配下の `Resonite` です。保存先が異なる場合や別PCの場合は、その写真フォルダをローカルから読み取れる `--screenshots-dir` で指定してください。新規フォルダはResoniteの初回書き出しを待ちます。元の写真は残し、完成した画像だけを `--output` へコピーします。PNGがJPEGに変換される設定では `.jpg` を使うか、ResoniteのKeep Original Screenshot Formatを有効にしてください。形式・解像度が違う場合はエラーになります。
+標準の読み取り先は、Resonite本体と同じWindowsのPictures既知フォルダ配下の `Resonite` です。OneDriveリダイレクトがプロセス間で食い違う場合は、OneDrive直下のローカライズされたPictures候補も調べ、既存写真が最も新しい `Resonite` フォルダを自動選択します。保存先が別PCや共有先にある場合だけ、その写真フォルダをローカルから読み取れる `--screenshots-dir` で指定してください。新規フォルダはResoniteの初回書き出しを待ちます。元の写真は残し、完成した画像だけを `--output` へコピーします。PNGがJPEGに変換される設定では `.jpg` を使うか、ResoniteのKeep Original Screenshot Formatを有効にしてください。形式・解像度が違う場合はエラーになります。
 
 OneDriveなどで保存先が異なる環境は、環境変数 `RESOLOOP_SCREENSHOTS_DIR` または `.resoloop.json` / `%USERPROFILE%\.resoloop\config.json` の `screenshotsDirectory` に保存先を設定できます。優先順位はCLI → 環境変数 → project設定 → user設定です。[examples/capture.json](examples/capture.json)は原点付近を撮る最小例です。
 
