@@ -186,6 +186,91 @@ public sealed class ResoniteLinkEndToEndTests
 
     [Fact]
     [Trait("Category", "Integration")]
+    public async Task ApplyTagsGeneratedRootAndPortableChildInLiveWorld()
+    {
+        if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1") return;
+        var url = Environment.GetEnvironmentVariable("RESONITE_LINK_URL")
+                  ?? throw new InvalidOperationException("RESONITE_LINK_URL is required.");
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var name = "ResoLoop_Test_GeneratedContent_" + suffix;
+        var directory = Path.Combine(Path.GetTempPath(), "resoloop-live-generated-content-" + suffix);
+        Directory.CreateDirectory(directory);
+        var documentPath = Path.Combine(directory, "apply.json");
+        var statePath = Path.Combine(directory, "state.json");
+        await File.WriteAllTextAsync(documentPath, $$$"""
+            {
+              "schemaVersion":"1", "ownership":{"key":"live-generated-content-{{{suffix}}}"},
+              "slot":{"key":"root","name":"{{{name}}}","parent":"Root"},
+              "children":[
+                {
+                  "slot":{"key":"item","name":"PortableItem"},
+                  "components":[{"key":"grabbable","type":"FrooxEngine.Grabbable","fields":{"Scalable":true}}]
+                },
+                { "slot":{"key":"plain","name":"PlainChild"}, "components":[] }
+              ]
+            }
+            """);
+
+        await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(30));
+        await client.ConnectAsync(new Uri(url), TimeSpan.FromSeconds(30));
+        var source = GeneratedContentMetadata.SourceForVersion("integration-test");
+        var world = new WorldService(client, source);
+        string? rootId = null;
+        try
+        {
+            var validation = await world.ValidateApplyAsync(ApplyDocument.Load(documentPath), true);
+            Assert.True(validation.Valid);
+            var first = await world.ApplyAsync(ApplyDocument.Load(documentPath), new ApplyOptions(statePath));
+            rootId = first.SlotId;
+
+            var root = await client.GetSlotAsync(rootId, 1, true);
+            await AssertMarker(root);
+            await AssertMarker(Assert.Single(root.Children, child => child.Name == "PortableItem"));
+            Assert.DoesNotContain(Assert.Single(root.Children, child => child.Name == "PlainChild").Components,
+                component => SimpleType(component.Type) == "AI_GeneratedContent");
+
+            var second = await world.ApplyAsync(ApplyDocument.Load(documentPath), new ApplyOptions(statePath));
+            Assert.Equal(0, second.SlotsCreated);
+            Assert.Equal(0, second.SlotsUpdated);
+            Assert.Equal(0, second.ComponentsAdded);
+            Assert.Equal(0, second.ComponentsUpdated);
+        }
+        finally
+        {
+            if (rootId is null && File.Exists(statePath))
+            {
+                try { rootId = await world.ResolveSlotSelectorAsync("$slot:root", statePath); }
+                catch (RLoopException) { }
+            }
+            if (rootId is not null)
+            {
+                var cleanupTarget = await client.GetSlotAsync(rootId, 0, false);
+                if (cleanupTarget.Name != name || cleanupTarget.ParentId != "Root")
+                    throw new InvalidOperationException("Refusing to clean an unverified generated-content integration target.");
+                await client.DeleteSlotAsync(rootId);
+            }
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+
+        async Task AssertMarker(SlotInfo slot)
+        {
+            var summary = Assert.Single(slot.Components, component =>
+                SimpleType(component.Type) == "AI_GeneratedContent");
+            var component = await client.GetComponentAsync(summary.Id);
+            var member = component.Members[GeneratedContentMetadata.SourceMember];
+            Assert.Equal(source, member.Value!.GetValue<string>());
+        }
+
+        static string SimpleType(string type)
+        {
+            var bracket = type.IndexOf(']');
+            if (bracket >= 0) type = type[(bracket + 1)..];
+            return type.Split('.').Last();
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
     public async Task ApplyPreservesTransformMigratesKeysAndPrunesParentAsOneOperation()
     {
         if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1") return;

@@ -4,6 +4,8 @@ resoloop は、Codex や Claude Code などの AI エージェントから Reson
 
 作りたいものを AI に伝えると、AI が現在のワールドを確認し、Slot や Component の構成をファイルへ記述して、ResoniteLink 経由で反映・検証します。作業内容がファイルとして残るため、同じ構成を繰り返し適用したり、Git で変更を管理したりできます。
 
+resoloop が生成する作業ルートには `FrooxEngine.AI_GeneratedContent` を自動で付与し、`Source` に実行中のツール名とバージョン（例: `[resoloop 0.1.0-preview.3]`）を記録します。宣言ツリー内の持ち運び・装備用ルートにも同じタグを付与します。
+
 > [!NOTE]
 > 現在はプレビュー版です。ResoniteLink も Beta のため、更新によって動作が変わる可能性があります。
 

@@ -21,12 +21,7 @@ public static class Program
             if (parsed.Has("version") || parsed.Positionals.Count == 1 &&
                 parsed.Positionals[0].Equals("version", StringComparison.OrdinalIgnoreCase))
             {
-                var version = typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "unknown";
-                var informational = typeof(Program).Assembly
-                    .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
-                    .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
-                    .SingleOrDefault()?.InformationalVersion;
-                if (!string.IsNullOrWhiteSpace(informational)) version = informational.Split('+')[0];
+                var version = ProductVersion();
                 output.Success(new { name = "resoloop", version }, writer => writer.WriteLine(version));
                 return ExitCodes.Success;
             }
@@ -166,7 +161,7 @@ public static class Program
             var uri = ConfigResolver.RequireUrl(resolution.Config);
             await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds));
             await client.ConnectAsync(uri, TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds), commandToken);
-            var world = new WorldService(client);
+            var world = new WorldService(client, GeneratedContentMetadata.SourceForVersion(ProductVersion()));
             await RunResonite(parsed, output, client, world, commandToken);
             return ExitCodes.Success;
         }
@@ -528,7 +523,9 @@ public static class Program
                 var parent = await world.ResolveSlotSelectorAsync(args.Option("parent") ?? "Root", args.Option("state"), ct);
                 var result = await client.CreateSlotAsync(new SlotCreateRequest(parent, args.RequireOption("name"),
                     ParseVector(args, "position"), ParseQuaternion(args, "rotation"), ParseVector(args, "scale"), args.Option("id")), ct);
-                output.Success(new { id = result, parentId = parent, name = args.Option("name") }, w => w.WriteLine(result));
+                var generatedContentComponentId = await world.EnsureGeneratedContentTagAsync(result, ct);
+                output.Success(new { id = result, parentId = parent, name = args.Option("name"), generatedContentComponentId },
+                    w => w.WriteLine(result));
                 break;
             }
             case "set":
@@ -701,7 +698,7 @@ public static class Program
             var uri = ConfigResolver.RequireUrl(config);
             await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(config.TimeoutSeconds));
             await client.ConnectAsync(uri, TimeSpan.FromSeconds(config.TimeoutSeconds), ct);
-            var world = new WorldService(client);
+            var world = new WorldService(client, GeneratedContentMetadata.SourceForVersion(ProductVersion()));
             var currentSession = await client.GetSessionInfoAsync(ct);
             var fluxStatus = await flux.GetStatusAsync(ct);
             FluxRuntimeCompatibility.ThrowIfKnownIncompatible(manifestPath, currentSession.ResoniteVersion, fluxStatus.Version);
@@ -786,7 +783,8 @@ public static class Program
             var module = args.RequireOption("module");
             await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(config.TimeoutSeconds));
             await client.ConnectAsync(uri, TimeSpan.FromSeconds(config.TimeoutSeconds), ct);
-            var parentId = await new WorldService(client).ResolveSlotIdAsync(args.Option("parent") ?? "Root", ct);
+            var parentId = await new WorldService(client, GeneratedContentMetadata.SourceForVersion(ProductVersion()))
+                .ResolveSlotIdAsync(args.Option("parent") ?? "Root", ct);
             result = await flux.DeployAsync(new FluxDeployRequest(project, module, parentId, uri,
                 args.Option("library-path") ?? config.ResoniteManagedDataPath, config.FluxDeployerPath), ct);
         }
@@ -843,6 +841,16 @@ public static class Program
         args.Option("state"), args.Has("adopt"), args.Has("profile"),
         args.Has("quiet") ? null : progress => output.Progress(progress, args.Has("ndjson-progress")),
         args.Has("prune"), args.Has("yes"));
+
+    private static string ProductVersion()
+    {
+        var version = typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "unknown";
+        var informational = typeof(Program).Assembly
+            .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+            .SingleOrDefault()?.InformationalVersion;
+        return string.IsNullOrWhiteSpace(informational) ? version : informational.Split('+')[0];
+    }
 
     private static Vector3Value? ParseVector(ParsedArguments args, string name) => args.Option(name) is { } text ? Vector3Value.Parse(text, $"--{name}") : null;
     private static QuaternionValue? ParseQuaternion(ParsedArguments args, string name) => args.Option(name) is { } text ? QuaternionValue.Parse(text, $"--{name}") : null;

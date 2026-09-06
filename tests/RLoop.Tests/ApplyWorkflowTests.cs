@@ -63,6 +63,87 @@ public sealed class ApplyWorkflowTests : IDisposable
     }
 
     [Fact]
+    public async Task ApplyTagsGeneratedRootAndPortableItemRootsWithoutDuplicates()
+    {
+        var path = Path.Combine(_root, "generated-content.json");
+        File.WriteAllText(path, """
+            {
+              "schemaVersion":"1", "ownership":{"key":"generated-content"},
+              "slot":{"key":"root","name":"Managed","parent":"Root"},
+              "components":[{
+                "key":"declared-ai", "type":"FrooxEngine.AI_GeneratedContent",
+                "fields":{"Source":"old source"}
+              }],
+              "children":[
+                {
+                  "slot":{"key":"item","name":"Item"},
+                  "components":[{"key":"grab","type":"FrooxEngine.Grabbable","fields":{}}]
+                },
+                {
+                  "slot":{"key":"equipped","name":"Equipped","runtimeRelocatable":true},
+                  "components":[{"key":"identity","type":"Test.Target","fields":{"Enabled":true}}]
+                },
+                { "slot":{"key":"plain","name":"Plain"}, "components":[] }
+              ]
+            }
+            """);
+        var document = ApplyDocument.Load(path);
+        var client = new FakeResoniteClient(document);
+        const string source = "[resoloop 0.1.0-preview.3]";
+        var service = new WorldService(client, source);
+        var state = Path.Combine(_root, "generated-content.state.json");
+
+        var validation = await service.ValidateApplyAsync(document, true);
+        var plan = await service.PlanApplyAsync(document, new ApplyOptions(state));
+        await service.ApplyAsync(document, new ApplyOptions(state));
+
+        Assert.True(validation.Valid);
+        Assert.Equal(3, plan.Operations.Count(operation =>
+            operation.Type == GeneratedContentMetadata.ComponentType && operation.Action == "create"));
+        AssertGeneratedContent(client.Root.Children.Single(slot => slot.Name == "Managed"), source);
+        var root = client.Root.Children.Single(slot => slot.Name == "Managed");
+        AssertGeneratedContent(root.Children.Single(slot => slot.Name == "Item"), source);
+        AssertGeneratedContent(root.Children.Single(slot => slot.Name == "Equipped"), source);
+        Assert.DoesNotContain(root.Children.Single(slot => slot.Name == "Plain").Components,
+            component => component.Type == GeneratedContentMetadata.ComponentType);
+
+        client.ResetWriteCounts();
+        var converged = await service.PlanApplyAsync(document, new ApplyOptions(state));
+        await service.ApplyAsync(document, new ApplyOptions(state));
+
+        Assert.DoesNotContain(converged.Changes, operation =>
+            operation.Type == GeneratedContentMetadata.ComponentType);
+        Assert.Equal(0, client.Writes);
+
+        static void AssertGeneratedContent(FakeResoniteClient.FakeSlot slot, string expectedSource)
+        {
+            var marker = Assert.Single(slot.Components, component =>
+                component.Type == GeneratedContentMetadata.ComponentType);
+            Assert.Equal(expectedSource, marker.Members[GeneratedContentMetadata.SourceMember].Value!.GetValue<string>());
+        }
+    }
+
+    [Fact]
+    public async Task EnsureGeneratedContentTagIsIdempotentForPrimitiveSlotCreation()
+    {
+        var client = new FakeResoniteClient();
+        const string source = "[resoloop 0.1.0-preview.3]";
+        var service = new WorldService(client, source);
+        var slotId = await client.CreateSlotAsync(new SlotCreateRequest("Root", "Primitive"));
+
+        var first = await service.EnsureGeneratedContentTagAsync(slotId);
+        client.ResetWriteCounts();
+        var second = await service.EnsureGeneratedContentTagAsync(slotId);
+
+        Assert.Equal(first, second);
+        Assert.Equal(0, client.Writes);
+        var slot = Assert.Single(client.Root.Children);
+        var marker = Assert.Single(slot.Components);
+        Assert.Equal(GeneratedContentMetadata.ComponentType, marker.Type);
+        Assert.Equal(source, marker.Members[GeneratedContentMetadata.SourceMember].Value!.GetValue<string>());
+    }
+
+    [Fact]
     public async Task RuntimeRelocatableItemCanBeResolvedAfterMoveButApplyStopsBeforeMutation()
     {
         var path = Path.Combine(_root, "runtime-relocatable.json");
@@ -1065,6 +1146,7 @@ public sealed class ApplyWorkflowTests : IDisposable
             _knownMembers["Test.Source"] = ["Target"];
             _knownMembers["Test.Target"] = ["Enabled"];
             _knownMembers["Test.Slider"] = ["SnapPositions"];
+            _knownMembers[GeneratedContentMetadata.ComponentType] = [GeneratedContentMetadata.SourceMember];
             if (definitions is not null) RegisterDefinitions(definitions);
         }
 
@@ -1173,7 +1255,7 @@ public sealed class ApplyWorkflowTests : IDisposable
                 throw new RLoopException("COMPONENT_TYPE_NOT_FOUND", type, ExitCodes.NotFound);
             IReadOnlyList<MemberDefinitionInfo> members = known.Select(name =>
                 new MemberDefinitionInfo(name, name is "Target" or "Mesh" or "TargetValue" ? "reference" : "field",
-                    null, "bool", null)).ToArray();
+                    null, name == GeneratedContentMetadata.SourceMember ? "string" : "bool", null)).ToArray();
             return Task.FromResult(new ComponentTypeInfo(type, null, null, false, members));
         }
 

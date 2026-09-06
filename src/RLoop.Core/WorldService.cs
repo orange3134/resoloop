@@ -7,7 +7,7 @@ using System.Text.Json.Nodes;
 
 namespace RLoop.Core;
 
-public sealed class WorldService(IResoniteClient client)
+public sealed class WorldService(IResoniteClient client, string? generatedContentSource = null)
 {
     public async Task<string> ResolveSlotIdAsync(string selector, CancellationToken cancellationToken = default)
     {
@@ -315,7 +315,32 @@ public sealed class WorldService(IResoniteClient client)
 
     public Task<ApplyValidationResult> ValidateApplyAsync(ApplyDocument document, bool strict,
         CancellationToken cancellationToken = default) =>
-        ApplyDocumentValidator.ValidateAsync(document, strict ? client : null, cancellationToken);
+        ApplyDocumentValidator.ValidateAsync(GeneratedContentMetadata.AddToGeneratedRoots(document, generatedContentSource),
+            strict ? client : null, cancellationToken);
+
+    public async Task<string?> EnsureGeneratedContentTagAsync(string slotId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(generatedContentSource)) return null;
+        var slot = await client.GetSlotAsync(slotId, 0, true, cancellationToken);
+        var marker = slot.Components.FirstOrDefault(component =>
+            TypeNamesEquivalent(component.Type, GeneratedContentMetadata.ComponentType));
+        if (marker is null)
+        {
+            return (await client.AddComponentAsync(slotId, GeneratedContentMetadata.ComponentType,
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    [GeneratedContentMetadata.SourceMember] = generatedContentSource
+                }, cancellationToken)).Id;
+        }
+
+        var members = marker.Members ?? (await client.GetComponentAsync(marker.Id, cancellationToken)).Members;
+        if (!members.TryGetValue(GeneratedContentMetadata.SourceMember, out var source) ||
+            !MemberMatchesRaw(source, generatedContentSource))
+            await client.SetComponentMemberAsync(marker.Id, GeneratedContentMetadata.SourceMember,
+                generatedContentSource, cancellationToken);
+        return marker.Id;
+    }
 
     public async Task<ApplyPlanResult> PlanApplyAsync(ApplyDocument document, ApplyOptions? options = null,
         CancellationToken cancellationToken = default)
@@ -781,6 +806,7 @@ public sealed class WorldService(IResoniteClient client)
 
     private async Task<PreparedApply> PrepareAsync(ApplyDocument document, ApplyOptions options, CancellationToken cancellationToken)
     {
+        document = GeneratedContentMetadata.AddToGeneratedRoots(document, generatedContentSource);
         var offlineValidation = await ApplyDocumentValidator.ValidateAsync(document, cancellationToken: cancellationToken);
         ApplyDocumentValidator.ThrowIfInvalid(offlineValidation);
         var statePath = ApplyStateStore.ResolvePath(document, options.StateFile);

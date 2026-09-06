@@ -70,6 +70,8 @@ resoloop inspect $slotId --members --json
 
 `content/main.json` のposition、scale、Component fieldsなどを編集して、validateとplanを通してから同じapplyを再実行します。stateは `.resoloop/state/` にcheckpointされ、変更なしの対象にはworld書き込みを行いません。
 
+適用時には作業ルートへ `AI_GeneratedContent` が自動で付き、`Source` に実行中の resoloop のバージョンが記録されます。`runtimeRelocatable` の子ルートや、`Grabbable`、`RawDataTool`、`AvatarRoot`、`ObjectRoot` を持つ子ルートも個別にタグ付けされます。
+
 既存の手動配置を保つSlotには`preserveWorldTransform: true`、一部のtransformだけをresoloopに収束させる場合は`managedFields: ["scale"]`のように指定できます。親変更でworld位置を保つ場合は`relocationTransform: "world"`、local値を維持する場合は既定の`"local"`を使います。装備中にruntime親が変わるitem rootには、同じSlot上の管理Component証拠とともに`runtimeRelocatable: true`を指定すると再接続後も一意に再発見でき、移動中のapplyはmutation前に停止します。stable keyを変更するときは新keyへ`migrateFrom: "old-key"`を一時的に追加すると、world objectを作り直さずstateを移行できます。
 
 ~~~powershell
