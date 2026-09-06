@@ -125,12 +125,15 @@ resoloop doctor
 resoloop flux check flux/Main.pg --project flux --json
 resoloop flux build flux/Main.pg --project flux --json
 resoloop flux deploy --project flux --module Main --parent $slotId --json
+resoloop flux validate-manifest flux/resoloop.flux.json --json
 resoloop flux deploy-manifest flux/resoloop.flux.json --json
 resoloop flux watch flux/resoloop.flux.json --json
 resoloop inspect $slotId --depth 2 --members --json
 ~~~
 
-`flux deploy` は指定parent配下の同名moduleだけを置換します。module manifestでは複数moduleと依存順を宣言でき、world apply stateの `$slot:key` をparentにできます。manifest結果の`parentSlotId`はdeploy先、`moduleSlotIdBefore` / `moduleSlotIdAfter`は再観測した実module childです。watchは成功buildだけを再deployします。
+`flux deploy` は指定parent配下の同名moduleだけを置換します。`flux validate-manifest`はResoniteへ接続せず、source、dependency、port、bindingを検証します。module manifestでは複数moduleと依存順を宣言でき、world apply stateの `$slot:key` をparentにできます。CLIの`--state`はcurrent directory基準、manifest内の`worldState`、`source`、`deployState`はmanifest基準です。manifest結果の`parentSlotId`はdeploy先、`moduleSlotIdBefore` / `moduleSlotIdAfter`は再観測した実module childです。watchは成功buildだけを再deployします。
+
+同型の弾や標的を多数使う場合、各instanceへ完全なFluxを複製しません。template内は不可避なDriverだけにし、状態を名前空間付きDynamicVariableへ置き、上限付きpool全体を単一controller moduleから走査・reset・再利用します。
 
 宣言から対象を取り除いた場合、まず`resoloop diff content/main.json --deletes-only --json`でownership内のdelete候補だけを確認します。通常applyは削除しません。意図した候補だけだと確認した場合に限り、`resoloop apply content/main.json --prune --yes --json`で収束させます。staleな親Slotは配下の管理対象を含む1回のSlot削除へ集約されます。処理は非atomicなので、失敗時は結果のcheckpoint pathを保持して同じapplyを再実行します。
 

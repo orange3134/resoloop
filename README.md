@@ -206,11 +206,14 @@ resoloop flux node search DynamicImpulse --json
 resoloop flux node describe DynamicImpulseTrigger --json
 resoloop flux build examples/flux/ResoLoopHello.pg --project examples/flux --json
 resoloop flux deploy --project examples/flux --module ResoLoopHello --parent ResoLoop_Test --json
+resoloop flux validate-manifest examples/flux/resoloop.flux.json --json
 resoloop flux deploy-manifest examples/flux/resoloop.flux.json --json
 resoloop flux watch examples/flux/resoloop.flux.json --json
 ~~~
 
-`.pg`に対するbuild/check/watchは既存Flux-SDK CLIをラップします。`flux node search/describe`はFlux-SDKの通常metadata出力を、同名nodeをfull identity別に保持したversioned catalogへcacheします（1.9.0の`froox-docs --json`は同名keyで失敗するため使用しません）。JSON module manifestに対するwatchは依存順に成功buildだけを再deployします。`$slot:key` parentはworld stateから現在session向けに検証・再解決されます。moduleの `bindings` ではFlux input名を `mode: "source"`、output名を `mode: "drive"` として `$slot:key` / `$component:key` / `$member:key.MemberName` へ接続できます。driveはmember targetだけを受け付けます。IDはworld stateのcomponent index、管理member、`identityFields`を使って再解決されます。source signatureの未結線port、方向・型不一致、Flux-SDK 1.9.xのinterface global inputはbuild/deploy前に、build成功後の0 nodeはdeploy前に構造化エラーになります。deployはFlux-SDK 1.9のLoader.replaceを利用し、deploy先の`parentSlotId`と、再観測した実module childの`moduleSlotIdBefore` / `moduleSlotIdAfter`、解決済みbinding、checkpoint recoveryを返します。`doctor`は最小check/build probeでmanaged-dataの明示pathまたは自動発見が実際に成功するか確認します。
+`.pg`に対するbuild/check/watchは既存Flux-SDK CLIをラップします。`flux node search/describe`はFlux-SDKの通常metadata出力を、同名nodeをfull identity別に保持したversioned catalogへcacheします（1.9.0の`froox-docs --json`は同名keyで失敗するため使用しません）。`flux validate-manifest`は接続せずにJSON shape、source、dependency、module portとbindingの一対一対応を検査します。JSON module manifestに対するwatchは依存順に成功buildだけを再deployします。`$slot:key` parentはworld stateから現在session向けに検証・再解決されます。moduleの `bindings` ではFlux input名を `mode: "source"`、output名を `mode: "drive"` として `$slot:key` / `$component:key` / `$member:key.MemberName` へ接続できます。driveはmember targetだけを受け付けます。明示したCLI `--state` はcurrent directory基準、manifest内の`worldState`、`source`、`deployState`はmanifest基準です。Fluxの`int`/`int32`/`System.Int32`、`bool`/`System.Boolean`などのscalar aliasは同じ型として照合します。IDはworld stateのcomponent index、管理member、`identityFields`を使って再解決されます。source signatureの未結線port、方向・型不一致、Flux-SDK 1.9.xのinterface global inputはbuild/deploy前に、build成功後の0 nodeはdeploy前に構造化エラーになります。deployはFlux-SDK 1.9のLoader.replaceを利用し、deploy先の`parentSlotId`と、再観測した実module childの`moduleSlotIdBefore` / `moduleSlotIdAfter`、解決済みbinding、checkpoint recoveryを返します。`doctor`は最小check/build probeでmanaged-dataの明示pathまたは自動発見が実際に成功するか確認します。
+
+弾、標的、エフェクトなど多数の同型オブジェクトは、各templateへ完全なFlux graphを複製せず、template側を不可避なDriverやadapterだけに留めます。instance stateは`Projectile/Active`のような型付き・名前空間付きDynamicVariableへ置き、上限付きpoolを1つのcontroller moduleから走査、確保、更新、完全reset、再利用します。これによりpool数を増やしてもProtoFlux module数とdeploy costが比例増加しません。[PooledProjectiles.pg](examples/flux/PooledProjectiles.pg)と[manifest](examples/flux/pooled-projectiles.flux.json)が最小例です。
 
 保存・配布するGrabbableは、保存前に参照閉包を監査できます。
 
@@ -295,7 +298,7 @@ OneDriveなどで保存先が異なる環境は、環境変数 `RESOLOOP_SCREENS
 - List更新は公開API上whole-member replacementです。`diff`は要素added/removedを表示してから一括更新します。SyncObject要素は子memberを含む構造値へ正規化して比較します。
 - `capture --output capture.jpg` / `.png` は専用のInteractiveCameraでゲーム内画像を撮影し、ローカルの写真書き出しを読み取ります。Resoniteのレンダラーと写真保存先へのアクセスが必要です。`.svg` は引き続きオフライン投影で、`screenshotAvailable: false` です。
 - logsはLink protocolからのstreamではなく、明示されたローカルlog fileのtailです。
-- runtime probeは `safe: true` と `--probe --yes` の二重許可が必要です。public Reflectionに公開されたSyncMethodを呼ぶ `method` probeに加え、fieldを一時変更してafter assertionをpollし、`finally`で元の値へ戻して復元確認する `set-member` probeを利用できます。公開されないinteractionはstructural-onlyです。
+- runtime probeは `safe: true` と `--probe --yes` の二重許可が必要です。public Reflectionに公開されたSyncMethodを呼ぶ `method` probeに加え、fieldを一時変更してafter assertionをpollし、`finally`で元の値へ戻して復元確認する `set-member` probeを利用できます。公開されないinteractionはstructural-onlyで、test結果の`verification`は`partial`になります。`partial`を実機interaction確認済みとして扱わないでください。
 - ResoniteLink 0.13.1はUIXの`SyncDelegate` memberをComponent definition/update modelへ公開せず、Dynamic Impulse helperと`CallInput.Trigger`も呼び出し可能なSyncMethodとして公開しません。resoloopはraw messageやmember名を推測せず、これらのinteractionをstructural-onlyとして報告します。
 - Flux-SDK 1.9.xのinterface型global input（実機で確認した `IButton global` など）はdeploy前に`FLUX_INTERFACE_GLOBAL_UNSUPPORTED`で拒否します。concrete Componentの`element` inputからmodule内でglobal化するか、Dynamic Impulse bridgeを使用してください。`Slot element` inputの配線は正常動作を確認しています。
 

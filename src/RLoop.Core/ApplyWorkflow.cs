@@ -40,13 +40,11 @@ public sealed record ApplyDocument(
         catch (JsonException ex)
         {
             var unknown = Regex.Match(ex.Message, @"property '([^']+)'", RegexOptions.IgnoreCase).Groups[1].Value;
-            var suggestion = string.IsNullOrWhiteSpace(unknown) ? null : KnownProperties
-                .OrderBy(candidate => EditDistance(unknown, candidate)).ThenBy(candidate => candidate, StringComparer.Ordinal)
-                .FirstOrDefault();
+            var suggestions = UnknownPropertySuggestions(unknown, ex.Path);
             throw new RLoopException("APPLY_DOCUMENT_INVALID", $"Invalid apply document: {ex.Message}",
                 ExitCodes.ValidationFailed,
                 new Dictionary<string, object?> { ["jsonPath"] = ex.Path, ["unknownProperty"] = string.IsNullOrWhiteSpace(unknown) ? null : unknown },
-                suggestion is null ? null : [$"Did you mean '{suggestion}'? Unknown properties are rejected to prevent silent no-ops."], ex);
+                suggestions, ex);
         }
     }
 
@@ -75,6 +73,22 @@ public sealed record ApplyDocument(
             }
         }
         return costs[^1];
+    }
+
+    private static IReadOnlyList<string>? UnknownPropertySuggestions(string unknown, string? path)
+    {
+        if (string.IsNullOrWhiteSpace(unknown)) return null;
+        if (unknown.Equals("references", StringComparison.OrdinalIgnoreCase) &&
+            path?.Contains(".components[", StringComparison.OrdinalIgnoreCase) == true)
+            return ["Put stable reference selectors directly in the Component 'fields' object, for example: \"fields\": { \"TipReference\": \"$slot:muzzle\" }. There is no separate 'references' object."];
+        if (unknown.Equals("key", StringComparison.OrdinalIgnoreCase) &&
+            path?.Contains(".children[", StringComparison.OrdinalIgnoreCase) == true &&
+            !path.Contains(".slot", StringComparison.OrdinalIgnoreCase))
+            return ["Each children[] entry wraps Slot properties in a 'slot' object, for example: { \"slot\": { \"key\": \"target-1\", \"name\": \"Target 1\" } }."];
+        var suggestion = KnownProperties.OrderBy(candidate => EditDistance(unknown, candidate))
+            .ThenBy(candidate => candidate, StringComparer.Ordinal).FirstOrDefault();
+        return suggestion is null ? null :
+            [$"Did you mean '{suggestion}'? Unknown properties are rejected to prevent silent no-ops."];
     }
 
     private static readonly string[] KnownProperties =

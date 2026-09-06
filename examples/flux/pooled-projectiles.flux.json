@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1",
+  "projectDirectory": ".",
+  "parent": "$slot:root",
+  "worldState": "../../.resoloop/state/pooled-projectiles.json",
+  "deployState": "../../.resoloop/flux-state/pooled-projectiles.json",
+  "modules": [
+    {
+      "name": "pooled-projectiles",
+      "source": "PooledProjectiles.pg",
+      "module": "PooledProjectiles",
+      "bindings": {
+        "ProjectilePool": {
+          "mode": "source",
+          "target": "$slot:projectile-pool"
+        }
+      }
+    }
+  ]
+}

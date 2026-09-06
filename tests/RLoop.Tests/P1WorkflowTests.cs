@@ -153,6 +153,94 @@ public sealed class P1WorkflowTests : IDisposable
     }
 
     [Fact]
+    public async Task FluxManifestTreatsFluxAndClrScalarAliasesAsEquivalent()
+    {
+        File.WriteAllText(Path.Combine(_root, "aliases.pg"), """
+            module Aliases
+            in Count: int
+            out Playing: bool
+            where { Playing = Count > 0 }
+            """);
+        var manifest = Path.Combine(_root, "aliases-flux.json");
+        File.WriteAllText(manifest, """
+            { "schemaVersion":"1", "modules":[{
+              "name":"aliases", "source":"aliases.pg", "module":"Aliases",
+              "bindings":{
+                "Count":{"target":"$member:count.Value","mode":"source"},
+                "Playing":{"target":"$member:playing.Value","mode":"drive"}
+              }
+            }] }
+            """);
+        var resolved = new Dictionary<string, FluxResolvedModuleBindings>
+        {
+            ["aliases"] = new([
+                new("Count", "source", "$member:count.Value", "M_Count", "member", "System.Int32"),
+                new("Playing", "drive", "$member:playing.Value", "M_Playing", "member", "System.Boolean")
+            ])
+        };
+
+        var result = await new FluxManifestOrchestrator(new FakeFluxTool()).DeployAsync(manifest,
+            "Reso_Parent", new Uri("ws://localhost:12449"), null, null, resolvedBindings: resolved);
+
+        Assert.True(result.Success);
+    }
+
+    [Fact]
+    public void FluxManifestValidationIsOfflineAndChecksPortCoverage()
+    {
+        File.WriteAllText(Path.Combine(_root, "validated.pg"), """
+            module Validated
+            in Pool: Slot element
+            where { Pool->display }
+            """);
+        var manifest = Path.Combine(_root, "validated-flux.json");
+        File.WriteAllText(manifest, """
+            { "schemaVersion":"1", "worldState":"../state.json", "modules":[{
+              "name":"validated", "source":"validated.pg", "module":"Validated",
+              "bindings":{"Pool":{"target":"$slot:pool","mode":"source"}}
+            }] }
+            """);
+
+        var result = FluxManifestOrchestrator.ValidateManifest(manifest);
+
+        Assert.True(result.Valid);
+        Assert.Equal(1, Assert.Single(result.Modules).Ports);
+        Assert.Equal(Path.GetFullPath(Path.Combine(_root, "..", "state.json")), result.WorldState);
+    }
+
+    [Fact]
+    public void ExplicitFluxStateIsCurrentDirectoryRelativeButManifestStateIsManifestRelative()
+    {
+        var manifestDirectory = Path.Combine(_root, "flux");
+        var commandDirectory = Path.Combine(_root, "command");
+        Directory.CreateDirectory(manifestDirectory);
+        Directory.CreateDirectory(commandDirectory);
+        var manifest = Path.Combine(manifestDirectory, "modules.json");
+
+        Assert.Equal(Path.Combine(commandDirectory, ".resoloop", "state.json"),
+            FluxManifestOrchestrator.ResolveWorldStatePath(manifest, ".resoloop/state.json", "../ignored.json", commandDirectory));
+        Assert.Equal(Path.Combine(_root, "manifest-state.json"),
+            FluxManifestOrchestrator.ResolveWorldStatePath(manifest, null, "../manifest-state.json", commandDirectory));
+    }
+
+    [Fact]
+    public void FluxManifestArrayBindingsExplainTheObjectShape()
+    {
+        File.WriteAllText(Path.Combine(_root, "array.pg"), "module Array where { 1->display }");
+        var manifest = Path.Combine(_root, "array-flux.json");
+        File.WriteAllText(manifest, """
+            { "schemaVersion":"1", "modules":[{
+              "name":"array", "source":"array.pg", "module":"Array", "bindings":[]
+            }] }
+            """);
+
+        var error = Assert.Throws<RLoopException>(() => FluxManifestOrchestrator.ValidateManifest(manifest));
+
+        Assert.Equal("FLUX_MANIFEST_INVALID", error.Code);
+        Assert.Contains(error.Suggestions, suggestion => suggestion.Contains("JSON object keyed by module port name", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task FluxManifestReturnsReobservedModuleChildIdsInsteadOfSdkParentId()
     {
         File.WriteAllText(Path.Combine(_root, "ids.pg"), "module ActualModule where { 1->display }");

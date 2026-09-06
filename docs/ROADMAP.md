@@ -2,6 +2,20 @@
 
 このロードマップは、小さな家ワールドとブロック崩しを `resoloop apply` / Flux deployで実際に構築した結果を基準にしています。優先順位は、差分の収束、安全に再実行できること、結果を自動検証できること、反復時の観測量、表現力の順です。
 
+## 2026-09-06 シューティングレンジ制作フィードバック
+
+- [x] Flux bindingで`int` / `int32` / `System.Int32`、`bool` / `System.Boolean`などのscalar aliasを同値として扱う。
+- [x] CLIで明示した`--state`をcurrent directory基準、manifest内の`worldState`をmanifest基準で解決する。
+- [x] live接続前にmanifest JSON、source、dependency、port、binding coverageを検査する`flux validate-manifest`を追加する。
+- [x] applyのchildren Slot wrapperとComponent reference fieldsについて、誤ったJSON shapeへ文脈固有のsuggestionを返す。
+- [x] test結果へ`verified` / `partial` / `failed`を追加し、structural-onlyを`partial`として明示する。
+- [x] equipable Primary-action toolではRawDataTool、TipReference、左右GripPose、実機smoke checkを優先するskillへ更新する。
+- [x] 多数の同型弾・標的・effectはtemplate-local Fluxを最小化し、名前空間付きDynamicVariableと単一controller moduleでbounded pool全体を制御するskillとexampleを追加する。
+- [ ] 装備によるruntime parent移動後も、再接続時に管理Slotを一意に再解決できるrelocatable item policyを追加する。
+- [ ] GripPoseのlocal axesとmuzzle方向を比較するtransform/tool auditを追加する。
+- [ ] engine標準shader/font/materialを生のsession IDなしで安全に識別するportable item auditを追加する。
+- [ ] RangeLoopIntなどbuild成功後にruntime loadが失敗する組み合わせを最小live fixtureで再現し、version付きpreflightへ反映する。
+
 ## 2026-08-31 実アイテム開発フィードバックの改善計画
 
 インスタントカメラ、テレポーターガン、チーム分けUIXパネルを、インストール済みのresoloop skillだけを使って実際に構築・修正した結果を反映する。3事例の合計は約194分、993 command、136 failureだった。主な探索先はComponent/Member/SyncMethod、Flux node、interface型global binding、宣言値の表現、再接続後のstable Component、UIX固有の描画制約だった。

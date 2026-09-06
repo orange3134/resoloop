@@ -157,11 +157,12 @@ ResoniteLinkのoperationはtransactionではありません。結果は常に `a
 [examples/flux/resoloop.flux.json](../examples/flux/resoloop.flux.json)を参照してください。moduleごとにsource、Flux module path、`dependsOn`を宣言します。依存cycleは事前に拒否され、topological orderで成功buildだけをdeployします。
 
 ~~~powershell
+resoloop flux validate-manifest examples/flux/resoloop.flux.json --json
 resoloop flux deploy-manifest examples/flux/resoloop.flux.json --json
 resoloop flux watch examples/flux/resoloop.flux.json --json
 ~~~
 
-parentに `$slot:key` を使う場合は`worldState`または`--state`が必要です。現在sessionなら保存IDを検証し、sessionが変わっていれば保存pathから再解決します。module input/outputは次のようにstable bindingとして宣言できます。
+`validate-manifest`はlive接続前にmanifest JSON、source、dependency、module signatureとbinding coverageを検証します。parentに `$slot:key` を使う場合は`worldState`または`--state`が必要です。明示したCLI `--state` はcurrent directory基準、manifest内の`worldState`、`source`、`deployState`はmanifest基準です。現在sessionなら保存IDを検証し、sessionが変わっていれば保存pathから再解決します。module input/outputは次のようにstable bindingとして宣言できます。
 
 ~~~json
 {
@@ -177,7 +178,9 @@ parentに `$slot:key` を使う場合は`worldState`または`--state`が必要�
 
 `source`はFlux moduleの `in` 名、`drive`は `out` 名をkeyにします。source targetはslot/component/member、drive targetはmemberだけです。resoloopはworld stateから現在のIDを再解決し、Flux-SDKのInputMap/OutputMapへ渡します。binding宣言と解決結果が一致しない場合はdeployしません。deploy stateはsource、binding、transitive dependencyのhash、置換後module child IDを保存し、no-op/updateと非atomic recoveryを報告します。結果の`parentSlotId`はdeploy先、各moduleの`moduleSlotIdBefore` / `moduleSlotIdAfter`はparent直下を再観測した実module childです。接続が変わっても再観測したchildとhashが一致すればno-opになります。watchは変更を検出して成功buildだけを検証済みparentへ再deployします。
 
-manifest deployはsource headerの`in`/`out` signatureとbindingを一対一で照合してからbuild/deployへ進み、方向、world target型、driveのmember可否を検査します。build結果の`Packing 0 ProtoFlux nodes`は`FLUX_EMPTY_MODULE`、未結線portは`FLUX_MODULE_PORT_UNBOUND`です。Flux-SDK 1.9.xの`IButton global`のようなinterface globalは既知の非原子的失敗を避けるためdeploy前に拒否されます。concrete Componentの`element` inputからmodule内で`asDrivenGlobal`するか、eventだけならDynamic Impulse bridgeを選びます。
+manifest deployはsource headerの`in`/`out` signatureとbindingを一対一で照合してからbuild/deployへ進み、方向、world target型、driveのmember可否を検査します。`int`/`int32`/`System.Int32`や`bool`/`System.Boolean`などのscalar aliasは同値です。build結果の`Packing 0 ProtoFlux nodes`は`FLUX_EMPTY_MODULE`、未結線portは`FLUX_MODULE_PORT_UNBOUND`です。Flux-SDK 1.9.xの`IButton global`のようなinterface globalは既知の非原子的失敗を避けるためdeploy前に拒否されます。concrete Componentの`element` inputからmodule内で`asDrivenGlobal`するか、eventだけならDynamic Impulse bridgeを選びます。
+
+弾や標的のような同型instanceを多数使う場合は、各templateに完全なcontroller graphを複製せず、template-local FluxをDriverなどの不可避な処理へ限定します。instance stateは型を統一した名前空間付きDynamicVariableへ保存し、bounded poolの確保、更新、衝突、reset、再利用を単一controller moduleへ集約します。pool枯渇時の挙動を定義し、再利用前に全stateをresetしてください。
 
 ## Portable item audit
 

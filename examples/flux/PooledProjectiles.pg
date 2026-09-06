@@ -1,0 +1,27 @@
+module PooledProjectiles
+
+// One controller updates a bounded pool. Each projectile template only needs
+// its visual/driver components and the consistently typed DynamicVariables.
+in ProjectilePool: Slot element
+
+where {
+    local _cursor: int32;
+
+    _update = impulse {
+        _cursor <- 0;
+        while _cursor < ProjectilePool->ChildrenCount do impulse {
+            _projectile = ProjectilePool->GetChild(_cursor);
+            _active = _projectile->~read<bool>("Projectile/Active").Value;
+            if _active then impulse {
+                _position = _projectile->~read<float3>("Projectile/Position").Value;
+                _velocity = _projectile->~read<float3>("Projectile/Velocity").Value;
+                _next = _position + _velocity * DeltaTime;
+                _projectile->~write("Projectile/Position", _next);
+                _projectile->SetGlobalPosition(_next);
+            };
+            _cursor <- _cursor + 1;
+        };
+    };
+
+    LocalUpdate(_update);
+}

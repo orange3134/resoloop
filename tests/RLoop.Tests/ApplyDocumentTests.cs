@@ -85,6 +85,49 @@ public sealed class ApplyDocumentTests : IDisposable
     }
 
     [Fact]
+    public void ChildKeyErrorExplainsTheSlotWrapper()
+    {
+        File.WriteAllText(_path, """
+            {
+              "schemaVersion":"1", "ownership":{"key":"test"},
+              "slot":{"key":"root","name":"RootNode","parent":"Root"},
+              "children":[{"key":"target","name":"Target"}]
+            }
+            """);
+
+        var error = Assert.Throws<RLoopException>(() => ApplyDocument.Load(_path));
+
+        Assert.Contains(error.Suggestions, suggestion => suggestion.Contains("wraps Slot properties", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ComponentReferencesErrorExplainsFieldsSyntax()
+    {
+        File.WriteAllText(_path, """
+            {
+              "schemaVersion":"1", "ownership":{"key":"test"},
+              "slot":{"key":"root","name":"RootNode","parent":"Root"},
+              "components":[{"key":"tool","type":"FrooxEngine.RawDataTool",
+                "references":{"TipReference":"$slot:muzzle"}}]
+            }
+            """);
+
+        var error = Assert.Throws<RLoopException>(() => ApplyDocument.Load(_path));
+
+        Assert.Contains(error.Suggestions, suggestion => suggestion.Contains("Component 'fields' object", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void StructuralOnlyTestReportIsPartialRatherThanVerified()
+    {
+        var report = new ApplyTestReport(true, true, 1, 1,
+            [new ApplyTestCaseResult("gun", true, true, false, "Structure only", [])]);
+
+        Assert.Equal("partial", report.Verification);
+        Assert.Equal("partial", report.Tests[0].Verification);
+    }
+
+    [Fact]
     public async Task MissingAssertionsReturnsStructuredValidationIssue()
     {
         File.WriteAllText(_path, """

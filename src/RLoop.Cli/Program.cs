@@ -456,6 +456,7 @@ public static class Program
                         new Dictionary<string, object?> { ["report"] = report });
                 output.Success(report, writer =>
                 {
+                    writer.WriteLine($"verification={report.Verification}");
                     foreach (var test in report.Tests) writer.WriteLine($"{(test.Passed ? "PASS" : "FAIL")} {test.Name} ({(test.StructuralOnly ? "structural-only" : "runtime")})");
                 });
                 break;
@@ -611,6 +612,17 @@ public static class Program
     private static async Task<int> RunFlux(ParsedArguments args, OutputWriter output, RLoopConfig config, IFluxTool flux, CancellationToken ct)
     {
         var sub = args.Positional(1, "flux subcommand").ToLowerInvariant();
+        if (sub == "validate-manifest")
+        {
+            var validation = FluxManifestOrchestrator.ValidateManifest(args.Positional(2, "Flux manifest"));
+            output.Success(validation, writer =>
+            {
+                writer.WriteLine($"valid manifest {validation.Manifest}");
+                foreach (var module in validation.Modules)
+                    writer.WriteLine($"  {module.Name,-24} ports={module.Ports} bindings={module.Bindings} source={module.Source}");
+            });
+            return ExitCodes.Success;
+        }
         if (sub == "status") { output.Success(await flux.GetStatusAsync(ct)); return ExitCodes.Success; }
         if (sub == "node")
         {
@@ -666,9 +678,8 @@ public static class Program
             var world = new WorldService(client);
             var currentSession = await client.GetSessionInfoAsync(ct);
             var parentSelector = args.Option("parent") ?? manifest.Parent ?? "Root";
-            var stateSetting = args.Option("state") ?? manifest.WorldState;
-            var statePath = string.IsNullOrWhiteSpace(stateSetting) ? null :
-                Path.GetFullPath(stateSetting, Path.GetDirectoryName(manifestPath)!);
+            var statePath = FluxManifestOrchestrator.ResolveWorldStatePath(manifestPath,
+                args.Option("state"), manifest.WorldState, Environment.CurrentDirectory);
             string parentId;
             if (parentSelector.StartsWith("$slot:", StringComparison.Ordinal))
             {
@@ -886,6 +897,7 @@ ProtoFlux (Flux-SDK):
   resoloop flux status
   resoloop flux node search QUERY [--limit 50] [--refresh] [--library-path DIR]
   resoloop flux node describe NAME_OR_FULL_NAME [--library-path DIR]
+  resoloop flux validate-manifest FILE.json
   resoloop flux check|build|watch FILE.pg [--project DIR] [--out FILE] [--library-path DIR]
   resoloop flux deploy --project DIR --module MODULE_PATH [--parent SLOT] [--library-path DIR]
   resoloop flux deploy-manifest FILE.json [--parent SLOT|$slot:key] [--state WORLD_STATE]

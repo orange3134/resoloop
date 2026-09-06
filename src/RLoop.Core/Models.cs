@@ -188,9 +188,15 @@ public sealed record SyncMethodCallResult(bool Success, JsonNode? Result, string
 public sealed record ApplyAssertionResult(string Name, string Target, string Phase, bool Passed,
     JsonNode? Expected, JsonNode? Actual, string Message, bool Evaluated = true);
 public sealed record ApplyTestCaseResult(string Name, bool Passed, bool StructuralOnly, bool ProbeExecuted,
-    string Capability, IReadOnlyList<ApplyAssertionResult> Assertions);
+    string Capability, IReadOnlyList<ApplyAssertionResult> Assertions)
+{
+    public string Verification => !Passed ? "failed" : StructuralOnly ? "partial" : "verified";
+}
 public sealed record ApplyTestReport(bool Passed, bool StructuralOnly, int Total, int PassedCount,
-    IReadOnlyList<ApplyTestCaseResult> Tests);
+    IReadOnlyList<ApplyTestCaseResult> Tests)
+{
+    public string Verification => !Passed ? "failed" : StructuralOnly ? "partial" : "verified";
+}
 
 public sealed record ApplyResult(
     string SlotId,
