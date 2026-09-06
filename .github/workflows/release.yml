@@ -6,7 +6,7 @@ on:
       version:
         description: Immutable SemVer preview version
         required: true
-        default: 0.1.0-preview.1
+        default: 0.1.0-preview.3
 
 permissions:
   contents: write
