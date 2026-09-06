@@ -1,5 +1,5 @@
 # resoloop
-![resoloop_logo](resource\resoloop_resonite_16_9.png)
+![resoloop_logo](./resource/resoloop_resonite_16_9.png)
 resoloop は、Codex や Claude Code などの AI エージェントから Resonite のワールドを操作するための CLI です。
 
 作りたいものを AI に伝えると、AI が現在のワールドを確認し、Slot や Component の構成をファイルへ記述して、ResoniteLink 経由で反映・検証します。作業内容がファイルとして残るため、同じ構成を繰り返し適用したり、Git で変更を管理したりできます。
