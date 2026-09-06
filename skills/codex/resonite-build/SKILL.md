@@ -22,4 +22,6 @@ Use resoloop with --json as the primitive interface and keep source artifacts in
 
 The status `connectionId` is scoped to one ResoniteLink connection, not a stable world identity. Refresh raw IDs after reconnect/restart and rely on managed key/path re-resolution.
 
+For playback graphs, bind a reflected SyncPlayback member to a concrete `SyncPlayback element` input. Verify the member and its IPlayable implementation through Reflection; use `ObjectCast<SyncPlayback,IPlayable>` inside the graph when required by Flux-SDK type checking. Re-read play, loop, and position after deployment; a successful build alone does not verify audible playback.
+
 ResoniteLink 0.13.1 does not expose UIX SyncDelegate members for update and does not expose Dynamic Impulse or CallInput trigger entrypoints as callable SyncMethods. Do not invent raw member payloads or report button/impulse behavior as runtime-verified; keep the result structural-only unless runtime Reflection exposes a supported method.

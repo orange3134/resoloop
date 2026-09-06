@@ -6,6 +6,21 @@ namespace RLoop.Tests;
 public sealed class ModelMappingTests
 {
     [Fact]
+    public void PreservesPlaybackTypeForFluxElementBindingsAndPlaybackState()
+    {
+        var mapped = ModelMapper.MapMember(new Link.SyncPlayback
+        {
+            ID = "PlaybackMember", Play = true, Loop = true, Position = 12.5, Speed = 1
+        });
+        Assert.Equal("SyncPlayback", mapped.Kind);
+        Assert.Equal("PlaybackMember", mapped.Id);
+        Assert.Equal("[FrooxEngine]FrooxEngine.SyncPlayback", mapped.Type);
+        Assert.True(mapped.Value!["play"]!.GetValue<bool>());
+        Assert.True(mapped.Value["loop"]!.GetValue<bool>());
+        Assert.Equal(12.5, mapped.Value["position"]!.GetValue<double>());
+    }
+
+    [Fact]
     public void MapsSlotHierarchyWithoutLeakingLinkModels()
     {
         var slot = new Link.Slot

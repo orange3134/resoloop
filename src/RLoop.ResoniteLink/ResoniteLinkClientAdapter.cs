@@ -493,6 +493,8 @@ internal static class ModelMapper
 
     public static MemberValue MapMember(Link.Member member) => member switch
     {
+        Link.SyncPlayback playback => new MemberValue("SyncPlayback", playback.ID,
+            "[FrooxEngine]FrooxEngine.SyncPlayback", JsonSerializer.SerializeToNode(playback, JsonOptions)),
         Link.Field_Enum enumField => new MemberValue("field", enumField.ID, enumField.EnumType,
             JsonValue.Create(enumField.Value)),
         Link.Field_Nullable_Enum enumField => new MemberValue("field", enumField.ID, enumField.EnumType,
