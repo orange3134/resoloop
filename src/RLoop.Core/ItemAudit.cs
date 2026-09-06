@@ -9,9 +9,11 @@ public sealed record ItemAuditReport(string RootId, string RootName, string? Roo
 
 public static class ItemAuditService
 {
-    public static ItemAuditReport Audit(SlotInfo root, IReadOnlyCollection<string>? allowedExternalIds = null, bool strict = false)
+    public static ItemAuditReport Audit(SlotInfo root, IReadOnlyCollection<string>? allowedExternalIds = null, bool strict = false,
+        IReadOnlyCollection<string>? allowedExternalRoles = null)
     {
         allowedExternalIds ??= [];
+        allowedExternalRoles ??= [];
         var slots = Flatten(root).ToArray();
         var components = slots.SelectMany(slot => slot.Components).ToArray();
         var owned = new HashSet<string>(StringComparer.Ordinal);
@@ -36,16 +38,19 @@ public static class ItemAuditService
                     references++;
                     if (owned.Contains(value.TargetId)) { internalReferences++; return; }
                     var allowed = allowedExternalIds.Contains(value.TargetId, StringComparer.Ordinal);
+                    var role = SimpleType(component.Type) + ":" + path;
+                    var allowedRole = allowedExternalRoles.Contains(role, StringComparer.OrdinalIgnoreCase);
                     var runtime = IsRuntimeContext(value.TargetType);
                     var protoFlux = component.Type.Contains("ProtoFlux", StringComparison.OrdinalIgnoreCase);
-                    var classification = allowed ? "explicitly-allowed" : runtime ? "runtime-context" :
+                    var classification = allowed ? "explicitly-allowed" : allowedRole ? "explicitly-allowed-role" : runtime ? "runtime-context" :
                         protoFlux ? "flux-external" : "required-world-element";
-                    var severity = allowed ? "info" : runtime ? "warning" : "error";
-                    var code = allowed ? "ITEM_EXTERNAL_REFERENCE_ALLOWED" : runtime ? "ITEM_RUNTIME_CONTEXT_REFERENCE" :
+                    var severity = allowed || allowedRole ? "info" : runtime ? "warning" : "error";
+                    var code = allowed ? "ITEM_EXTERNAL_REFERENCE_ALLOWED" : allowedRole ? "ITEM_EXTERNAL_ROLE_ALLOWED" : runtime ? "ITEM_RUNTIME_CONTEXT_REFERENCE" :
                         protoFlux ? "ITEM_FLUX_EXTERNAL_REFERENCE" : "ITEM_EXTERNAL_REFERENCE";
                     issues.Add(new ItemAuditIssue(code, severity, component.Id, component.Type, path, value.TargetId,
                         value.TargetType, classification, allowed
                             ? "External target is covered by an explicit allow-list entry."
+                            : allowedRole ? $"External target role '{role}' is covered by an explicit stable allow-list entry."
                             : runtime ? "Reference depends on runtime context and must be reacquired after spawning."
                             : "Reference targets an element outside the saved item root and will not travel with the item."));
                 });

@@ -63,6 +63,36 @@ public sealed class ApplyWorkflowTests : IDisposable
     }
 
     [Fact]
+    public async Task RuntimeRelocatableItemCanBeResolvedAfterMoveButApplyStopsBeforeMutation()
+    {
+        var path = Path.Combine(_root, "runtime-relocatable.json");
+        File.WriteAllText(path, """
+            {
+              "schemaVersion":"1", "ownership":{"key":"runtime-relocatable"},
+              "slot":{"key":"root","name":"ManagedTool","parent":"Root","runtimeRelocatable":true},
+              "components":[{"key":"identity","type":"Test.Target","fields":{"Enabled":true},"identityFields":["Enabled"]}]
+            }
+            """);
+        var document = ApplyDocument.Load(path);
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "runtime-relocatable.state.json");
+        var first = await service.ApplyAsync(document, new ApplyOptions(state));
+        var hand = await client.CreateSlotAsync(new SlotCreateRequest("Root", "UserHand"));
+        await client.UpdateSlotAsync(new SlotUpdateRequest(first.SlotId, ParentId: hand));
+        await client.CreateSlotAsync(new SlotCreateRequest("Root", "ManagedTool"));
+        client.SessionId = "session-2";
+        client.ResetWriteCounts();
+
+        var resolved = await service.ResolveStableReferenceAsync(state, "$slot:root", client.SessionId);
+        var error = await Assert.ThrowsAsync<RLoopException>(() => service.PlanApplyAsync(document, new ApplyOptions(state)));
+
+        Assert.Equal(first.SlotId, resolved.Id);
+        Assert.Equal("APPLY_RUNTIME_RELOCATABLE_ACTIVE", error.Code);
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Fact]
     public async Task InitialFieldsAreAppliedOnlyWhenComponentIsCreated()
     {
         var path = Path.Combine(_root, "initial-fields.json");

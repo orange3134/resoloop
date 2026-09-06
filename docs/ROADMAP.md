@@ -11,10 +11,10 @@
 - [x] test結果へ`verified` / `partial` / `failed`を追加し、structural-onlyを`partial`として明示する。
 - [x] equipable Primary-action toolではRawDataTool、TipReference、左右GripPose、実機smoke checkを優先するskillへ更新する。
 - [x] 多数の同型弾・標的・effectはtemplate-local Fluxを最小化し、名前空間付きDynamicVariableと単一controller moduleでbounded pool全体を制御するskillとexampleを追加する。
-- [ ] 装備によるruntime parent移動後も、再接続時に管理Slotを一意に再解決できるrelocatable item policyを追加する。
-- [ ] GripPoseのlocal axesとmuzzle方向を比較するtransform/tool auditを追加する。
-- [ ] engine標準shader/font/materialを生のsession IDなしで安全に識別するportable item auditを追加する。
-- [ ] RangeLoopIntなどbuild成功後にruntime loadが失敗する組み合わせを最小live fixtureで再現し、version付きpreflightへ反映する。
+- [x] 装備によるruntime parent移動後も、再接続時に管理Slotを一意に再解決できる`runtimeRelocatable` policyを追加する。world-wide fallbackは同名かつ管理Component証拠が一意な場合だけ採用し、移動中のplan/applyはmutation前に停止する。
+- [x] `tool audit`でRawDataTool.TipReference、左右HandSide、GripPose local Z+とmuzzle方向の内積を比較する。
+- [x] engine標準shader/font/materialなど意図した外部依存を、生のsession IDではなく監査結果の安定した`Component:MemberPath` roleで明示許可できるportable item auditを追加する。
+- [x] `RangeLoopInt`がbuild成功後にruntime load失敗した実測ペア（Resonite 2026.9.2.1275 / Flux-SDK 1.9.0+e674...）を最小fixtureで固定し、manifest deploy前のversion付きpreflightへ反映する。他versionへは推測で拡張しない。
 
 ## 2026-08-31 実アイテム開発フィードバックの改善計画
 

@@ -2,7 +2,8 @@ using System.Text.Json;
 
 namespace RLoop.Core;
 
-public sealed record StableSlotReference(string Key, string Id, string Path, string? SessionId, string OwnershipKey);
+public sealed record StableSlotReference(string Key, string Id, string Path, string? SessionId, string OwnershipKey,
+    bool RuntimeRelocatable = false);
 public sealed record StableComponentReference(string Key, string Id, string SlotKey, string Type, int TypeOrdinal,
     string? SessionId, string OwnershipKey, int? ComponentIndex = null,
     IReadOnlyList<string>? MemberNames = null, IReadOnlyDictionary<string, string>? IdentityValues = null,
@@ -61,7 +62,8 @@ public static class StableReferenceResolver
             return new StableSlotReference(key, slot.GetProperty("id").GetString() ?? string.Empty,
                 slot.GetProperty("path").GetString() ?? string.Empty,
                 root.TryGetProperty("sessionId", out var session) ? session.GetString() : null,
-                root.GetProperty("ownershipKey").GetString() ?? string.Empty);
+                root.GetProperty("ownershipKey").GetString() ?? string.Empty,
+                slot.TryGetProperty("runtimeRelocatable", out var relocatable) && relocatable.ValueKind == JsonValueKind.True);
         }
         catch (RLoopException) { throw; }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException)

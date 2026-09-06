@@ -62,6 +62,24 @@ public sealed class ItemAuditTests
         Assert.Equal("ITEM_EXTERNAL_REFERENCE_ALLOWED", Assert.Single(allowed.Issues).Code);
     }
 
+    [Fact]
+    public void StableComponentMemberRoleCanReplaceSessionScopedExternalIdAllowList()
+    {
+        var root = Slot("S_Root", [
+            new ComponentSummary("C_Grab", "FrooxEngine.Grabbable", new Dictionary<string, MemberValue>()),
+            new ComponentSummary("C_Text", "FrooxEngine.TextRenderer", new Dictionary<string, MemberValue>
+            {
+                ["Font"] = new("reference", "M_Font", TargetId: "Reso_SessionOnly",
+                    TargetType: "FrooxEngine.IAssetProvider<FrooxEngine.FontSet>")
+            })
+        ]);
+
+        var report = ItemAuditService.Audit(root, strict: true, allowedExternalRoles: ["TextRenderer:Font"]);
+
+        Assert.True(report.Portable);
+        Assert.Equal("ITEM_EXTERNAL_ROLE_ALLOWED", Assert.Single(report.Issues).Code);
+    }
+
     private static SlotInfo Slot(string id, IReadOnlyList<ComponentSummary> components) =>
         new(id, "Item", "Root", null, null, null, true, true, null, false, components, [], "Root/Item");
 }

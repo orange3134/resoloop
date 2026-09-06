@@ -144,6 +144,22 @@ public sealed class ApplyDocumentTests : IDisposable
         Assert.Contains(result.Issues, issue => issue.Code == "APPLY_TEST_ASSERTIONS_MISSING");
     }
 
+    [Fact]
+    public async Task RuntimeRelocatableSlotRequiresLocalComponentEvidence()
+    {
+        File.WriteAllText(_path, """
+            {
+              "schemaVersion":"1", "ownership":{"key":"movable"},
+              "slot":{"key":"root","name":"Tool","parent":"Root","runtimeRelocatable":true}
+            }
+            """);
+
+        var result = await ApplyDocumentValidator.ValidateAsync(ApplyDocument.Load(_path));
+
+        Assert.False(result.Valid);
+        Assert.Contains(result.Issues, issue => issue.Code == "APPLY_RUNTIME_RELOCATABLE_EVIDENCE_REQUIRED");
+    }
+
     public void Dispose()
     {
         if (File.Exists(_path)) File.Delete(_path);

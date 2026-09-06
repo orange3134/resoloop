@@ -170,9 +170,19 @@ public sealed class WorldService(IResoniteClient client)
             {
                 try { id = (await client.GetSlotAsync(stable.Id, 0, false, cancellationToken)).Id; }
                 catch (RLoopException ex) when (ex.Code is "SLOT_NOT_FOUND" or "RESONITE_OPERATION_FAILED")
-                { id = await ResolveSlotIdAsync(stable.Path, cancellationToken); }
+                {
+                    try { id = await ResolveSlotIdAsync(stable.Path, cancellationToken); }
+                    catch (RLoopException pathError) when (stable.RuntimeRelocatable &&
+                        pathError.Code is "SLOT_NOT_FOUND" or "SLOT_PATH_NOT_FOUND")
+                    { id = (await ResolveRelocatableSlotAsync(stateFile, stable, cancellationToken)).Id; }
+                }
             }
-            else id = await ResolveSlotIdAsync(stable.Path, cancellationToken);
+            else
+            {
+                id = stable.RuntimeRelocatable
+                    ? (await ResolveRelocatableSlotAsync(stateFile, stable, cancellationToken)).Id
+                    : await ResolveSlotIdAsync(stable.Path, cancellationToken);
+            }
             return new ResolvedWorldReference(selector, id, "slot", "[FrooxEngine]FrooxEngine.Slot", stable.Path);
         }
 
@@ -192,7 +202,8 @@ public sealed class WorldService(IResoniteClient client)
             if (component is null)
             {
                 var stableSlot = StableReferenceResolver.ResolveSlot(stateFile, "$slot:" + stableComponent.SlotKey);
-                var slotId = await ResolveSlotIdAsync(stableSlot.Path, cancellationToken);
+                var slotId = (await ResolveStableReferenceCoreAsync(stateFile, "$slot:" + stableComponent.SlotKey,
+                    currentConnectionId, resolvingComponents, cancellationToken)).Id;
                 var slot = await client.GetSlotAsync(slotId, 0, true, cancellationToken);
                 Dictionary<string, string>? referenceTargets = null;
                 if (firstVisit && stableComponent.ReferenceSelectors is { Count: > 0 })
@@ -244,18 +255,62 @@ public sealed class WorldService(IResoniteClient client)
         }
     }
 
+    private async Task<SlotInfo> ResolveRelocatableSlotAsync(string stateFile, StableSlotReference stable,
+        CancellationToken cancellationToken)
+    {
+        var state = ApplyStateStore.Load(Path.GetFullPath(stateFile), stable.OwnershipKey);
+        var evidence = state.Components.Values.Where(component => component.SlotKey == stable.Key).ToArray();
+        if (evidence.Length == 0)
+            throw new RLoopException("STABLE_RELOCATABLE_EVIDENCE_MISSING",
+                $"Runtime-relocatable Slot '{stable.Key}' has no managed Component evidence for a safe world-wide search.",
+                ExitCodes.ValidationFailed, suggestions:
+                ["Declare at least one keyed Component on the runtimeRelocatable Slot and apply it before moving the item."]);
+        var name = NormalizePath(stable.Path).Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? string.Empty;
+        var world = AddPaths(await client.GetSlotAsync("Root", 64, true, cancellationToken), "Root");
+        var candidates = new List<SlotInfo>();
+        Visit(world, "Root", slot =>
+        {
+            if (slot.IsReferenceOnly || !slot.Name.Equals(name, StringComparison.Ordinal)) return;
+            if (evidence.All(component => StableComponentCandidates(slot.Components, component.Type,
+                    component.ComponentIndex, component.MemberNames, component.IdentityValues).Length == 1))
+                candidates.Add(slot);
+        });
+        if (candidates.Count == 1) return candidates[0];
+        if (candidates.Count == 0)
+            throw new RLoopException("STABLE_RELOCATABLE_SLOT_NOT_FOUND",
+                $"Runtime-relocatable Slot '{stable.Key}' could not be uniquely re-resolved outside its saved path.",
+                ExitCodes.NotFound, new Dictionary<string, object?> { ["savedPath"] = stable.Path, ["name"] = name });
+        throw new RLoopException("STABLE_RELOCATABLE_SLOT_AMBIGUOUS",
+            $"Runtime-relocatable Slot '{stable.Key}' matches multiple Slots outside its saved path.",
+            ExitCodes.ValidationFailed, new Dictionary<string, object?>
+            {
+                ["savedPath"] = stable.Path,
+                ["candidateIds"] = candidates.Select(candidate => candidate.Id).ToArray(),
+                ["candidatePaths"] = candidates.Select(candidate => candidate.Path).ToArray()
+            }, ["Add identityFields with immutable values to a managed Component on the relocatable Slot."]);
+    }
+
     private static string RequireStateFile(string? stateFile, string selector) =>
         !string.IsNullOrWhiteSpace(stateFile) ? stateFile : throw new RLoopException(
             "WORLD_STATE_REQUIRED", $"Selector '{selector}' requires --state WORLD_STATE.", ExitCodes.InvalidArguments,
             suggestions: ["Pass the apply world-state file that contains this stable key."]);
 
     public async Task<ItemAuditReport> AuditItemAsync(string selector, IReadOnlyCollection<string>? allowedExternalIds = null,
-        bool strict = false, CancellationToken cancellationToken = default)
+        bool strict = false, IReadOnlyCollection<string>? allowedExternalRoles = null,
+        CancellationToken cancellationToken = default)
     {
         var id = await ResolveSlotIdAsync(selector, cancellationToken);
         var root = AddPaths(RemoveReferenceOnlyChildren(await client.GetSlotAsync(id, 64, true, cancellationToken)),
             selector.StartsWith("Root", StringComparison.OrdinalIgnoreCase) ? NormalizePath(selector) : selector);
-        return ItemAuditService.Audit(root, allowedExternalIds, strict);
+        return ItemAuditService.Audit(root, allowedExternalIds, strict, allowedExternalRoles);
+    }
+
+    public async Task<ToolAuditReport> AuditToolAsync(string selector, int depth = 16,
+        float minimumAlignmentDot = 0.8f, CancellationToken cancellationToken = default)
+    {
+        var id = await ResolveSlotIdAsync(selector, cancellationToken);
+        var root = AddPaths(await client.GetSlotAsync(id, Math.Clamp(depth, 0, 64), true, cancellationToken), selector);
+        return ToolAuditService.Audit(root, minimumAlignmentDot);
     }
 
     public Task<ApplyValidationResult> ValidateApplyAsync(ApplyDocument document, bool strict,
@@ -317,7 +372,7 @@ public sealed class WorldService(IResoniteClient client)
                     case "create":
                         // Persist intent before the remote mutation. If the response is lost after Resonite
                         // creates the Slot, the next run can bind the exact pending path without duplicating it.
-                        prepared.State.Slots[node.StableKey] = new ApplyStateSlot(string.Empty, node.Path);
+                        prepared.State.Slots[node.StableKey] = new ApplyStateSlot(string.Empty, node.Path, node.Spec.RuntimeRelocatable);
                         Checkpoint(prepared);
                         node.Id = await client.CreateSlotAsync(new SlotCreateRequest(parentId, node.Spec.Name,
                             node.Spec.Position?.ToVector3("position"), node.Spec.Rotation?.ToQuaternion("rotation"),
@@ -335,7 +390,7 @@ public sealed class WorldService(IResoniteClient client)
                         counts.SlotsUnchanged++;
                         break;
                 }
-                prepared.State.Slots[node.StableKey] = new ApplyStateSlot(node.Id, node.Path);
+                prepared.State.Slots[node.StableKey] = new ApplyStateSlot(node.Id, node.Path, node.Spec.RuntimeRelocatable);
                 Checkpoint(prepared);
                 completed++;
                 options.Progress?.Invoke(new ApplyProgress("slots", completed, total, node.Path, $"{node.SlotAction} Slot"));
@@ -742,13 +797,32 @@ public sealed class WorldService(IResoniteClient client)
         var rootKey = document.Slot!.Key!;
         if (state.Slots.TryGetValue(rootKey, out var rootState) && !ContainsSlot(parent, rootState.Id))
         {
+            if (rootState.RuntimeRelocatable && !sameSession)
+            {
+                var stable = new StableSlotReference(rootKey, rootState.Id, rootState.Path, state.SessionId,
+                    state.OwnershipKey, true);
+                var relocated = await ResolveRelocatableSlotAsync(statePath, stable, cancellationToken);
+                state.Slots[rootKey] = rootState = rootState with { Id = relocated.Id };
+                snapshots.Add((relocated, relocated.Path ?? rootState.Path));
+            }
+            else
             try
             {
                 var oldRootId = sameSession && !string.IsNullOrWhiteSpace(rootState.Id)
                     ? rootState.Id : await ResolveSlotIdAsync(rootState.Path, cancellationToken);
                 snapshots.Add((await client.GetSlotAsync(oldRootId, Math.Clamp(stateDepth, 0, 64), true, cancellationToken), rootState.Path));
             }
-            catch (RLoopException ex) when (ex.Code is "SLOT_NOT_FOUND" or "SLOT_PATH_NOT_FOUND" or "RESONITE_OPERATION_FAILED") { }
+            catch (RLoopException ex) when (ex.Code is "SLOT_NOT_FOUND" or "SLOT_PATH_NOT_FOUND" or "RESONITE_OPERATION_FAILED")
+            {
+                if (rootState.RuntimeRelocatable)
+                {
+                    var stable = new StableSlotReference(rootKey, rootState.Id, rootState.Path, state.SessionId,
+                        state.OwnershipKey, true);
+                    var relocated = await ResolveRelocatableSlotAsync(statePath, stable, cancellationToken);
+                    state.Slots[rootKey] = rootState = rootState with { Id = relocated.Id };
+                    snapshots.Add((relocated, relocated.Path ?? rootState.Path));
+                }
+            }
         }
         var prepared = new PreparedApply(document, options, state, statePath, session, parentId, sameSession, snapshots,
             migrations.Slots, migrations.Components);
@@ -781,6 +855,14 @@ public sealed class WorldService(IResoniteClient client)
                 ["Inspect the target, then re-run with --adopt to bind this exact root Slot without deleting it."]);
         var desiredParentId = parentRuntime?.Existing?.Id ?? (parentRuntime is null ? prepared.ParentId : null);
         var relocating = existing is not null && (desiredParentId is null || existing.ParentId != desiredParentId);
+        if (relocating && spec.Slot.RuntimeRelocatable && stateSlot is not null &&
+            NormalizePath(stateSlot.Path) == NormalizePath(path))
+            throw new RLoopException("APPLY_RUNTIME_RELOCATABLE_ACTIVE",
+                $"Managed Slot '{stableKey}' is currently outside its declared parent, which is expected for a runtime-relocatable item.",
+                ExitCodes.ValidationFailed, new Dictionary<string, object?>
+                {
+                    ["key"] = stableKey, ["declaredPath"] = path, ["currentParentId"] = existing!.ParentId
+                }, ["Drop or return the item to its declared parent before apply; the command stopped before mutation."]);
         var action = existing is null ? "create" : relocating ? "relocate" : SlotNeedsUpdate(existing, spec.Slot) ? "update" : "no-op";
         var node = new NodeRuntime(spec.Slot, spec.Components ?? [], parentRuntime, existing, stableKey, path, action);
         prepared.Nodes.Add(node);
@@ -1228,12 +1310,13 @@ public sealed class WorldService(IResoniteClient client)
         SlotInfo[] candidates = [];
         if (state is not null && sameSession)
             candidates = parent.Children.Where(x => x.Id == state.Id).ToArray();
-        if (candidates.Length == 0 && state is not null)
+        if (candidates.Length == 0 && state is not null && !state.RuntimeRelocatable)
         {
             var oldName = state.Path.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
             if (!string.IsNullOrWhiteSpace(oldName)) candidates = parent.Children.Where(x => x.Name == oldName).ToArray();
         }
-        if (candidates.Length == 0) candidates = parent.Children.Where(x => x.Name == desiredName).ToArray();
+        if (candidates.Length == 0 && state?.RuntimeRelocatable != true)
+            candidates = parent.Children.Where(x => x.Name == desiredName).ToArray();
         if (candidates.Length > 1)
             throw new RLoopException("APPLY_TARGET_AMBIGUOUS", $"Multiple Slots match managed target '{desiredPath}'.", ExitCodes.ValidationFailed,
                 new Dictionary<string, object?> { ["ids"] = candidates.Select(x => x.Id).ToArray() });
@@ -1243,7 +1326,7 @@ public sealed class WorldService(IResoniteClient client)
     private static SlotInfo? FindManagedSlot(PreparedApply prepared, ApplyStateSlot? state)
     {
         if (state is null) return null;
-        if (prepared.SameSession && !string.IsNullOrWhiteSpace(state.Id))
+        if ((prepared.SameSession || state.RuntimeRelocatable) && !string.IsNullOrWhiteSpace(state.Id))
         {
             var byId = prepared.SnapshotSlots.Where(slot => slot.Id == state.Id).ToArray();
             if (byId.Length == 1) return byId[0];
@@ -1253,7 +1336,8 @@ public sealed class WorldService(IResoniteClient client)
         if (byPath.Length > 1)
             throw new RLoopException("APPLY_TARGET_AMBIGUOUS", $"Multiple Slots match managed state path '{state.Path}'.",
                 ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["ids"] = byPath.Select(slot => slot.Id).ToArray() });
-        return byPath.SingleOrDefault();
+        if (byPath.Length == 1) return byPath[0];
+        return null;
     }
 
     private static SlotInfo? FindStateSlot(PreparedApply prepared, string slotKey) =>

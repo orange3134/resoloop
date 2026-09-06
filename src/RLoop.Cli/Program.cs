@@ -481,7 +481,7 @@ public static class Program
                 var auditRoot = await world.ResolveSlotSelectorAsync(args.Positional(2, "Item root Slot ID, path, or $slot:key"),
                     args.Option("state"), cancellationToken);
                 var report = await world.AuditItemAsync(auditRoot, allowed,
-                    args.Has("strict"), cancellationToken);
+                    args.Has("strict"), args.Options("allow-external-role"), cancellationToken);
                 if (!report.Portable)
                     throw new RLoopException("ITEM_NOT_PORTABLE", $"Item root '{report.RootName}' contains references that will not travel with it.",
                         ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["report"] = report },
@@ -490,6 +490,27 @@ public static class Program
                 {
                     writer.WriteLine($"portable={report.Portable} slots={report.Slots} components={report.Components} references={report.References}");
                     foreach (var issue in report.Issues) writer.WriteLine($"{issue.Severity,-7} {issue.Code} {issue.Member} -> {issue.TargetId}");
+                });
+                break;
+            }
+            case "tool":
+            {
+                var sub = args.Positional(1, "tool subcommand").ToLowerInvariant();
+                if (sub != "audit") throw UnknownCommand($"tool {sub}");
+                var toolRoot = await world.ResolveSlotSelectorAsync(
+                    args.Positional(2, "Tool root Slot ID, path, or $slot:key"), args.Option("state"), cancellationToken);
+                var report = await world.AuditToolAsync(toolRoot, args.IntOption("depth", 16, 1, 64),
+                    cancellationToken: cancellationToken);
+                if (!report.Valid)
+                    throw new RLoopException("TOOL_AUDIT_FAILED",
+                        $"Tool root '{report.RootName}' failed RawDataTool/GripPose geometry checks.",
+                        ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["report"] = report },
+                        ["Correct TipReference and make each GripPose local +Z point toward the tip, then audit again."]);
+                output.Success(report, writer =>
+                {
+                    writer.WriteLine($"valid={report.Valid} structuralOnly={report.StructuralOnly} grips={report.GripPoses.Count}");
+                    foreach (var grip in report.GripPoses)
+                        writer.WriteLine($"{grip.HandSide,-7} dot={grip.Dot:F3} aligned={grip.Aligned} {grip.SlotPath}");
                 });
                 break;
             }
@@ -615,6 +636,11 @@ public static class Program
         if (sub == "validate-manifest")
         {
             var validation = FluxManifestOrchestrator.ValidateManifest(args.Positional(2, "Flux manifest"));
+            var compatibility = FluxRuntimeCompatibility.CheckManifest(validation.Manifest,
+                args.Option("resonite-version"), args.Option("flux-version"));
+            if (compatibility.Count > 0)
+                FluxRuntimeCompatibility.ThrowIfKnownIncompatible(validation.Manifest,
+                    args.Option("resonite-version"), args.Option("flux-version"));
             output.Success(validation, writer =>
             {
                 writer.WriteLine($"valid manifest {validation.Manifest}");
@@ -677,6 +703,8 @@ public static class Program
             await client.ConnectAsync(uri, TimeSpan.FromSeconds(config.TimeoutSeconds), ct);
             var world = new WorldService(client);
             var currentSession = await client.GetSessionInfoAsync(ct);
+            var fluxStatus = await flux.GetStatusAsync(ct);
+            FluxRuntimeCompatibility.ThrowIfKnownIncompatible(manifestPath, currentSession.ResoniteVersion, fluxStatus.Version);
             var parentSelector = args.Option("parent") ?? manifest.Parent ?? "Root";
             var statePath = FluxManifestOrchestrator.ResolveWorldStatePath(manifestPath,
                 args.Option("state"), manifest.WorldState, Environment.CurrentDirectory);
@@ -891,13 +919,15 @@ Editing:
   resoloop plan|diff FILE.json [--state FILE] [--adopt] [--changes-only|--creates-only|--deletes-only|--summary]
   resoloop apply FILE.json [--state FILE] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
   resoloop test FILE.json [--state FILE] [--probe --yes]
-  resoloop item audit SLOT [--strict] [--allow-external ID|PATH|$slot:key ...] [--state WORLD_STATE]
+  resoloop item audit SLOT [--strict] [--allow-external ID|PATH|$slot:key ...]
+    [--allow-external-role COMPONENT:MEMBER ...] [--state WORLD_STATE]
+  resoloop tool audit SLOT|$slot:key [--state WORLD_STATE] [--depth 16]
 
 ProtoFlux (Flux-SDK):
   resoloop flux status
   resoloop flux node search QUERY [--limit 50] [--refresh] [--library-path DIR]
   resoloop flux node describe NAME_OR_FULL_NAME [--library-path DIR]
-  resoloop flux validate-manifest FILE.json
+  resoloop flux validate-manifest FILE.json [--resonite-version VERSION --flux-version VERSION]
   resoloop flux check|build|watch FILE.pg [--project DIR] [--out FILE] [--library-path DIR]
   resoloop flux deploy --project DIR --module MODULE_PATH [--parent SLOT] [--library-path DIR]
   resoloop flux deploy-manifest FILE.json [--parent SLOT|$slot:key] [--state WORLD_STATE]
