@@ -7,11 +7,11 @@
 必要なものはWindows 10/11、.NET SDK 10、Resonite、対象worldで有効なResoniteLinkです。Preview版はNuGet global toolとして導入します。
 
 ~~~powershell
-dotnet tool install --global ResoLoop --version 0.1.0-preview.3
+dotnet tool install --global ResoLoop --version 0.1.0-preview.4
 resoloop help
 ~~~
 
-更新時は `dotnet tool update --global ResoLoop --version 0.1.0-preview.3` を実行します。
+更新時は `dotnet tool update --global ResoLoop --version 0.1.0-preview.4` を実行します。
 
 ## 2. 自分のプロジェクトを作る
 

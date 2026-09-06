@@ -89,7 +89,7 @@ public sealed class ApplyWorkflowTests : IDisposable
             """);
         var document = ApplyDocument.Load(path);
         var client = new FakeResoniteClient(document);
-        const string source = "[resoloop 0.1.0-preview.3]";
+        const string source = "[resoloop 0.1.0-preview.4]";
         var service = new WorldService(client, source);
         var state = Path.Combine(_root, "generated-content.state.json");
 
@@ -127,7 +127,7 @@ public sealed class ApplyWorkflowTests : IDisposable
     public async Task EnsureGeneratedContentTagIsIdempotentForPrimitiveSlotCreation()
     {
         var client = new FakeResoniteClient();
-        const string source = "[resoloop 0.1.0-preview.3]";
+        const string source = "[resoloop 0.1.0-preview.4]";
         var service = new WorldService(client, source);
         var slotId = await client.CreateSlotAsync(new SlotCreateRequest("Root", "Primitive"));
 
