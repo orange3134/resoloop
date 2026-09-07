@@ -1,88 +1,91 @@
+[English](README.md)｜[日本語](README_JA.md)
+
 # resoloop
+
 ![resoloop_logo](./resource/resoloop_resonite_16_9.png)
-resoloop は、Codex や Claude Code などの AI エージェントから Resonite のワールドを操作するための CLI です。
 
-作りたいものを AI に伝えると、AI が現在のワールドを確認し、Slot や Component の構成をファイルへ記述して、ResoniteLink 経由で反映・検証します。作業内容がファイルとして残るため、同じ構成を繰り返し適用したり、Git で変更を管理したりできます。
+resoloop is a CLI for controlling Resonite worlds from AI agents such as Codex and Claude Code.
 
-resoloop が生成する作業ルートには `FrooxEngine.AI_GeneratedContent` を自動で付与し、`Source` に実行中のツール名とバージョン（例: `[resoloop 0.1.0-preview.4]`）を記録します。宣言ツリー内の持ち運び・装備用ルートにも同じタグを付与します。
+Tell the AI what you want to create, and it will inspect the current world, describe the Slot and Component structure in files, and apply and verify the result through ResoniteLink. Because the work is stored as files, you can apply the same structure repeatedly and track changes with Git.
+
+resoloop automatically adds `FrooxEngine.AI_GeneratedContent` to the root of the content it generates and records the running tool's name and version in `Source` (for example, `[resoloop 0.1.0-preview.4]`). The same tag is also added to portable and equippable roots within the declaration tree.
 
 > [!NOTE]
-> 現在はプレビュー版です。ResoniteLink も Beta のため、更新によって動作が変わる可能性があります。
+> resoloop is currently in preview. ResoniteLink is also in Beta, so updates may change its behavior.
 
-## インストール
+## Installation
 
-必要なもの:
+Requirements:
 
-- Windows 10 / 11
+- Windows 10 or 11
 - [`.NET 10 SDK`](https://dotnet.microsoft.com/download/dotnet/10.0)
 - Resonite
-- Codex、Claude Code などの AI コーディングエージェント
+- An AI coding agent such as Codex or Claude Code
 
-PowerShell で resoloop をインストールします。
+Install resoloop in PowerShell:
 
 ~~~powershell
 dotnet tool install --global ResoLoop --version 0.1.0-preview.4
 resoloop --version
 ~~~
 
-すでにインストール済みの場合は、次のコマンドで更新できます。
+If resoloop is already installed, update it with the following command:
 
 ~~~powershell
 dotnet tool update --global ResoLoop --version 0.1.0-preview.4
 ~~~
 
-## 使い方
+## Usage
 
-### 1. プロジェクトを作る
+### 1. Create a project
 
-Resonite で作りたいものごとに、専用のプロジェクトを作成します。
+Create a dedicated project for each thing you want to build in Resonite.
 
 ~~~powershell
 resoloop init MyResoniteProject
 Set-Location MyResoniteProject
 ~~~
 
+### 2. Configure ResoniteLink
 
-### 2. ResoniteLink を設定する
+1. Start Resonite and open the world you want to edit.
+2. Open the `Settings` tab on the Dashboard's `Session` page.
+3. Select `Enable ResoniteLink` in the lower-left corner.
+4. When `ResoniteLink running on port: ...` appears, note the port number.
+5. In the PowerShell session for your project, set the displayed port in an environment variable.
 
-1. Resonite を起動し、編集したいワールドを開きます。
-2. Dashboard の `Session` ページから `Settings` タブを開きます。
-3. 画面左下の `Enable ResoniteLink` を選択します。
-4. `ResoniteLink running on port: ...` と表示されたら、そのポート番号を確認します。
-5. プロジェクトを開いている PowerShell で、表示されたポートを環境変数へ設定します。
-
-
-たとえば、表示されたポートが `12449` の場合:
+For example, if the displayed port is `12449`:
 
 ~~~powershell
 $env:RESONITE_LINK_URL="ws://localhost:12449"
 resoloop doctor
 ~~~
 
-最後に `ready` と表示されれば準備完了です。
+The setup is complete when `ready` appears at the end.
 
-または、AIにポートを伝えて依頼してください。
-~~~text
-Resoniteで虹色に光るBOXを作って。ResoniteLinkは12449で起動中。
-~~~
-
-### 3. AI に作業を依頼する
-
-作成したプロジェクトを AI エージェントで開きます。プロジェクト作成後から同じ AI セッションを使い続けている場合は、生成された Skill を認識させるため、一度セッションを開き直してください。
-
-あとは、Resonite で実現したい内容を普段の言葉で依頼します。たとえば:
+Alternatively, tell the AI which port to use when making your request:
 
 ~~~text
-Resoniteでテレポーターガンを作って。装備できるアイテムで、銃みたいな形。銃を撃つと弾が山なりに飛んでいって、当たった地点に自分がワープするようにして。
+Create a box in Resonite that glows in rainbow colors. ResoniteLink is running on port 12449.
 ~~~
 
-## さらに詳しく
+### 3. Ask the AI to work on your project
 
-- [詳細資料](README-DETAILS.md) — コマンド、設計、宣言形式、Flux-SDK、制約
-- [クイックスタート](docs/QUICKSTART.md) — 適用、検証、ProtoFlux を含む詳しい手順
-- [宣言形式](docs/DECLARATIVE.md) — `content/*.json` の仕様
-- [ロードマップ](docs/ROADMAP.md)
+Open the project you created in an AI agent. If you have continued using the same AI session since creating the project, reopen the session once so that the agent can discover the generated Skill.
 
-## ライセンス
+Then describe what you want to build in Resonite using ordinary language. For example:
+
+~~~text
+Create a teleporter gun in Resonite. Make it an equippable item shaped like a gun. When fired, it should launch a projectile in an arc and teleport me to the point where the projectile lands.
+~~~
+
+## Learn more
+
+- [Detailed documentation](README-DETAILS.md) — commands, architecture, declaration format, Flux-SDK, and limitations
+- [Quick start](docs/QUICKSTART.md) — detailed steps including applying, verifying, and using ProtoFlux
+- [Declaration format](docs/DECLARATIVE.md) — specification for `content/*.json`
+- [Roadmap](docs/ROADMAP.md)
+
+## License
 
 [AGPL-3.0-or-later](LICENSE)
