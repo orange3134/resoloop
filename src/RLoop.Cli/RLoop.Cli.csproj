@@ -6,7 +6,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>resoloop</ToolCommandName>
     <PackageId>ResoLoop</PackageId>
-    <Version>0.1.0-preview.4</Version>
+    <Version>0.1.0-preview.5</Version>
     <Title>ResoLoop</Title>
     <Authors>orange3134</Authors>
     <Description>Agent-first CLI loop for Resonite development through ResoniteLink and Flux-SDK.</Description>

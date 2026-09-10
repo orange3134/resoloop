@@ -27,10 +27,10 @@ In the GitHub repository, create an Actions variable named `NUGET_USER` containi
 
 ## Publish an immutable preview
 
-Confirm CI succeeds on the exact commit, then dispatch `.github/workflows/release.yml` with a new SemVer prerelease version such as `0.1.0-preview.4`. The workflow rebuilds and tests the commit, performs an installed-tool smoke test, verifies the bundled corresponding source, publishes the immutable package to nuget.org, and creates a GitHub prerelease.
+Confirm CI succeeds on the exact commit, then dispatch `.github/workflows/release.yml` with a new SemVer prerelease version such as `0.1.0-preview.5`. The workflow rebuilds and tests the commit, performs an installed-tool smoke test, verifies the bundled corresponding source, publishes the immutable package to nuget.org, and creates a GitHub prerelease.
 
 ~~~powershell
-gh workflow run release.yml --repo orange3134/resoloop -f version=0.1.0-preview.4
+gh workflow run release.yml --repo orange3134/resoloop -f version=0.1.0-preview.5
 ~~~
 
 Never reuse a version that reached nuget.org. Increment the prerelease number even when a failed GitHub Release must be retried after the package publish succeeded.
@@ -38,7 +38,7 @@ Never reuse a version that reached nuget.org. Increment the prerelease number ev
 ## Consumer verification
 
 ~~~powershell
-dotnet tool install --global ResoLoop --version 0.1.0-preview.4
+dotnet tool install --global ResoLoop --version 0.1.0-preview.5
 resoloop --version
 resoloop init MyResoniteProject
 ~~~

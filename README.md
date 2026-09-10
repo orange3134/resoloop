@@ -8,7 +8,7 @@ resoloop is a CLI for controlling Resonite worlds from AI agents such as Codex a
 
 Tell the AI what you want to create, and it will inspect the current world, describe the Slot and Component structure in files, and apply and verify the result through ResoniteLink. Because the work is stored as files, you can apply the same structure repeatedly and track changes with Git.
 
-resoloop automatically adds `FrooxEngine.AI_GeneratedContent` to the root of the content it generates and records the running tool's name and version in `Source` (for example, `[resoloop 0.1.0-preview.4]`). The same tag is also added to portable and equippable roots within the declaration tree.
+resoloop automatically adds `FrooxEngine.AI_GeneratedContent` to the root of the content it generates and records the running tool's name and version in `Source` (for example, `[resoloop 0.1.0-preview.5]`). The same tag is also added to portable and equippable roots within the declaration tree.
 
 > [!NOTE]
 > resoloop is currently in preview. ResoniteLink is also in Beta, so updates may change its behavior.
@@ -25,14 +25,14 @@ Requirements:
 Install resoloop in PowerShell:
 
 ~~~powershell
-dotnet tool install --global ResoLoop --version 0.1.0-preview.4
+dotnet tool install --global ResoLoop --version 0.1.0-preview.5
 resoloop --version
 ~~~
 
 If resoloop is already installed, update it with the following command:
 
 ~~~powershell
-dotnet tool update --global ResoLoop --version 0.1.0-preview.4
+dotnet tool update --global ResoLoop --version 0.1.0-preview.5
 ~~~
 
 ## Usage
