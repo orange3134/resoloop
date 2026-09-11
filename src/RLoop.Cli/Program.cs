@@ -78,13 +78,17 @@ public static class Program
                 ["command-timeout"] = parsed.Option("command-timeout"),
                 ["flux-executable"] = parsed.Option("flux-executable"), ["flux-deployer"] = parsed.Option("flux-deployer"),
                 ["library-path"] = parsed.Option("library-path"), ["log-path"] = parsed.Option("log-path"),
-                ["screenshots-dir"] = parsed.Option("screenshots-dir")
+                ["screenshots-dir"] = parsed.Option("screenshots-dir"),
+                ["blender-executable"] = parsed.Option("blender-executable")
             };
             var resolution = ConfigResolver.Resolve(Environment.CurrentDirectory, cliConfig);
             commandCancellation = CancellationTokenSource.CreateLinkedTokenSource(userCancellation.Token);
             commandCancellation.CancelAfter(TimeSpan.FromSeconds(resolution.Config.CommandTimeoutSeconds));
             var commandToken = commandCancellation.Token;
             if (parsed.Has("verbose")) Console.Error.WriteLine(JsonSerializer.Serialize(new { configSources = resolution.Sources }));
+
+            if (parsed.Positionals[0].Equals("blender", StringComparison.OrdinalIgnoreCase))
+                return await RunBlender(parsed, output, resolution.Config, commandToken);
 
             var flux = new FluxProcessTool(resolution.Config.FluxExecutable ?? "flux-sdk", new FluxSdkDeployer());
             if (parsed.Positionals[0].Equals("doctor", StringComparison.OrdinalIgnoreCase))
@@ -206,6 +210,36 @@ public static class Program
         {
             commandCancellation?.Dispose();
         }
+    }
+
+    private static async Task<int> RunBlender(ParsedArguments args, OutputWriter output, RLoopConfig config, CancellationToken token)
+    {
+        var command = args.Positional(1, "blender subcommand").ToLowerInvariant();
+        if (command is not ("find" or "run" or "export")) throw UnknownCommand("blender " + command);
+        if (args.Positionals.Count != (command == "find" ? 2 : 3))
+            throw new RLoopException("INVALID_ARGUMENT", "Use blender find, blender run SCRIPT.py, or blender export FILE.blend.", ExitCodes.InvalidArguments);
+        var location = BlenderDiscovery.Resolve(config.BlenderExecutable);
+        if (command == "find")
+        {
+            var version = await BlenderProcess.RunAsync(location.Executable, ["--version"], token);
+            output.Success(new { location.Executable, location.Source, version = version.StandardOutput.Split('\n')[0].Trim() });
+        }
+        else if (command == "run")
+        {
+            var script = Path.GetFullPath(args.Positional(2, "Python script"));
+            if (!File.Exists(script)) throw new RLoopException("BLENDER_SCRIPT_NOT_FOUND", $"File not found: {script}", ExitCodes.NotFound);
+            var blend = args.Option("blend");
+            if (blend is not null && !File.Exists(blend)) throw new RLoopException("BLENDER_SOURCE_NOT_FOUND", $"File not found: {blend}", ExitCodes.NotFound);
+            output.Success(await BlenderProcess.RunAsync(location.Executable, BlenderProcess.ScriptArguments(script, blend, args.Options("arg")), token));
+        }
+        else
+        {
+            var source = args.Positional(2, "Blend file");
+            output.Success(await BlenderExport.ExportAsync(location.Executable, source, args.RequireOption("output"),
+                args.Option("name") ?? Path.GetFileNameWithoutExtension(source), args.RequireOption("parent"), args.Option("collection"), token,
+                args.Has("preserve-hierarchy"), args.Has("pack-pbr"), args.Has("legacy-root-providers")));
+        }
+        return ExitCodes.Success;
     }
 
     private static async Task<int> RunDoctor(OutputWriter output, RLoopConfig config, IFluxTool flux,
@@ -354,8 +388,11 @@ public static class Program
             case "hierarchy":
             {
                 var depth = args.IntOption("depth", 2, -1, 64);
-                var slot = await client.GetSlotAsync("Root", depth, args.Has("include-components"), cancellationToken);
-                output.Success(slot, w => OutputWriter.Hierarchy(w, slot));
+                var root = await world.ResolveSlotSelectorAsync(args.Option("under") ?? "Root", args.Option("state"), cancellationToken);
+                var slot = await client.GetSlotAsync(root, depth, args.Has("include-components") && !args.Has("summary"), cancellationToken);
+                if (args.Has("summary"))
+                    output.Success(HierarchySummary.FromSlot(slot, args.Has("include-components")), w => OutputWriter.Hierarchy(w, slot));
+                else output.Success(slot, w => OutputWriter.Hierarchy(w, slot));
                 break;
             }
             case "find":
@@ -611,6 +648,14 @@ public static class Program
             }
             case "describe":
             {
+                if (args.Option("member") is { } memberName)
+                {
+                    var component = await client.DescribeComponentTypeAsync(query, ct);
+                    var reflectedType = ReflectedMemberType.ValueType(component, memberName);
+                    output.Success(new { componentType = component.FullTypeName, member = memberName,
+                        valueType = reflectedType, definition = await client.DescribeTypeAsync(reflectedType, ct) });
+                    break;
+                }
                 try { output.Success(await client.DescribeComponentTypeAsync(query, ct)); }
                 catch (RLoopException ex) when (ex.Code == "COMPONENT_TYPE_NOT_FOUND") { output.Success(await client.DescribeTypeAsync(query, ct)); }
                 break;
@@ -904,12 +949,21 @@ Project setup:
 
 Connection and observation:
   resoloop status|ping [--url ws://localhost:PORT] [--json]
-  resoloop hierarchy [--depth 2] [--include-components] [--json]
+  resoloop hierarchy [--under ID_OR_PATH_OR_STABLE --state FILE] [--depth 2] [--include-components] [--summary] [--json]
   resoloop find (--name TEXT [--exact] | --component TYPE) [--under SLOT] [--direct-children] [--depth 8] [--json]
   resoloop inspect SLOT|$slot:key [--state WORLD_STATE] [--depth 1] [--members] [--component TYPE] [--member NAME] [--components-only] [--json]
   resoloop scene summary FILE.json [--output summary.json]
   resoloop capture FILE.json --camera BOOKMARK [--output capture.jpg] [--width 1280 --height 720]
     [--screenshots-dir DIR] [--capture-timeout 60] (live .png/.jpg; offline .svg)
+
+Blender (offline; no installation or world mutation):
+  resoloop blender find [--blender-executable PATH] [--json]
+  resoloop blender run SCRIPT.py [--blend FILE.blend] [--arg=VALUE ...] [--json]
+  resoloop blender export FILE.blend --output NEW_DIRECTORY --parent VERIFIED_SLOT [--name NAME] [--collection NAME] [--json]
+    [--preserve-hierarchy] [--pack-pbr] [--legacy-root-providers]
+    Export static meshes, textures, model.apply.json and report.json; review then validate/diff/apply.
+    Providers use separate named Slots by default; legacy root layout is explicit for existing bundles.
+    --preserve-hierarchy keeps local geometry/pivots; --pack-pbr packs direct Non-Color scalar maps.
 
 Editing:
   resoloop slot create --name NAME [--parent SLOT] [--position x,y,z] [--rotation x,y,z,w] [--scale x,y,z]
@@ -921,14 +975,15 @@ Editing:
   resoloop component set COMPONENT_ID MEMBER VALUE
   resoloop component remove COMPONENT_ID --yes
   resoloop type search QUERY [--limit 50]
-  resoloop type describe TYPE
+  resoloop type describe TYPE [--member FIELD] (field value type / enum values; Nullable is unwrapped)
   resoloop type specialize OPEN_GENERIC TYPE_ARGUMENT [...]
   resoloop validate FILE.json [--strict]
   resoloop plan|diff FILE.json [--state FILE] [--adopt] [--changes-only|--creates-only|--deletes-only|--summary]
   resoloop apply FILE.json [--state FILE] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
   resoloop test FILE.json [--state FILE] [--probe --yes]
   resoloop item audit SLOT [--strict] [--allow-external ID|PATH|$slot:key ...]
-    [--allow-external-role COMPONENT:MEMBER ...] [--state WORLD_STATE]
+    [--allow-external-role COMPONENT_TYPE:MEMBER_PATH|COMPONENT_ID:MEMBER_PATH ...] [--state WORLD_STATE]
+    Review externalRoleCandidates first; type roles cover all matching components, ID roles are session-scoped.
   resoloop tool audit SLOT|$slot:key [--state WORLD_STATE] [--depth 16]
 
 ProtoFlux (Flux-SDK):
@@ -947,7 +1002,7 @@ Diagnostics:
 
 Global options: --url, --timeout SECONDS, --command-timeout SECONDS, --json, --verbose
 Configuration priority: CLI > environment > .resoloop.json > ~/.resoloop/config.json
-Environment: RESONITE_LINK_URL, RESOLOOP_TIMEOUT_SECONDS, RESOLOOP_COMMAND_TIMEOUT_SECONDS, RESOLOOP_FLUX_EXECUTABLE, RESONITE_MANAGED_DATA_PATH, RESONITE_LOG_PATH
+Environment: RESONITE_LINK_URL, RESOLOOP_TIMEOUT_SECONDS, RESOLOOP_COMMAND_TIMEOUT_SECONDS, RESOLOOP_FLUX_EXECUTABLE, RESONITE_MANAGED_DATA_PATH, RESONITE_LOG_PATH, RESOLOOP_BLENDER_EXECUTABLE
 """);
     }
 }

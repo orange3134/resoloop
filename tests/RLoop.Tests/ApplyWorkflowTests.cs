@@ -331,6 +331,63 @@ public sealed class ApplyWorkflowTests : IDisposable
     }
 
     [Fact]
+    public async Task PartialNestedReferencesConvergeAndStillDetectDrift()
+    {
+        var document = Document("nested", """
+            [{"key":"positioner","type":"Test.Slider","fields":{"SnapPositions":{"LocalSpace":"$slot:root","Offset":[0,1,0]}}}]
+            """);
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "nested.state.json");
+        await service.ApplyAsync(document, new ApplyOptions(state));
+        var root = Assert.Single(client.Root.Children);
+        var component = Assert.Single(root.Components);
+        var children = new Dictionary<string, MemberValue> {
+            ["LocalSpace"] = new("reference", TargetId: root.Id),
+            ["Offset"] = new("field", Type: "float3", Value: JsonNode.Parse("{\"x\":0,\"y\":1,\"z\":0}")),
+            ["UnspecifiedDefault"] = new("field", Type: "int", Value: JsonValue.Create(42)) };
+        component.Members["SnapPositions"] = new("syncObject", Members: children);
+        client.ResetWriteCounts();
+        await service.ApplyAsync(document, new ApplyOptions(state));
+        Assert.Equal(0, client.Writes);
+        children["LocalSpace"] = new("reference", TargetId: "OtherSlot");
+        var changed = await service.PlanApplyAsync(document, new ApplyOptions(state));
+        Assert.Contains(changed.Changes, entry => entry.Key == "positioner");
+    }
+
+    [Theory]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(5)]
+    public async Task NamedProvidersResumeBeforeReferenceWiringAfterReconnect(int interruptAfter)
+    {
+        var path = Path.Combine(_root, "providers.json");
+        await File.WriteAllTextAsync(path, """
+            {"schemaVersion":"1","ownership":{"key":"providers"},"slot":{"key":"root","name":"Providers"},
+             "children":[
+              {"slot":{"key":"a","name":"Provider_A"},"components":[{"key":"a-provider","type":"Test.Target","fields":{"Enabled":true}}]},
+              {"slot":{"key":"b","name":"Provider_B"},"components":[{"key":"b-provider","type":"Test.Target","fields":{"Enabled":false}}]}]}
+            """);
+        var document = ApplyDocument.Load(path);
+        var state = Path.Combine(_root, "providers.state.json");
+        using var cancellation = new CancellationTokenSource();
+        var client = new FakeResoniteClient(document) { CancelAfterWrites = interruptAfter, Cancellation = cancellation };
+        var service = new WorldService(client);
+        var interrupted = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(document, new ApplyOptions(state), cancellation.Token));
+        Assert.IsType<OperationCanceledException>(interrupted.InnerException);
+        client.CancelAfterWrites = null;
+        client.Cancellation = null;
+        client.SessionId = "reconnected";
+        await service.ApplyAsync(document, new ApplyOptions(state));
+        var children = Assert.Single(client.Root.Children).Children;
+        Assert.Equal(2, children.Count);
+        Assert.All(children, child => Assert.Single(child.Components));
+        client.ResetWriteCounts();
+        await service.ApplyAsync(document, new ApplyOptions(state));
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Fact]
     public async Task ExistingRootRequiresExplicitAdoption()
     {
         var client = new FakeResoniteClient();
@@ -491,6 +548,7 @@ public sealed class ApplyWorkflowTests : IDisposable
     [InlineData("$component:target", "component", "target", null)]
     [InlineData("$ref:legacy", "component", "legacy", null)]
     [InlineData("$member:target.Enabled", "member", "target", "Enabled")]
+    [InlineData("$slot-member:target.Rotation", "slot-member", "target", "Rotation")]
     public void StableSelectorSyntaxIsSharedAcrossWorkflows(string raw, string kind, string key, string? member)
     {
         var selector = StableSelectorSyntax.Parse(raw);
@@ -498,6 +556,54 @@ public sealed class ApplyWorkflowTests : IDisposable
         Assert.Equal(kind, selector.Kind);
         Assert.Equal(key, selector.Key);
         Assert.Equal(member, selector.MemberName);
+    }
+
+    [Fact]
+    public async Task SlotAndComponentMemberReferencesConvergeAndResolveAfterReconnect()
+    {
+        var path = Path.Combine(_root, "slot-member.json");
+        File.WriteAllText(path, """
+            {"schemaVersion":"1","ownership":{"key":"slot-members"},"slot":{"key":"root","name":"Managed","parent":"Root"},
+             "components":[{"key":"target","type":"Test.Target","fields":{"Target":"$slot-member:child.Rotation","TargetValue":"$member:target.Enabled","Enabled":false}}],
+             "children":[{"slot":{"key":"child","name":"Driven"}}]}
+            """);
+        var document = ApplyDocument.Load(path);
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "slot-member.state.json");
+        await service.ApplyAsync(document, new ApplyOptions(state));
+        var target = client.Root.Children.Single();
+        var expected = target.Children.Single().Id + ":Rotation";
+        Assert.Equal(expected, target.Components.Single().Members["Target"].TargetId);
+        Assert.Equal(target.Components.Single().Id + ":Enabled", target.Components.Single().Members["TargetValue"].TargetId);
+        client.SessionId = "reconnected";
+        client.ResetWriteCounts();
+        var reference = await service.ResolveStableReferenceAsync(state, "$slot-member:child.Rotation", client.SessionId);
+        Assert.Equal(expected, reference.Id);
+        Assert.Equal("member", reference.Kind);
+        var again = await service.ApplyAsync(document, new ApplyOptions(state));
+        Assert.Equal(0, again.ComponentsUpdated);
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Theory]
+    [InlineData("$slot-member:missing.Rotation", "APPLY_REFERENCE_NOT_FOUND")]
+    [InlineData("$slot-member:root.NotAField", "APPLY_MEMBER_REFERENCE_NOT_FOUND")]
+    [InlineData("$slot-member:root.", "APPLY_MEMBER_REFERENCE_INVALID")]
+    public async Task InvalidSlotMemberReferenceFailsBeforeMutation(string selector, string code)
+    {
+        var path = Path.Combine(_root, "bad-slot-member.json");
+        File.WriteAllText(path, """
+            {"schemaVersion":"1","slot":{"key":"root","name":"Managed","parent":"Root"},
+             "components":[{"key":"source","type":"Test.Source","fields":{"Target":"SELECTOR"}}]}
+            """.Replace("SELECTOR", selector));
+        var document = ApplyDocument.Load(path);
+        var client = new FakeResoniteClient(document);
+        var validation = await ApplyDocumentValidator.ValidateAsync(document);
+        Assert.Contains(validation.Issues, issue => issue.Code == code);
+        await Assert.ThrowsAsync<RLoopException>(() => new WorldService(client).ApplyAsync(document));
+        Assert.Equal(0, client.Writes);
+        Assert.Equal(0, client.AssetImports);
     }
 
     [Fact]
@@ -1359,7 +1465,8 @@ public sealed class ApplyWorkflowTests : IDisposable
         private static SlotInfo Map(FakeSlot slot, int depth, bool members) => new(slot.Id, slot.Name, slot.ParentId,
             slot.Position, slot.Rotation, slot.Scale, true, true, null, false,
             slot.Components.Select(x => new ComponentSummary(x.Id, x.Type, members ? x.Members : null)).ToArray(),
-            depth == 0 ? [] : slot.Children.Select(x => Map(x, depth < 0 ? -1 : depth - 1, members)).ToArray());
+            depth == 0 ? [] : slot.Children.Select(x => Map(x, depth < 0 ? -1 : depth - 1, members)).ToArray(),
+            Members: new Dictionary<string, MemberValue> { ["Rotation"] = new("field", slot.Id + ":Rotation", "floatQ") });
 
         public sealed class FakeSlot(string id, string name, string? parentId, Vector3Value? position,
             QuaternionValue? rotation, Vector3Value? scale)

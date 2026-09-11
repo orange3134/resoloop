@@ -6,13 +6,19 @@ using System.Text.Json;
 
 namespace RLoop.Core;
 
-public sealed record SceneBounds(float[] Min, float[] Max, float[] Size, float[] Center);
+public sealed record SceneBounds(float[] Min, float[] Max, float[] Size, float[] Center, string Kind = "pivots");
 public sealed record ScenePlacement(string Key, string Path, float[] WorldPosition, float[] WorldScale, float[]? GeometrySize = null);
 public sealed record SceneIssue(string Code, string Severity, string Path, string Message);
 public sealed record SceneSummary(string Source, SceneBounds Bounds, IReadOnlyList<ScenePlacement> Placements,
     IReadOnlyList<SceneIssue> Issues, int Slots, int Components, bool Valid);
 public sealed record CaptureArtifact(string Source, string Camera, int Width, int Height, string Output,
-    string SummaryOutput, string Format, bool ScreenshotAvailable, string Capability, SceneSummary Summary);
+    string SummaryOutput, string Format, bool ScreenshotAvailable, string Capability, SceneSummary Summary,
+    CaptureOwnership? Ownership = null);
+
+public sealed record CaptureOwnership(string ParentId, string SlotId, string SlotName)
+{
+    public bool CleanupCompleted { get; set; }
+}
 
 /// <summary>
 /// Produces deterministic declaration-space artifacts. For live screenshots use LiveCaptureService.
@@ -28,6 +34,8 @@ public static class SceneArtifactService
         var min = new Vector3(float.PositiveInfinity);
         var max = new Vector3(float.NegativeInfinity);
         var hasGeometry = false;
+        var unknownGeometry = false;
+        var meshBounds = new SceneMeshBounds(document);
 
         void Visit(ApplySlotSpec slot, IReadOnlyList<ApplyComponentSpec>? nodeComponents,
             IReadOnlyList<ApplyNodeSpec>? children, string path, Matrix4x4 parentTransform)
@@ -45,6 +53,8 @@ public static class SceneArtifactService
                 Vector3.TransformNormal(Vector3.UnitY, worldTransform).Length(),
                 Vector3.TransformNormal(Vector3.UnitZ, worldTransform).Length());
             var geometrySize = GeometrySize(nodeComponents);
+            var externalBounds = meshBounds.ForRenderers(nodeComponents, geometrySize is not null, out var unknown);
+            unknownGeometry |= unknown;
             placements.Add(new ScenePlacement(slot.Key ?? "$path:" + path, path,
                 [worldPosition.X, worldPosition.Y, worldPosition.Z], [worldScale.X, worldScale.Y, worldScale.Z],
                 geometrySize is null ? null : Array(geometrySize.Value)));
@@ -57,6 +67,18 @@ public static class SceneArtifactService
                 foreach (var x in new[] { -half.X, half.X })
                 foreach (var y in new[] { -half.Y, half.Y })
                 foreach (var z in new[] { -half.Z, half.Z })
+                {
+                    var corner = Vector3.Transform(new Vector3(x, y, z), worldTransform);
+                    min = Vector3.Min(min, corner);
+                    max = Vector3.Max(max, corner);
+                }
+            }
+            foreach (var (localMin, localMax) in externalBounds)
+            {
+                hasGeometry = true;
+                foreach (var x in new[] { localMin.X, localMax.X })
+                foreach (var y in new[] { localMin.Y, localMax.Y })
+                foreach (var z in new[] { localMin.Z, localMax.Z })
                 {
                     var corner = Vector3.Transform(new Vector3(x, y, z), worldTransform);
                     min = Vector3.Min(min, corner);
@@ -87,7 +109,10 @@ public static class SceneArtifactService
         }
         var size = max - min;
         var center = (min + max) / 2;
-        var bounds = new SceneBounds(Array(min), Array(max), Array(size), Array(center));
+        var bounds = new SceneBounds(Array(min), Array(max), Array(size), Array(center),
+            !hasGeometry ? "pivots" : unknownGeometry ? "partial" : "geometry");
+        if (unknownGeometry) issues.Add(new SceneIssue("SCENE_BOUNDS_INCOMPLETE", "warning", "$.bounds",
+            "Some renderer geometry is unavailable; these bounds do not describe the complete model extent."));
         return new SceneSummary(document.SourcePath ?? string.Empty, bounds, placements, issues,
             placements.Count, components, issues.All(x => x.Severity != "error"));
     }

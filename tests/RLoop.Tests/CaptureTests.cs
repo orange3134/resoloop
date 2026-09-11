@@ -10,6 +10,43 @@ public sealed class CaptureTests : IDisposable
     public CaptureTests() => Directory.CreateDirectory(_root);
 
     [Theory]
+    [InlineData("[1,2,3]")]
+    [InlineData("{\"x\":1,\"y\":2,\"z\":3}")]
+    [InlineData("1,2,3")]
+    public void SlotVectorsAcceptCanonicalAndLegacyForms(string raw) =>
+        Assert.Equal(new Vector3Value(1, 2, 3), Vector3Value.Parse(raw, "--position"));
+
+    [Theory]
+    [InlineData("[1,2]")]
+    [InlineData("NaN,0,0")]
+    [InlineData("[1e99,0,0]")]
+    public void SlotVectorsRejectWrongLengthAndNonFinite(string raw) =>
+        Assert.Equal("INVALID_VECTOR", Assert.Throws<RLoopException>(() => Vector3Value.Parse(raw, "--position")).Code);
+
+    [Fact]
+    public async Task ExternalMeshBoundsUseGeometryAndReportUnknownExtents()
+    {
+        var path = Path.Combine(_root, "bounds.json");
+        await File.WriteAllTextAsync(path, """
+            {"schemaVersion":"1","ownership":{"key":"bounds"},"slot":{"key":"root","name":"Bounds","position":[5,0,0]},
+             "assets":{"mesh":{"kind":"mesh","source":"shape.mesh.json"}},
+             "components":[{"key":"mesh","type":"FrooxEngine.StaticMesh","fields":{"URL":"$asset:mesh"}},
+               {"key":"renderer","type":"FrooxEngine.MeshRenderer","fields":{"Mesh":"$component:mesh"}}]}
+            """);
+        var mesh = Path.Combine(_root, "shape.mesh.json");
+        await File.WriteAllTextAsync(mesh, """{"vertices":[{"position":{"x":-2,"y":0,"z":0}},{"position":{"x":4,"y":3,"z":1}}]}""");
+        var document = ApplyDocument.Load(path);
+        var summary = await SceneArtifactService.SummarizeAsync(document);
+        Assert.Equal("geometry", summary.Bounds.Kind);
+        Assert.Equal(3, summary.Bounds.Min[0]);
+        Assert.Equal(9, summary.Bounds.Max[0]);
+        await File.WriteAllTextAsync(mesh, "{}");
+        summary = await SceneArtifactService.SummarizeAsync(document);
+        Assert.Equal("pivots", summary.Bounds.Kind);
+        Assert.Contains(summary.Issues, i => i.Code == "SCENE_BOUNDS_INCOMPLETE");
+    }
+
+    [Theory]
     [InlineData(0, 0, 1)]
     [InlineData(1, 0, 0)]
     [InlineData(0, 1, 0)]

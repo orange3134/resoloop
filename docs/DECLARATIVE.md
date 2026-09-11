@@ -37,9 +37,12 @@ includeは記述順に読み込まれ、`children`、`components`、`tests`を�
 - `$slot:key`: Slot ID
 - `$component:key`: Component ID（旧 `$ref:key` も互換）
 - `$member:key.Member`: Component member ID
+- `$slot-member:key.Rotation`: 宣言したSlotの公開field ID（Position / Rotation / Scale / Name / Tag / Parent / IsActive / IsPersistent / OrderOffset）
 - `$asset:key`: import済みasset URLまたは宣言したURI
 
 forward referenceを利用できます。全参照が宣言され、strict modeではComponent/memberがruntime Reflectionに存在すると確認されてからmutationを始めます。closed generic Component typeも文字列を変形せずReflectionへ渡します。
+
+Slot fieldはComponent fieldと区別して`$slot-member`を使います。例: Reflectionで確認したSpinnerの`"_target": "$slot-member:crystal.Rotation"`。実field IDは現在のSlotから取得し、再接続時にはstateのSlot pathを再解決します。未知のSlot key/公開field名はmutation前に拒否します。駆動されるrotationは`managedFields`から外すか固定配置Slotの子に分け、再applyで動作を巻き戻さないようにします。これは参照値としての構文であり、Component用set-member probeには使いません。Flux manifestのbindingは現時点では従来のComponent member構文のみ対応します。
 
 vector、quaternion、color/colorXなどの構造値はJSON arrayまたは`x/y/z/w`・`r/g/b/a` objectをcanonical入力とします。従来のcomma stringも互換入力として受理し、runtimeのobject表現と同じ値なら2回目applyで差分を出しません。不正な要素数や数値はmutation前にtarget typeと受理例付きで拒否されます。
 
@@ -88,6 +91,8 @@ Slot / Componentの明示keyを変更する場合は、新key側へ`migrateFrom`
 ~~~
 
 local `texture`、`audio`、ResoniteLink `ImportMeshJSON`は公開import APIを使います。source hashと返されたURLをownership stateへcheckpointし、内容が変わった場合だけ再importします。`resdb:`などのabsolute URIはそのまま参照できます。materialはworld内Componentとして宣言するか、既存asset URIを使います。
+
+Blenderからは `resoloop blender export FILE.blend --output NEW_DIRECTORY --name NAME --parent VERIFIED_PARENT` でmesh・画像・material接続を含むapply bundleを生成できます。均一な静的mesh JSONはアダプターで公式binary APIへ変換して送信し、UV channelを保持します。画像パスはResoniteホストから読める必要があります。[Blender制作](BLENDER.md)を参照してください。
 
 ## Camera、scene artifact、test
 

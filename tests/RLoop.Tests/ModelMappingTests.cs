@@ -27,7 +27,7 @@ public sealed class ModelMappingTests
         {
             ID = "A",
             Name = new Link.Field_string { Value = "Parent" },
-            Position = new Link.Field_float3 { Value = new Link.float3 { x = 1, y = 2, z = 3 } },
+            Position = new Link.Field_float3 { ID = "PositionMember", Value = new Link.float3 { x = 1, y = 2, z = 3 } },
             Components = [new Link.Component
             {
                 ID = "C",
@@ -39,6 +39,7 @@ public sealed class ModelMappingTests
         var mapped = ModelMapper.MapSlot(slot);
         Assert.Equal("Parent", mapped.Name);
         Assert.Equal(new RLoop.Core.Vector3Value(1, 2, 3), mapped.Position);
+        Assert.Equal("PositionMember", mapped.Members!["Position"].Id);
         Assert.Equal("C", Assert.Single(mapped.Components).Id);
         Assert.True(Assert.Single(mapped.Components).Members!["Scalable"].Value!.GetValue<bool>());
         Assert.Equal("Child", Assert.Single(mapped.Children).Name);

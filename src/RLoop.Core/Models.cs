@@ -25,18 +25,21 @@ internal static class NumberList
 {
     public static float[] Parse(string text, int expected, string optionName)
     {
-        var parts = text.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length != expected || parts.Any(p => !float.TryParse(p, System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out _)))
+        try
+        {
+            var values = MemberValueSyntax.ParseTuple(expected == 3 ? "float3" : "float4", text)
+                .Select(value => (float)value!.GetValue<double>()).ToArray();
+            if (values.Any(value => !float.IsFinite(value))) throw new FormatException("Non-finite vector.");
+            return values;
+        }
+        catch (Exception ex) when (ex is RLoopException or FormatException or OverflowException)
         {
             throw new RLoopException(
                 "INVALID_VECTOR",
-                $"{optionName} expects {expected} comma-separated numbers, but received '{text}'.",
+                $"{optionName} expects {expected} finite numbers as a JSON array/object or comma-separated string, but received '{text}'.",
                 ExitCodes.InvalidArguments,
-                suggestions: [$"Use {optionName} {string.Join(',', Enumerable.Range(0, expected).Select(_ => "0"))}"]);
+                suggestions: [$"Use {optionName} '[{string.Join(',', Enumerable.Range(0, expected).Select(_ => "0"))}]'"], innerException: ex);
         }
-
-        return parts.Select(p => float.Parse(p, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
     }
 }
 
@@ -108,7 +111,8 @@ public sealed record SlotInfo(
     bool IsReferenceOnly,
     IReadOnlyList<ComponentSummary> Components,
     IReadOnlyList<SlotInfo> Children,
-    string? Path = null);
+    string? Path = null,
+    IReadOnlyDictionary<string, MemberValue>? Members = null);
 
 public sealed record SlotMatch(
     string Id,

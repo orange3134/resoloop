@@ -6,6 +6,17 @@ namespace RLoop.Tests;
 public sealed class CommandLineTests
 {
     [Fact]
+    public void HierarchySummaryAndScopeDoNotConsumeEachOther()
+    {
+        var parsed = ParsedArguments.Parse(["hierarchy", "--summary", "--include-components", "--under", "$slot:root", "--state", "world.json", "--depth", "1", "--json"]);
+        Assert.True(parsed.Has("summary"));
+        Assert.True(parsed.Has("include-components"));
+        Assert.Equal("$slot:root", parsed.Option("under"));
+        Assert.Equal("world.json", parsed.Option("state"));
+        Assert.Equal(1, parsed.IntOption("depth", 2));
+        Assert.Equal(["hierarchy"], parsed.Positionals);
+    }
+    [Fact]
     public void ParsesCommandsOptionsAndRepeatedAssignments()
     {
         var parsed = ParsedArguments.Parse(["component", "add", "Root", "Grabbable", "--set", "Scalable=true", "--set=Enabled=false", "--json"]);

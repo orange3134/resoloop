@@ -3,6 +3,7 @@
     <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="blender_export.py" LogicalName="RLoop.ResoniteLink.blender_export.py" />
     <ProjectReference Include="../RLoop.Core/RLoop.Core.csproj" />
     <PackageReference Include="YellowDogMan.ResoniteLink" />
   </ItemGroup>

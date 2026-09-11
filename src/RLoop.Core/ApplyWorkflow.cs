@@ -291,12 +291,11 @@ public static class ApplyDocumentValidator
                     var key = text[(text.IndexOf(':') + 1)..];
                     if (string.IsNullOrWhiteSpace(key)) Issue("APPLY_REFERENCE_INVALID", "Reference key is empty.", path);
                 }
-                else if (text.StartsWith("$member:", StringComparison.Ordinal))
+                else if (text.StartsWith("$member:", StringComparison.Ordinal) || text.StartsWith("$slot-member:", StringComparison.Ordinal))
                 {
                     references++;
-                    var selector = text[8..];
-                    if (selector.LastIndexOf('.') <= 0)
-                        Issue("APPLY_MEMBER_REFERENCE_INVALID", "Member references use $member:key.MemberName.", path);
+                    if (!StableSelectorSyntax.TryParse(text, out _))
+                        Issue("APPLY_MEMBER_REFERENCE_INVALID", "Use $member:componentKey.MemberName or $slot-member:slotKey.MemberName.", path);
                 }
                 return;
             }
@@ -450,6 +449,17 @@ public static class ApplyDocumentValidator
                             catch (RLoopException ex) { issues.Add(new ApplyValidationIssue(ex.Code, ex.Message, componentPath + ".fields." + field.Key)); }
                         }
                     }
+                    if (member is not null)
+                    {
+                        try
+                        {
+                            var preflight = PreflightValue(field.Value);
+                            var raw = preflight is System.Text.Json.Nodes.JsonValue value && value.TryGetValue<string>(out var text)
+                                ? text : preflight?.ToJsonString() ?? "null";
+                            await client.ValidateComponentMemberAsync(definition.FullTypeName, field.Key, raw, cancellationToken);
+                        }
+                        catch (RLoopException ex) { Issue(ex.Code, ex.Message, componentPath + ".fields." + field.Key); }
+                    }
                 }
             }
 
@@ -462,6 +472,23 @@ public static class ApplyDocumentValidator
         }
 
         return new ApplyValidationResult(issues.Count == 0, document.SchemaVersion, slots, components, references, strict, issues);
+    }
+
+    private static System.Text.Json.Nodes.JsonNode? PreflightValue(JsonElement value)
+    {
+        // Symbolic references are checked separately. Conversion needs only their wire shape before IDs exist.
+        if (value.ValueKind == JsonValueKind.String)
+        {
+            var text = value.GetString()!;
+            return System.Text.Json.Nodes.JsonValue.Create(
+                new[] { "$slot:", "$component:", "$ref:", "$member:", "$slot-member:", "$asset:" }.Any(text.StartsWith) ? "Root" : text);
+        }
+        if (value.ValueKind == JsonValueKind.Array)
+            return new System.Text.Json.Nodes.JsonArray(value.EnumerateArray().Select(PreflightValue).ToArray());
+        if (value.ValueKind == JsonValueKind.Object)
+            return new System.Text.Json.Nodes.JsonObject(value.EnumerateObject().Select(p =>
+                KeyValuePair.Create(p.Name, PreflightValue(p.Value))));
+        return System.Text.Json.Nodes.JsonNode.Parse(value.GetRawText());
     }
 
     private static IEnumerable<KeyValuePair<string, JsonElement>> EnumerateComponentFields(ApplyComponentSpec component) =>
@@ -488,6 +515,14 @@ public static class ApplyDocumentValidator
                 text.StartsWith("$member:", StringComparison.Ordinal) ? MemberKey(text[8..]) : null;
             if (key is not null && !keys.ContainsKey(key))
                 issues.Add(new ApplyValidationIssue("APPLY_REFERENCE_NOT_FOUND", $"Symbolic reference '{text}' has no declared component key.", path));
+            if (text.StartsWith("$slot-member:", StringComparison.Ordinal) && StableSelectorSyntax.TryParse(text, out var slotMember))
+            {
+                if (!slotKeys.Contains(slotMember!.Key))
+                    issues.Add(new ApplyValidationIssue("APPLY_REFERENCE_NOT_FOUND", $"Symbolic reference '{text}' has no declared slot key.", path));
+                // Public Slot fields exposed by the pinned adapter; runtime IDs are always observed.
+                if (!new[] { "Parent", "Position", "Rotation", "Scale", "Name", "Tag", "IsActive", "IsPersistent", "OrderOffset" }.Contains(slotMember!.MemberName))
+                    issues.Add(new ApplyValidationIssue("APPLY_MEMBER_REFERENCE_NOT_FOUND", $"Slot member reference '{text}' is not an exposed Slot field.", path));
+            }
             if (text.StartsWith("$slot:", StringComparison.Ordinal) && !slotKeys.Contains(text[6..]))
                 issues.Add(new ApplyValidationIssue("APPLY_REFERENCE_NOT_FOUND", $"Symbolic reference '{text}' has no declared slot key.", path));
             if (text.StartsWith("$asset:", StringComparison.Ordinal) && !assetKeys.Contains(text[7..]))

@@ -6,6 +6,24 @@ namespace RLoop.Tests;
 public sealed class ConfigurationTests : IDisposable
 {
     [Fact]
+    public void BlenderUsesCliEnvironmentProjectUserPrecedence()
+    {
+        var user = Path.Combine(_root, "user");
+        Directory.CreateDirectory(Path.Combine(user, ".resoloop"));
+        File.WriteAllText(Path.Combine(user, ".resoloop", "config.json"), "{\"blenderExecutable\":\"user-blender\"}");
+        var project = Path.Combine(_root, ".resoloop.json");
+        File.WriteAllText(project, "{\"blenderExecutable\":\"project-blender\"}");
+        var cli = new Dictionary<string, string?> { ["blender-executable"] = "cli-blender" };
+        string? Env(string key) => key == "RESOLOOP_BLENDER_EXECUTABLE" ? "env-blender" : null;
+        Assert.Equal("cli-blender", ConfigResolver.Resolve(_root, cli, Env, user).Config.BlenderExecutable);
+        cli.Clear();
+        Assert.Equal("env-blender", ConfigResolver.Resolve(_root, cli, Env, user).Config.BlenderExecutable);
+        Assert.Equal("project-blender", ConfigResolver.Resolve(_root, cli, _ => null, user).Config.BlenderExecutable);
+        File.Delete(project);
+        Assert.Equal("user-blender", ConfigResolver.Resolve(_root, cli, _ => null, user).Config.BlenderExecutable);
+    }
+
+    [Fact]
     public void ScreenshotDirectoryUsesCliEnvironmentProjectUserPrecedence()
     {
         var user = Path.Combine(_root, "user");

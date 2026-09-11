@@ -35,6 +35,7 @@ public sealed class LiveCaptureService(IResoniteClient client)
             throw new RLoopException("CAPTURE_METHOD_UNAVAILABLE", "Runtime Reflection does not expose InteractiveCamera.Capture().", ExitCodes.OperationFailed);
         var name = "ResoLoop_Test_Capture_" + Guid.NewGuid().ToString("N");
         string? slotId = null;
+        CaptureOwnership? ownership = null;
         Exception? failure = null;
         try
         {
@@ -54,6 +55,7 @@ public sealed class LiveCaptureService(IResoniteClient client)
             if (string.IsNullOrEmpty(mainId))
                 throw new RLoopException("CAPTURE_CAMERA_INCOMPLETE", "InteractiveCamera did not create its MainCamera reference.", ExitCodes.OperationFailed);
             var owned = await client.GetSlotAsync(slotId, 2, false, cancellationToken);
+            ownership = new CaptureOwnership(owned.ParentId ?? "Root", slotId, name);
             static bool Contains(SlotInfo slot, string id) => slot.Components.Any(c => c.Id == id) || slot.Children.Any(s => Contains(s, id));
             if (!Contains(owned, mainId))
                 throw new RLoopException("CAPTURE_CAMERA_INCOMPLETE", "MainCamera is outside the dedicated capture slot; refusing to modify it.", ExitCodes.OperationFailed);
@@ -73,7 +75,7 @@ public sealed class LiveCaptureService(IResoniteClient client)
                 new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true }) + "\n", cancellationToken);
             return new CaptureArtifact(document.SourcePath ?? "", cameraName, w, h, fullOutput, summaryOutput,
                 extension == ".png" ? "png" : "jpeg", true,
-                "InteractiveCamera.Capture via ResoniteLink; local screenshot export. Scene summary describes the manifest, not the live world.", summary);
+                "InteractiveCamera.Capture via ResoniteLink; local screenshot export. Scene summary describes the manifest, not the live world.", summary, ownership);
         }
         catch (Exception ex)
         {
@@ -91,6 +93,7 @@ public sealed class LiveCaptureService(IResoniteClient client)
                     if (slot.Id != slotId || slot.Name != name || slotId == "Root")
                         throw new RLoopException("CAPTURE_CLEANUP_UNSAFE", "Capture slot identity changed; refusing cleanup.", ExitCodes.OperationFailed);
                     await client.DeleteSlotAsync(slotId, cleanup.Token);
+                    if (ownership is not null) ownership.CleanupCompleted = true;
                 }
                 catch (Exception cleanupError)
                 {

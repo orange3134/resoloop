@@ -15,7 +15,7 @@ public static class BundledSkillManager
     public const string LockRelativePath = ".agents/skills/.resoloop-bundled.json";
 
     public static IReadOnlyList<string> Names { get; } =
-        ["resonite-build", "resonite-debug", "resonite-flux", "resonite-inspect"];
+        ["resonite-build", "resonite-debug", "resonite-flux", "resonite-inspect", "resonite-blender"];
 
     public static SkillSyncResult Sync(string targetDirectory, bool update)
     {

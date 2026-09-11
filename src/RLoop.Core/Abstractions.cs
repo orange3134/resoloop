@@ -21,6 +21,9 @@ public interface IResoniteClient : IAsyncDisposable
     Task<ComponentTypeInfo> DescribeComponentTypeAsync(string type,
         CancellationToken cancellationToken = default);
     Task<TypeInfo> DescribeTypeAsync(string type, CancellationToken cancellationToken = default);
+    // Read-only conversion preflight; no world mutation or asset import.
+    Task ValidateComponentMemberAsync(string componentType, string member, string rawValue,
+        CancellationToken cancellationToken = default) => Task.CompletedTask;
     Task<SyncMethodCallResult> CallComponentMethodAsync(string componentId, string method,
         IReadOnlyDictionary<string, System.Text.Json.JsonElement>? arguments = null,
         CancellationToken cancellationToken = default) => Task.FromException<SyncMethodCallResult>(

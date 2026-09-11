@@ -133,6 +133,16 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         return new ComponentCreateResult(response.EntityId, resolvedType);
     }
 
+    public async Task ValidateComponentMemberAsync(string componentType, string member, string rawValue,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConnected();
+        var definition = await GetComponentDefinitionCachedAsync(componentType, cancellationToken);
+        if (!definition.Members.TryGetValue(member, out var memberDefinition))
+            throw UnknownMember(componentType, member, definition.Members.Keys);
+        _ = await ValueCodec.ParseAsync(_link, memberDefinition, rawValue, cancellationToken, _requestTimeout, RecordMetric);
+    }
+
     public async Task SetComponentMemberAsync(string componentId, string member, string rawValue,
         CancellationToken cancellationToken = default)
     {
@@ -198,8 +208,16 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         var response = await Wait(_link.GetTypeDefinition(type), "type.get", cancellationToken);
         if (!response.Success)
         {
-            var resolved = await ResolveComponentTypeAsync(type, cancellationToken);
-            response = await Wait(_link.GetTypeDefinition(resolved), "type.get", cancellationToken);
+            try
+            {
+                var resolved = await ResolveComponentTypeAsync(type, cancellationToken);
+                response = await Wait(_link.GetTypeDefinition(resolved), "type.get", cancellationToken);
+            }
+            catch (RLoopException ex) when (ex.Code == "COMPONENT_TYPE_NOT_FOUND")
+            {
+                throw new RLoopException("TYPE_NOT_FOUND", $"Runtime type '{type}' was not found. Non-component types may require an assembly-qualified name.",
+                    ExitCodes.NotFound, suggestions: ["Copy the exact [Assembly]Namespace.Type from Reflection, or use type describe COMPONENT --member FIELD to inspect its field type and enum values."], innerException: ex);
+            }
         }
         EnsureSuccess(response, "TYPE_NOT_FOUND", suggestions: await Suggestions(type, cancellationToken));
         IReadOnlyDictionary<string, long>? enumValues = null;
@@ -249,9 +267,9 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
 
     private async Task<Link.AssetData> ImportMeshJson(string path, CancellationToken cancellationToken)
     {
-        Link.ImportMeshJSON request;
-        try { request = JsonSerializer.Deserialize<Link.ImportMeshJSON>(await File.ReadAllTextAsync(path, cancellationToken)) ?? throw new JsonException("Mesh JSON was empty."); }
-        catch (JsonException ex) { throw new RLoopException("MESH_JSON_INVALID", $"Mesh asset '{path}' is not a ResoniteLink ImportMeshJSON document: {ex.Message}", ExitCodes.ValidationFailed, innerException: ex); }
+        var request = MeshImportDocument.Parse(await File.ReadAllTextAsync(path, cancellationToken));
+        if (MeshImportDocument.ToRawStatic(request) is { } raw)
+            return await Wait(_link.ImportMesh(raw), "asset.mesh.import", cancellationToken);
         return await Wait(_link.ImportMesh(request), "asset.mesh.import", cancellationToken);
     }
 
@@ -484,7 +502,12 @@ internal static class ModelMapper
             x.ID ?? string.Empty,
             x.ComponentType ?? string.Empty,
             x.Members is null ? null : x.Members.ToDictionary(member => member.Key, member => MapMember(member.Value), StringComparer.Ordinal))).ToArray(),
-        (slot.Children ?? []).Select(MapSlot).ToArray());
+        (slot.Children ?? []).Select(MapSlot).ToArray(), Members: new Dictionary<string, Link.Member?>
+        {
+            ["Parent"] = slot.Parent, ["Position"] = slot.Position, ["Rotation"] = slot.Rotation,
+            ["Scale"] = slot.Scale, ["Name"] = slot.Name, ["Tag"] = slot.Tag,
+            ["IsActive"] = slot.IsActive, ["IsPersistent"] = slot.IsPersistent, ["OrderOffset"] = slot.OrderOffset
+        }.Where(pair => pair.Value is not null).ToDictionary(pair => pair.Key, pair => MapMember(pair.Value!)));
 
     public static ComponentInfo MapComponent(Link.Component component) => new(
         component.ID ?? string.Empty,
@@ -691,21 +714,30 @@ public static class ValueCodec
     {
         var reflected = TryParseReflectedField(type, raw);
         if (reflected is not null) return reflected;
-        var typeResponse = await WaitValueRequest(link.GetTypeDefinition(type), "type.get", requestTimeout, cancellationToken, requestCompleted);
+        var underlying = ReflectedMemberType.UnwrapNullable(type);
+        var typeResponse = await WaitValueRequest(link.GetTypeDefinition(underlying), "type.get", requestTimeout, cancellationToken, requestCompleted);
         if (typeResponse.Success && typeResponse.Definition.IsEnum)
         {
-            var enumResponse = await WaitValueRequest(link.GetEnumDefinition(type), "enum.get", requestTimeout, cancellationToken, requestCompleted);
+            var enumResponse = await WaitValueRequest(link.GetEnumDefinition(underlying), "enum.get", requestTimeout, cancellationToken, requestCompleted);
             if (!enumResponse.Success) throw new RLoopException("ENUM_DESCRIBE_FAILED", enumResponse.ErrorInfo, ExitCodes.OperationFailed);
             var values = enumResponse.Definition.Values;
-            return new Link.Field_Enum { EnumType = type, Value = ValidateEnumValue(type, values, enumResponse.Definition.IsFlags, raw) };
+            return EnumField(underlying, underlying != type, values, enumResponse.Definition.IsFlags, raw);
         }
         throw new RLoopException("VALUE_TYPE_UNSUPPORTED", $"Field type '{type}' is not supported by the v0.1 converter.", ExitCodes.ValidationFailed,
             suggestions: ["Use resoloop type describe to confirm the runtime type, then open an issue with this type."]);
     }
 
+    internal static Link.Field EnumField(string type, bool nullable, IReadOnlyDictionary<string, long> values, bool isFlags, string raw)
+    {
+        var value = nullable && raw == "null" ? null : ValidateEnumValue(type, values, isFlags, raw);
+        return nullable ? new Link.Field_Nullable_Enum { EnumType = type, Value = value } :
+            new Link.Field_Enum { EnumType = type, Value = value };
+    }
+
     internal static string ValidateEnumValue(string type, IReadOnlyDictionary<string, long> values, bool isFlags, string raw)
     {
         var requested = raw.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (requested.Length == 0) throw new RLoopException("ENUM_VALUE_INVALID", "Enum value cannot be empty.", ExitCodes.ValidationFailed);
         var unknown = requested.Where(x => !values.ContainsKey(x) && !long.TryParse(x, out _)).ToArray();
         if (unknown.Length > 0)
             throw new RLoopException("ENUM_VALUE_INVALID", $"'{string.Join(',', unknown)}' is not valid for '{type}'.", ExitCodes.ValidationFailed,
@@ -718,11 +750,8 @@ public static class ValueCodec
 
     private static Link.Member? TryParseReflectedField(string type, string raw)
     {
-        var nullable = type.Contains("Nullable", StringComparison.OrdinalIgnoreCase) || type.EndsWith("?", StringComparison.Ordinal);
-        var underlying = type;
-        var open = type.IndexOf('<');
-        if (open >= 0 && type.EndsWith('>')) underlying = type[(open + 1)..^1];
-        underlying = underlying.TrimEnd('?');
+        var underlying = ReflectedMemberType.UnwrapNullable(type);
+        var nullable = underlying != type;
         var simple = SimpleType(underlying);
         var expectedName = "Field_" + (nullable ? "Nullable_" : string.Empty) + simple;
         var concrete = typeof(Link.Field).Assembly.GetTypes().FirstOrDefault(candidate =>

@@ -6,6 +6,31 @@ namespace RLoop.Tests;
 public sealed class ValueCodecTests
 {
     [Theory]
+    [InlineData("0.25")]
+    [InlineData("null")]
+    public async Task ConvertsRuntimeNullableSyntax(string raw)
+    {
+        var field = new Link.FieldDefinition { ValueType = new Link.TypeReference {
+            Type = "Nullable<>", GenericArguments = [new Link.TypeReference { Type = "float" }] } };
+        var result = Assert.IsType<Link.Field_Nullable_float>(await ValueCodec.ParseAsync(new Link.LinkInterface(), field, raw));
+        Assert.Equal(raw == "null" ? null : .25f, result.Value);
+    }
+
+    [Theory]
+    [InlineData("Linear", "Linear")]
+    [InlineData("0", "0")]
+    [InlineData("null", null)]
+    public void NullableEnumUsesOfficialWrapper(string raw, string? expected)
+    {
+        var field = Assert.IsType<Link.Field_Nullable_Enum>(ValueCodec.EnumField("[A]Profile", true,
+            new Dictionary<string, long> { ["Linear"] = 0 }, false, raw));
+        Assert.Equal(expected, field.Value);
+        Assert.Equal("[A]Profile", field.EnumType);
+        Assert.Throws<RLoop.Core.RLoopException>(() => ValueCodec.EnumField("[A]Profile", true,
+            new Dictionary<string, long> { ["Linear"] = 0 }, false, "Wrong"));
+    }
+
+    [Theory]
     [InlineData("bool", "true", typeof(Link.Field_bool))]
     [InlineData("int", "42", typeof(Link.Field_int))]
     [InlineData("float", "1.25", typeof(Link.Field_float))]

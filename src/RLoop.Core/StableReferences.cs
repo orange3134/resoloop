@@ -27,12 +27,13 @@ public static class StableSelectorSyntax
             var key = value[offset..];
             if (key.Length > 0) selector = new StableSelector(value, "component", key);
         }
-        else if (value.StartsWith("$member:", StringComparison.Ordinal))
+        else if (value.StartsWith("$member:", StringComparison.Ordinal) || value.StartsWith("$slot-member:", StringComparison.Ordinal))
         {
-            var body = value[8..];
+            var slotMember = value.StartsWith("$slot-member:", StringComparison.Ordinal);
+            var body = value[(slotMember ? 13 : 8)..];
             var separator = body.LastIndexOf('.');
             if (separator > 0 && separator < body.Length - 1)
-                selector = new StableSelector(value, "member", body[..separator], body[(separator + 1)..]);
+                selector = new StableSelector(value, slotMember ? "slot-member" : "member", body[..separator], body[(separator + 1)..]);
         }
         return selector is not null;
     }
@@ -42,7 +43,7 @@ public static class StableSelectorSyntax
         if (TryParse(value, out var selector)) return selector!;
         throw new RLoopException("STABLE_SELECTOR_INVALID",
             $"Stable selector '{value}' is invalid.", ExitCodes.InvalidArguments,
-            suggestions: ["Use $slot:key, $component:key, or $member:key.MemberName."]);
+            suggestions: ["Use $slot:key, $component:key, $member:componentKey.MemberName, or $slot-member:slotKey.MemberName."]);
     }
 }
 

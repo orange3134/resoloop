@@ -12,7 +12,7 @@ public sealed class ProjectInitializerTests : IDisposable
         var result = ProjectInitializer.Initialize(_root);
 
         Assert.Equal(Path.GetFullPath(_root), result.RootDirectory);
-        Assert.Equal(13, result.Created.Count);
+        Assert.Equal(9 + BundledSkillManager.Names.Count, result.Created.Count);
         Assert.True(File.Exists(Path.Combine(_root, ".resoloop.json")));
         var apply = ApplyDocument.Load(Path.Combine(_root, "content", "main.json"));
         Assert.Equal("1", apply.SchemaVersion);
@@ -24,7 +24,7 @@ public sealed class ProjectInitializerTests : IDisposable
         Assert.True(File.Exists(Path.Combine(_root, "flux", "resoloop.flux.json")));
         Assert.Contains("resoloop doctor --json", File.ReadAllText(Path.Combine(_root, "AGENTS.md")));
         Assert.NotNull(apply.Cameras!["main"]);
-        foreach (var skillName in new[] { "resonite-build", "resonite-debug", "resonite-flux", "resonite-inspect" })
+        foreach (var skillName in BundledSkillManager.Names)
         {
             var skillPath = Path.Combine(_root, ".agents", "skills", skillName, "SKILL.md");
             Assert.True(File.Exists(skillPath), $"Expected bundled skill at {skillPath}");
@@ -40,7 +40,7 @@ public sealed class ProjectInitializerTests : IDisposable
         var result = ProjectInitializer.Initialize(_root);
 
         Assert.Empty(result.Created);
-        Assert.Equal(12, result.Unchanged.Count);
+        Assert.Equal(8 + BundledSkillManager.Names.Count, result.Unchanged.Count);
     }
 
     [Fact]
@@ -53,7 +53,7 @@ public sealed class ProjectInitializerTests : IDisposable
         var result = ProjectInitializer.Initialize(_root);
 
         Assert.Empty(result.Created);
-        Assert.Equal(12, result.Unchanged.Count);
+        Assert.Equal(8 + BundledSkillManager.Names.Count, result.Unchanged.Count);
     }
 
     [Fact]

@@ -14,3 +14,4 @@ artifacts/
 examples/flux/build/
 examples/flux/.protograph/
 *.brson
+__pycache__/

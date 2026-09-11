@@ -112,6 +112,7 @@ resoloop find --name Status --under Root/ResoLoop_Test_Game --direct-children --
 resoloop inspect Root/ResoLoop_Test_Game --component Slider --member SnapPositions --depth 4 --json
 resoloop type search Grabbable --json
 resoloop type describe FrooxEngine.Grabbable --json
+resoloop type describe FrooxEngine.StaticTexture2D --member PreferredProfile --json
 
 $slot = (resoloop slot create --parent Root --name ResoLoop_Test --position 0,1.5,2 --json | ConvertFrom-Json).data.id
 $component = (resoloop component add $slot FrooxEngine.Grabbable --set Scalable=true --json | ConvertFrom-Json).data.id
@@ -230,6 +231,10 @@ resoloop tool audit '$slot:tool-root' --state .resoloop/state/tool.json --depth 
 
 engine既定shader/font/materialのようにsession IDが変わる意図的な外部依存は、監査結果を確認したうえで`--allow-external-role TextRenderer:Font`のような正確な`Component:MemberPath`で許可できます。これはengine既定を型だけで推測せず、レビュー済みの参照roleをstableに許可する仕組みです。
 
+roleは単純型名、`Namespace.Type`、`[Assembly]Namespace.Type`、正確なComponent IDに対応します。型指定は一致する全Component、ID指定はそのsessionの1個だけが対象です。`externalRoleCandidates`から対象確認済みの完全修飾roleを選び、`unmatchedExternalRoles`／`ITEM_ALLOW_ROLE_UNUSED`で無効な指定を確認してください。未使用指定はwarningとなりstrict監査に失敗します。外部shaderの自動許可は行いません。
+
+enumなどの非Component型はassembly名が必要な場合があります。`type describe COMPONENT --member FIELD --json`はReflectionのvalueTypeを使用し、Nullableを解除して型定義・enum値を返します。例は`FrooxEngine.StaticTexture2D --member PreferredProfile`です。assemblyや数値を推測する必要はありません。
+
 `tool audit`はRawDataTool.TipReference、左右GripPoseReference.HandSide、および各poseのlocal Z+とtip方向の内積を検査します。geometryが合格してもPrimary actionのruntime smoke checkは別途必要です。
 
 ## Codex Skills
@@ -239,6 +244,7 @@ skills/codexには次のworkflow Skillがあります。
 - resonite-build: 観測から編集・Reflection・検証・修正までの統合ループ
 - resonite-debug: read-first診断
 - resonite-inspect: コンテキストを浪費しない観測
+- resonite-blender: Blenderの検出・背景Python制作・VR資源設計・mesh/UV/texture/materialのimport。[制作手順とCLI例](docs/BLENDER.md)
 - resonite-flux: ProtoGraph check/build/deploy
 
 `resoloop init` はResoniteコンテンツproject限定のskillsとして、対象projectの `.agents/skills/` へこれらを自動的にインストールします。
@@ -297,6 +303,12 @@ OneDriveなどで保存先が異なる環境は、環境変数 `RESOLOOP_SCREENS
 同じ写真フォルダを使うresoloopの同時撮影は拒否します。撮影中は他のカメラや手動の写真撮影を避けてください。公開APIには撮影要求と保存ファイルを対応付けるIDがないため、撮影前後の新規ファイル差分で検出し、複数候補があれば `CAPTURE_AMBIGUOUS` を返します。画像が届かない場合は `CAPTURE_EXPORT_TIMEOUT`（exit 8）となります。対象ワールドが表示中か、レンダラーが動作しているか、保存先が正しいか確認してください。`--capture-timeout` は書き出し待ち時間、`--command-timeout` は接続・準備を含めた全体の上限です。
 
 成功時は `screenshotAvailable: true`、`format: jpeg` または `png` を返します。併記する `.scene.json` はmanifest上の要約です。オフラインの比較には従来の `--output capture.svg` を使えます。
+
+`ownership`には一時camera Slotの`parentId`／`slotId`／`slotName`と`cleanupCompleted`を返します。現在はRootへ作成し、exact ID・名前を確認してcleanupします。`scene summary`の`bounds.kind`は`geometry`／`partial`／`pivots`で根拠を区別し、ローカルmesh assetの頂点から外形を取得します。親transform適用後のrest AABBであり、動作中の掃引範囲や衝突形状ではありません。
+
+Slotの`--position`／`--scale`／`--rotation`はJSON配列・objectと従来comma形式に対応し、有限値を要求します。例: `resoloop slot update VERIFIED_SLOT --position '[1,2,3]'`。inspectにはSlot自身の`members`とIDも含まれ、item auditはその所有root内のPosition／Rotation fieldなどを内部参照として扱います。
+
+strict validationはadapterの書込み変換を実行し、Nullable enumを含む不正値をasset import前に検出します。nested SyncObjectは指定された子だけを再帰比較し、省略された既定値を差分にせず、宣言値のdriftは検出します。古いcheckpointにmanifestのidentityFieldsを足すだけでは識別根拠は追加されません。候補と所有範囲を確認して復旧してください。新規Blender exportはproviderを名前付きSlotへ分け、旧root配置には`--legacy-root-providers`を指定できます。
 
 撮影の実機テストは `RESOLOOP_RUN_INTEGRATION=1` と `RESOLOOP_RUN_CAPTURE_INTEGRATION=1` の両方を設定して実行します。`RESONITE_LINK_URL` と必要に応じて `RESOLOOP_SCREENSHOTS_DIR` を指定し、`dotnet test tests/RLoop.IntegrationTests --filter FullyQualifiedName~CaptureIntegrationTests` を実行してください。専用Slotは削除されますが、ゲームが保存した写真は写真フォルダに残ります。
 

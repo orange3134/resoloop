@@ -162,6 +162,14 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
         string? currentConnectionId, HashSet<string> resolvingComponents, CancellationToken cancellationToken)
     {
         var syntax = StableSelectorSyntax.Parse(selector);
+        if (syntax.Kind == "slot-member")
+        {
+            var target = await ResolveStableReferenceCoreAsync(stateFile, "$slot:" + syntax.Key,
+                currentConnectionId, resolvingComponents, cancellationToken);
+            var slot = await client.GetSlotAsync(target.Id, 0, false, cancellationToken);
+            var member = RequireSlotMember(slot, syntax.MemberName!, selector);
+            return new ResolvedWorldReference(selector, member.Id!, "member", member.Type ?? member.TargetType, target.Path);
+        }
         if (syntax.Kind == "slot")
         {
             var stable = StableReferenceResolver.ResolveSlot(stateFile, selector);
@@ -212,7 +220,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
                     foreach (var reference in stableComponent.ReferenceSelectors)
                     {
                         var targetSyntax = StableSelectorSyntax.Parse(reference.Value);
-                        if (targetSyntax.Kind != "slot" && resolvingComponents.Contains(targetSyntax.Key)) continue;
+                        if (targetSyntax.Kind is not ("slot" or "slot-member") && resolvingComponents.Contains(targetSyntax.Key)) continue;
                         var target = await ResolveStableReferenceCoreAsync(stateFile, reference.Value, currentConnectionId,
                             resolvingComponents, cancellationToken);
                         referenceTargets[reference.Key] = target.Id;
@@ -236,7 +244,8 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
                         $"Stable component '{stableComponent.Key}' matches multiple Components on '{stableSlot.Path}'.",
                         ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["selector"] = selector,
                             ["slotPath"] = stableSlot.Path, ["candidateIds"] = matching.Select(candidate => candidate.Id).ToArray() },
-                        ["Add identityFields or a stable managed reference that uniquely identifies this Component."]);
+                        ["Inspect candidateIds and preserve the existing state. Adding identityFields to a manifest does not populate an older checkpoint's identity values.",
+                         "For new content use one named provider Slot per Component or initialize immutable identityFields at creation. Recover existing content only after verifying ownership and exact candidates; do not select by ordinal or discard state blindly."]);
                 component = await client.GetComponentAsync(matching[0].Id, cancellationToken);
             }
 
@@ -819,7 +828,8 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
         var parentId = await ResolveSlotIdAsync(parentSelector, cancellationToken);
         var stateDepth = state.Slots.Values.Select(x => x.Path.Count(ch => ch == '/')).DefaultIfEmpty(0).Max();
         var parent = await client.GetSlotAsync(parentId, Math.Clamp(Math.Max(MaxDepth(document.Children) + 1, stateDepth), 0, 64), true, cancellationToken);
-        var snapshots = new List<(SlotInfo Slot, string Path)> { (parent, NormalizeParentPath(parentSelector)) };
+        var parentPath = await ObserveAbsolutePathAsync(parent, cancellationToken);
+        var snapshots = new List<(SlotInfo Slot, string Path)> { (parent, parentPath) };
         var rootKey = document.Slot!.Key!;
         if (state.Slots.TryGetValue(rootKey, out var rootState) && !ContainsSlot(parent, rootState.Id))
         {
@@ -853,8 +863,8 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
         var prepared = new PreparedApply(document, options, state, statePath, session, parentId, sameSession, snapshots,
             migrations.Slots, migrations.Components);
         var rootSpec = new ApplyNodeSpec(document.Slot, document.Components, document.Children);
-        BuildNode(prepared, rootSpec, null, parent, NormalizeParentPath(parentSelector), true);
-        await PrepareRelocationTransformsAsync(prepared, NormalizeParentPath(parentSelector), cancellationToken);
+        BuildNode(prepared, rootSpec, null, parent, parentPath, true);
+        await PrepareRelocationTransformsAsync(prepared, parentPath, cancellationToken);
         BuildAssetPlans(prepared);
         BuildComponentPlans(prepared);
         BuildDeletionPlans(prepared);
@@ -1161,6 +1171,13 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
     {
         if (StableSelectorSyntax.TryParse(value, out var stable))
         {
+            if (stable!.Kind == "slot-member")
+            {
+                if (!slots.TryGetValue(stable.Key, out var target) || target.Id is null)
+                    throw new RLoopException("APPLY_REFERENCE_NOT_FOUND", $"Slot reference '{value}' could not be resolved.", ExitCodes.ValidationFailed);
+                var observed = await client.GetSlotAsync(target.Id, 0, false, cancellationToken);
+                return RequireSlotMember(observed, stable.MemberName!, value).Id!;
+            }
             if (stable!.Kind == "component")
                 return components.TryGetValue(stable.Key, out var component) && component.Id is not null
                     ? component.Id : throw UnknownApplyReference(value, components.Keys);
@@ -1192,6 +1209,12 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
         return value;
     }
 
+    private static MemberValue RequireSlotMember(SlotInfo slot, string name, string selector)
+    {
+        if (slot.Members?.TryGetValue(name, out var member) == true && !string.IsNullOrWhiteSpace(member.Id)) return member;
+        throw new RLoopException("APPLY_MEMBER_REFERENCE_NOT_FOUND", $"Slot member '{selector}' has no observed field ID.", ExitCodes.ValidationFailed);
+    }
+
     private static bool CanResolveAll(IReadOnlyDictionary<string, JsonElement>? fields,
         IReadOnlyDictionary<string, ComponentRuntime> components, IReadOnlyDictionary<string, NodeRuntime> slots) =>
         (fields ?? new Dictionary<string, JsonElement>()).Values.All(value => CanResolve(value, components, slots));
@@ -1203,7 +1226,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
         {
             var text = value.GetString() ?? string.Empty;
             if (StableSelectorSyntax.TryParse(text, out var stable))
-                return stable!.Kind == "slot"
+                return stable!.Kind is "slot" or "slot-member"
                     ? slots.TryGetValue(stable.Key, out var slot) && slot.Id is not null
                     : components.TryGetValue(stable.Key, out var runtime) && runtime.Id is not null;
             return true;
@@ -1230,6 +1253,13 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
                 if (stable.Kind == "slot")
                 {
                     if (slots.TryGetValue(stable.Key, out var target) && target.Existing is not null) { raw = target.Existing.Id; return true; }
+                    raw = string.Empty; return false;
+                }
+                if (stable.Kind == "slot-member")
+                {
+                    if (slots.TryGetValue(stable.Key, out var target) &&
+                        target.Existing?.Members?.TryGetValue(stable.MemberName!, out var slotMember) == true &&
+                        !string.IsNullOrWhiteSpace(slotMember.Id)) { raw = slotMember.Id; return true; }
                     raw = string.Empty; return false;
                 }
                 if (components.TryGetValue(stable.Key, out var memberTarget) &&
@@ -1275,6 +1305,16 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
     private static bool MemberMatchesRaw(MemberValue member, string raw)
     {
         if (member.Kind == "reference") return string.Equals(member.TargetId ?? "null", raw, StringComparison.Ordinal);
+        if (member.Kind is "syncObject" or "dictionary")
+        {
+            JsonNode? desired;
+            try { desired = JsonNode.Parse(raw); } catch (JsonException) { return false; }
+            if (desired is not JsonObject obj || member.Members is null) return false;
+            if (member.Kind == "dictionary" && obj.Count != member.Members.Count) return false;
+            return obj.All(pair => member.Members.TryGetValue(pair.Key, out var child) &&
+                MemberMatchesRaw(child, pair.Value is JsonValue value && value.TryGetValue<string>(out var text)
+                    ? text : pair.Value?.ToJsonString() ?? "null"));
+        }
         if (member.Kind == "list")
         {
             JsonNode? desired;
@@ -1282,8 +1322,9 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
             if (desired is not JsonArray desiredArray || member.Elements is null || desiredArray.Count != member.Elements.Count) return false;
             for (var i = 0; i < desiredArray.Count; i++)
             {
-                var current = MemberActual(member.Elements[i]);
-                if (!JsonEquivalent(current, desiredArray[i])) return false;
+                var desiredValue = desiredArray[i];
+                if (!MemberMatchesRaw(member.Elements[i], desiredValue is JsonValue value && value.TryGetValue<string>(out var text)
+                    ? text : desiredValue?.ToJsonString() ?? "null")) return false;
             }
             return true;
         }
@@ -1315,11 +1356,18 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
             return la.Count == ra.Count && Enumerable.Range(0, la.Count).All(i => JsonEquivalent(la[i], ra[i]));
         if (left is JsonValue lv && right is JsonValue rv)
         {
-            if (lv.TryGetValue<double>(out var ld) && rv.TryGetValue<double>(out var rd))
+            if (TryNumeric(lv, out var ld) && TryNumeric(rv, out var rd))
                 return double.IsNaN(ld) && double.IsNaN(rd) || Math.Abs(ld - rd) <= 0.00001 * Math.Max(1, Math.Max(Math.Abs(ld), Math.Abs(rd)));
             return left.ToJsonString() == right.ToJsonString();
         }
         return JsonNode.DeepEquals(left, right);
+    }
+
+    private static bool TryNumeric(JsonValue value, out double number)
+    {
+        number = 0;
+        return value.GetValueKind() == JsonValueKind.Number && double.TryParse(value.ToJsonString(),
+            System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out number);
     }
 
     private static bool IsStringLike(string? type)
@@ -1384,7 +1432,8 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
                 $"Stable Component on Slot '{state.SlotKey}' matches multiple runtime Components.", ExitCodes.ValidationFailed,
                 new Dictionary<string, object?> { ["candidateIds"] = matches.Select(candidate => candidate.Id).ToArray(),
                     ["type"] = state.Type },
-                ["Add identityFields containing immutable managed values that uniquely identify this Component."]);
+                ["Inspect candidateIds and preserve the existing state. Adding identityFields to a manifest does not populate an older checkpoint's identity values.",
+                 "Prefer named provider Slots for new content. For existing content, verify ownership and each candidate before an explicit recovery; never guess by ordinal or automatically adopt."]);
         if (matches.Length == 1) return matches[0];
         if (state is not null && (state.MemberNames is not null || state.IdentityValues is not null)) return null;
         matches = components.Where(x => TypeNamesEquivalent(x.Type, state?.Type ?? type)).ToArray();
@@ -1418,6 +1467,8 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
         if (syntax!.Kind == "slot")
             return prepared.State.Slots.TryGetValue(syntax.Key, out var slotState)
                 ? FindManagedSlot(prepared, slotState)?.Id : null;
+        if (syntax.Kind == "slot-member")
+            return FindStateSlot(prepared, syntax.Key)?.Members?.GetValueOrDefault(syntax.MemberName!)?.Id;
         if (!prepared.State.Components.TryGetValue(syntax.Key, out var componentState)) return null;
         var slot = FindStateSlot(prepared, componentState.SlotKey);
         if (slot is null) return null;
@@ -1656,8 +1707,20 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
 
     private static int MaxDepth(IReadOnlyList<ApplyNodeSpec>? children) => children is null || children.Count == 0
         ? 0 : 1 + children.Max(x => MaxDepth(x.Children));
-    private static string NormalizeParentPath(string selector) => selector.Equals("Root", StringComparison.OrdinalIgnoreCase)
-        ? "Root" : NormalizePath(selector);
+    private async Task<string> ObserveAbsolutePathAsync(SlotInfo slot, CancellationToken cancellationToken)
+    {
+        var names = new List<string>();
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        while (slot.Id != "Root")
+        {
+            if (!visited.Add(slot.Id) || visited.Count > 64 || string.IsNullOrWhiteSpace(slot.ParentId))
+                throw new RLoopException("SLOT_PATH_UNRESOLVED", "Cannot observe a bounded parent chain to Root.", ExitCodes.ValidationFailed);
+            names.Add(slot.Name);
+            slot = await client.GetSlotAsync(slot.ParentId, 0, false, cancellationToken);
+        }
+        names.Reverse();
+        return "Root" + (names.Count == 0 ? "" : "/" + string.Join('/', names));
+    }
     private static string NormalizePath(string path) => "Root/" + string.Join('/', path.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries).Where(x => !x.Equals("Root", StringComparison.OrdinalIgnoreCase)));
     private static string MemberKey(string selector) { var separator = selector.LastIndexOf('.'); return separator > 0 ? selector[..separator] : selector; }
     private static string NormalizeType(string value) { var bracket = value.IndexOf(']'); return bracket >= 0 ? value[(bracket + 1)..] : value; }
