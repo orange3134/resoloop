@@ -25,7 +25,7 @@ resoloop blender export artifacts/blender/prop.blend --output content/prop-v1 --
 
 新しい出力ディレクトリを指定します。既存ディレクトリには `BLENDER_OUTPUT_EXISTS` で停止します。`model.apply.json`、`*.mesh.json`、PNGテクスチャ、`report.json` を生成します。`.blend` は変更せず、レンダリングも行いません。失敗したbundleは適用せず、新しい出力先でやり直してください。
 
-UV付きn-gonは一時メッシュで三角形化してから接線を計算するため、回避用Triangulateモディファイアの追加は不要です。UV・corner normal・色・材質の対応を保持します。画像は`Image.copy()`を使わず現在のpixel bufferをPNGへ保存します。buffer欠損時だけ画像が記録している保存先から回復を試し、warningを出します。失われた未保存pixelは復元できず、エラーに画像名・パス・対処を表示します。
+UV付きn-gonは一時メッシュで三角形化してから接線を計算するため、回避用Triangulateモディファイアの追加は不要です。UV・corner normal・色・材質の対応を保持します。Blender 5では接線計算によりUVレイヤーの参照が無効になる場合があるため、計算前に名前とrender-activeを先頭にした順序を記録し、計算後に名前でレイヤーを再取得します。UV座標とチャンネル順を保持します。未修正版でUVが破損したbundleはJSONを直接修正せず、元の`.blend`から新しい出力ディレクトリへ再exportしてください。画像は`Image.copy()`を使わず現在のpixel bufferをPNGへ保存します。buffer欠損時だけ画像が記録している保存先から回復を試し、warningを出します。失われた未保存pixelは復元できず、エラーに画像名・パス・対処を表示します。
 
 制作時は画像を保存し、必要に応じて色空間を維持してreload／packしてから`.blend`を保存し、再openで画像を確認してください。Non-Colorはnormal／data mapのpixelを書き込む前に設定します。出力後にapplyへ材質や画像を追加した場合、`report.json`は自動更新されないため最終納品レポートで資源量を再集計します。
 
@@ -82,7 +82,7 @@ enumは上記`--member PreferredProfile`でassembly込みの型と値を取得�
 
 通常の `dotnet test ResoLoop.slnx --no-build` はBlenderやResoniteを起動しません。実機往復は次のようにopt-inします。Blenderが見つからない場合は失敗し、勝手にインストールしません。
 
-ResoniteなしのBlender実機回帰テストは `resoloop blender run tests/blender/test_export.py --arg=src/RLoop.ResoniteLink/blender_export.py --json` で実行します。UV seam、複数UV、vertex color、鏡映・非一様scale、法線と面の整合、normal PNG、非対応shaderの失敗を検査します。Python例外とキャンセルのプロセステストは `RESOLOOP_RUN_BLENDER_TESTS=1` を指定して `dotnet test tests/RLoop.Tests --no-build --filter FullyQualifiedName~BackgroundProcessReportsPythonFailureAndCancels` で実行できます。
+ResoniteなしのBlender実機回帰テストは `resoloop blender run tests/blender/test_export.py --arg=src/RLoop.ResoniteLink/blender_export.py --json` で実行します。三角形・四角形・n-gonの接線計算後のUV座標、複数UVのrender-active順、UV seam両側のcorner座標、元meshのUV不変性を検査します。vertex color、鏡映・非一様scale、法線と面の整合、normal PNG、非対応shaderの失敗も検査します。Python例外とキャンセルのプロセステストは `RESOLOOP_RUN_BLENDER_TESTS=1` を指定して `dotnet test tests/RLoop.Tests --no-build --filter FullyQualifiedName~BackgroundProcessReportsPythonFailureAndCancels` で実行できます。
 
 加えてn-gonの接線生成と元mesh不変、生成／dirty画像の最新pixel保持、保存したblendの再open、欠損画像の診断を検査します。画像bufferの扱いは[Blender Image API](https://docs.blender.org/api/5.2/bpy.types.Image.html)と実行環境のRNAで確認しています。
 

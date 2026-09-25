@@ -301,8 +301,11 @@ class Exporter:
             uv_layers = list(mesh.uv_layers)
             active = next((layer for layer in uv_layers if layer.active_render), mesh.uv_layers.active)
             if active:
-                uv_layers = [active] + [layer for layer in uv_layers if layer != active]
-                mesh.calc_tangents(uvmap=active.name)
+                uv_names = [active.name] + [layer.name for layer in uv_layers if layer != active]
+                mesh.calc_tangents(uvmap=uv_names[0])
+                # Tangent allocation can invalidate UV layer RNA handles in Blender 5.
+                uv_layers = [mesh.uv_layers[name] for name in uv_names]
+                active = uv_layers[0]
             color = mesh.color_attributes.active_color
             if color and color.domain not in {"POINT", "CORNER"}:
                 raise ValueError("Unsupported color attribute domain: " + color.domain)
