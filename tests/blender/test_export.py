@@ -143,6 +143,81 @@ class ExportTests(unittest.TestCase):
         self.assertAlmostEqual(0.461356, material["fields"]["AlbedoColor"][0], places=5)
         self.assertEqual(1, material["fields"]["AlbedoColor"][3])
 
+    def test_tangent_calculation_preserves_exact_uv_values_and_render_channel_order(self):
+        points = [(0, 0, 0), (2, 0, 0), (2.5, 1, 0), (1.25, 2, 0), (0, 1, 0)]
+        for corners in (3, 4, 5):
+            for channels in (1, 2):
+                with self.subTest(corners=corners, channels=channels):
+                    mesh = bpy.data.meshes.new("UV Polygon")
+                    mesh.from_pydata(points[:corners], [], [tuple(range(corners))])
+                    self.obj.data = mesh
+                    mesh.materials.append(self.mat)
+                    names = ("BaseUV", "DetailUV")[:channels]
+                    expected = []
+                    for channel, name in enumerate(names):
+                        layer = mesh.uv_layers.new(name=name)
+                        values = [(x * (channel + 1) + 0.125, y * 0.5 - channel - 0.25)
+                                  for x, y, _ in points[:corners]]
+                        for loop, uv in zip(layer.data, values):
+                            loop.uv = uv
+                        expected.append(values)
+                    mesh.uv_layers[names[-1]].active_render = True
+                    order = names[-1:] + names[:-1]
+
+                    path = self.export(f"uv-{corners}-{channels}")
+                    report = json.loads((path / "report.json").read_text())
+                    exported = json.loads(next(path.glob("*.mesh.json")).read_text())
+                    self.assertEqual(list(order), report["meshes"][0]["uvChannels"])
+                    self.assertEqual(corners, report["meshes"][0]["vertices"])
+                    self.assertEqual(corners, len(exported["vertices"]))
+                    self.assertEqual(corners, len({i for submesh in exported["submeshes"]
+                                                    for i in submesh["vertexIndices"]}))
+                    for vertex in exported["vertices"]:
+                        self.assertEqual(channels, len(vertex["uvs"]))
+                    for channel, name in enumerate(order):
+                        expected_uvs = sorted(expected[names.index(name)])
+                        actual_uvs = sorted((vertex["uvs"][channel]["uv"]["x"],
+                                             vertex["uvs"][channel]["uv"]["y"])
+                                            for vertex in exported["vertices"])
+                        for actual, wanted in zip(actual_uvs, expected_uvs):
+                            for value, target in zip(actual, wanted):
+                                self.assertAlmostEqual(target, value, places=5)
+                    for channel, name in enumerate(names):
+                        for loop, wanted in zip(mesh.uv_layers[name].data, expected[channel]):
+                            for value, target in zip(loop.uv, wanted):
+                                self.assertAlmostEqual(target, value, places=5)
+
+    def test_uv_seam_corner_values_survive_tangent_calculation(self):
+        mesh = self.obj.data
+        for i, item in enumerate(mesh.uv_layers["LightUV"].data):
+            item.uv = (i * 0.25 - 0.5, i * 0.125 + 1.25)
+        names = ("BaseUV", "LightUV")
+        expected = [[tuple(item.uv) for item in mesh.uv_layers[name].data] for name in names]
+
+        path = self.export()
+        report = json.loads((path / "report.json").read_text())
+        exported = json.loads(next(path.glob("*.mesh.json")).read_text())
+        self.assertEqual(list(names), report["meshes"][0]["uvChannels"])
+        self.assertEqual(6, len(exported["vertices"]))
+        self.assertEqual(6, report["meshes"][0]["vertices"])
+        actual = []
+        for submesh in exported["submeshes"]:
+            for index in submesh["vertexIndices"]:
+                vertex = exported["vertices"][index]
+                self.assertEqual(2, len(vertex["uvs"]))
+                actual.append([tuple(vertex["uvs"][channel]["uv"][axis] for axis in ("x", "y"))
+                               for channel in range(2)])
+        self.assertEqual(6, len(actual))
+        for found, wanted in zip(sorted(actual, key=lambda corner: corner[1][0]),
+                                 sorted(zip(*expected), key=lambda corner: corner[1][0])):
+            for actual_uv, expected_uv in zip(found, wanted):
+                for value, target in zip(actual_uv, expected_uv):
+                    self.assertAlmostEqual(target, value, places=5)
+        for channel, name in enumerate(names):
+            for item, wanted in zip(mesh.uv_layers[name].data, expected[channel]):
+                for value, target in zip(item.uv, wanted):
+                    self.assertAlmostEqual(target, value, places=5)
+
     def test_ngon_triangulation_keeps_corner_data_and_source(self):
         mesh = bpy.data.meshes.new("Ngon")
         vertices = [(math.cos(i*math.tau/5), math.sin(i*math.tau/5), 0) for i in range(5)]

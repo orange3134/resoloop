@@ -221,7 +221,7 @@ resoloop apply content/prop-v1/model.apply.json --state .resoloop/state/prop.jso
 
 `modeling/model.py`は自分のprojectの制作script、`VERIFIED_PARENT`は現在のworldで確認した親Slotに置き換えます。`--preserve-hierarchy`は部品の階層とpivotを保持し、`--pack-pbr`は対応する直接接続のPBR data画像をResonite向けにまとめます。検出pathの上書き、texture packing、対応shader、テスト手順と制約は[Blender workflow](docs/BLENDER.md)を参照してください。
 
-UVを持つn-gonと、生成・編集された画像bufferの現在のpixelに対応しています。textureのcolor profileは`resoloop type describe FrooxEngine.StaticTexture2D --member PreferredProfile --json`で実行環境のenumを確認します。item auditが返す外部参照候補と未使用allow指定も確認してください。[制作テストの改善と検証](docs/BLENDER-FEEDBACK.md)に記録があります。
+UVを持つn-gonと、生成・編集された画像bufferの現在のpixelに対応しています。Blender 5でも接線計算後にUV座標とrender-activeを先頭にしたチャンネル順を保持します。未修正版でUVが破損したbundleは自動修復されないため、元の`.blend`から新しい出力ディレクトリへ再exportしてください。textureのcolor profileは`resoloop type describe FrooxEngine.StaticTexture2D --member PreferredProfile --json`で実行環境のenumを確認します。item auditが返す外部参照候補と未使用allow指定も確認してください。[制作テストの改善と検証](docs/BLENDER-FEEDBACK.md)に記録があります。
 
 新しいexportはproviderを名前付きSlotへ分け、中断したapplyからの復旧に備えます。既存のroot直下provider配置を保つには`--legacy-root-providers`を使用できます。strict validation、nested SyncObjectの差分、Slot fieldの観測、geometry／partial／pivotのbounds区別は後述の観測・検証手順に従います。[時計塔・戦車テストの改善](docs/CLOCKTOWER-FEEDBACK.md)も参照してください。
 
