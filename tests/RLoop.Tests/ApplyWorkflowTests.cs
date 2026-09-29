@@ -1465,6 +1465,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public string SessionId { get; set; } = "session-1";
         public bool LoseNextSlotCreateResponse { get; set; }
         public int AssetImports { get; private set; }
+        public string ImportUrlPrefix { get; set; } = "resdb:///asset-";
         public List<string> DescribedTypes { get; } = [];
 
         public FakeResoniteClient(ApplyDocument? definitions = null)
@@ -1599,7 +1600,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public Task<string> ImportAssetAsync(ApplyAssetSpec asset, string resolvedSource, CancellationToken cancellationToken = default)
         {
             AssetImports++;
-            return Task.FromResult("resdb:///asset-" + AssetImports);
+            return Task.FromResult(ImportUrlPrefix + AssetImports);
         }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         public void ResetMetrics() => _requests = 0;

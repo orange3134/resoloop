@@ -612,7 +612,9 @@ internal sealed record ApplyStateSlot(string Id, string Path, bool RuntimeReloca
 internal sealed record ApplyStateComponent(string Id, string SlotKey, string Type, int TypeOrdinal,
     int? ComponentIndex = null, IReadOnlyList<string>? MemberNames = null,
     IReadOnlyDictionary<string, string>? IdentityValues = null,
-    IReadOnlyDictionary<string, string>? ReferenceSelectors = null);
+    IReadOnlyDictionary<string, string>? ReferenceSelectors = null,
+    // Declared fields that reference $asset: when the fields were last applied. Null means an older state.
+    IReadOnlyDictionary<string, JsonElement>? AssetFields = null);
 internal sealed record ApplyStateAsset(string Kind, string SourceHash, string Url);
 
 internal sealed class ApplyState

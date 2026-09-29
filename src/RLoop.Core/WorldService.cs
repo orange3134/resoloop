@@ -398,8 +398,12 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 asset.Url = asset.DirectUrl ?? (asset.Action == "no-op" && prepared.State.Assets.TryGetValue(asset.Key, out var saved)
-                    ? saved.Url : await client.ImportAssetAsync(asset.Spec, asset.ResolvedSource, cancellationToken));
-                if (asset.Action == "create") counts.AssetsImported++;
+                    ? asset.MigratedUrl ?? saved.Url : await client.ImportAssetAsync(asset.Spec, asset.ResolvedSource, cancellationToken));
+                if (asset.Action == "create")
+                {
+                    counts.AssetsImported++;
+                    ForgetAssetEvidence(prepared, asset.Key);
+                }
                 else counts.AssetsUnchanged++;
                 prepared.State.Assets[asset.Key] = new ApplyStateAsset(asset.Spec.Kind, asset.SourceHash, asset.Url);
                 Checkpoint(prepared);
@@ -464,7 +468,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                         initialFields = await ResolveFieldsAsync(createFields, byKey, slotsByKey, assetUrls, cancellationToken);
                         component.AppliedOnCreate = initialFields;
                     }
-                    prepared.State.Components[component.StableKey] = CreateComponentState(component, string.Empty);
+                    prepared.State.Components[component.StableKey] = CreateComponentState(component, string.Empty,
+                        previous: prepared.State.Components.GetValueOrDefault(component.StableKey));
                     Checkpoint(prepared);
                     var created = await client.AddComponentAsync(component.Node.Id!, component.Spec.Type, initialFields, cancellationToken);
                     component.Id = created.Id;
@@ -472,7 +477,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     counts.ComponentsAdded++;
                 }
                 if (!string.IsNullOrWhiteSpace(component.Spec.Key)) byKey[component.Spec.Key!] = component;
-                prepared.State.Components[component.StableKey] = CreateComponentState(component, component.Id!);
+                prepared.State.Components[component.StableKey] = CreateComponentState(component, component.Id!,
+                    previous: prepared.State.Components.GetValueOrDefault(component.StableKey));
                 Checkpoint(prepared);
                 completed++;
                 options.Progress?.Invoke(new ApplyProgress("components", completed, total, component.Path,
@@ -654,8 +660,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var byKey = prepared.Components.Where(x => !string.IsNullOrWhiteSpace(x.Spec.Key) && x.Existing is not null)
             .ToDictionary(x => x.Spec.Key!, x => x, StringComparer.Ordinal);
         var slotsByKey = prepared.Nodes.ToDictionary(x => x.StableKey, StringComparer.Ordinal);
-        var assetUrls = prepared.Assets.Where(x => x.DirectUrl is not null || prepared.State.Assets.ContainsKey(x.Key))
-            .ToDictionary(x => x.Key, x => x.DirectUrl ?? prepared.State.Assets[x.Key].Url, StringComparer.Ordinal);
+        var assetUrls = PlanAssetUrls(prepared);
         var results = new List<ApplyTestCaseResult>();
         foreach (var test in document.Tests ?? [])
         {
@@ -1040,11 +1045,11 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             }
         }
 
+        DetectSavedAssetMigrations(prepared);
         var existingByKey = prepared.Components.Where(x => !string.IsNullOrWhiteSpace(x.Spec.Key) && x.Existing is not null)
             .ToDictionary(x => x.Spec.Key!, x => x, StringComparer.Ordinal);
         var slotsByKey = prepared.Nodes.ToDictionary(x => x.StableKey, StringComparer.Ordinal);
-        var assetUrls = prepared.Assets.Where(x => x.DirectUrl is not null || prepared.State.Assets.ContainsKey(x.Key))
-            .ToDictionary(x => x.Key, x => x.DirectUrl ?? prepared.State.Assets[x.Key].Url, StringComparer.Ordinal);
+        var assetUrls = PlanAssetUrls(prepared);
         foreach (var component in prepared.Components)
         {
             var action = component.RelocationSource is not null ? "relocate" : component.Existing is null ? "create" : "no-op";
@@ -1122,6 +1127,86 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             prepared.Entries.Insert(0, new ApplyPlanEntry(runtime.Action, "asset", "$assets/" + pair.Key, pair.Key, pair.Value.Kind,
                 Reason: direct is not null ? "asset URI is already addressable" : unchanged ?
                     "source hash and imported URL match state" : "source is new or changed and must be imported"));
+        }
+    }
+
+    private static Dictionary<string, string> PlanAssetUrls(PreparedApply prepared) =>
+        prepared.Assets.Where(x => x.DirectUrl is not null || prepared.State.Assets.ContainsKey(x.Key))
+            .ToDictionary(x => x.Key, x => x.DirectUrl ?? x.MigratedUrl ?? prepared.State.Assets[x.Key].Url, StringComparer.Ordinal);
+
+    // Saving a world moves imported local:// assets into the saved record and rewrites every live URL to resdb:///.
+    // State still holds the local URL, so an unchanged asset would otherwise push the unportable local URL back.
+    // Adopt the live URL only when every managed reference observed the same resdb URI.
+    // A relocated Component is observed through the live Component it replaces.
+    // A field counts only while its declaration matches the last apply: a repointed field still holds another asset's URL.
+    private static void DetectSavedAssetMigrations(PreparedApply prepared)
+    {
+        var candidates = prepared.Assets.Where(asset => asset.Action == "no-op" && asset.DirectUrl is null &&
+                prepared.State.Assets.TryGetValue(asset.Key, out var saved) &&
+                Uri.TryCreate(saved.Url, UriKind.Absolute, out var uri) && uri.Scheme == "local")
+            .ToDictionary(asset => asset.Key, StringComparer.Ordinal);
+        if (candidates.Count == 0) return;
+        var observed = new Dictionary<string, List<string?>>(StringComparer.Ordinal);
+        void Collect(JsonElement desired, MemberValue? live)
+        {
+            if (desired.ValueKind == JsonValueKind.String)
+            {
+                var text = desired.GetString() ?? string.Empty;
+                if (!text.StartsWith("$asset:", StringComparison.Ordinal) || !candidates.ContainsKey(text[7..])) return;
+                if (!observed.TryGetValue(text[7..], out var values)) observed[text[7..]] = values = [];
+                values.Add(live is { Kind: "field", Value: JsonValue value } && value.TryGetValue<string>(out var url) ? url : null);
+            }
+            else if (desired.ValueKind == JsonValueKind.Array)
+            {
+                var elements = live?.Elements ?? [];
+                var index = 0;
+                foreach (var item in desired.EnumerateArray())
+                    Collect(item, index < elements.Count ? elements[index++] : null);
+            }
+            else if (desired.ValueKind == JsonValueKind.Object)
+                foreach (var property in desired.EnumerateObject())
+                    Collect(property.Value, live?.Members?.GetValueOrDefault(property.Name));
+        }
+        foreach (var component in prepared.Components)
+        {
+            var live = component.Existing ?? component.RelocationSource;
+            if (live is null) continue;
+            // A state written before asset fields were recorded has no record, so every declared reference counts.
+            var applied = prepared.State.Components.GetValueOrDefault(component.StableKey)?.AssetFields;
+            foreach (var field in component.Spec.Fields ?? new Dictionary<string, JsonElement>())
+            {
+                if (applied is not null && (!applied.TryGetValue(field.Key, out var previous) || !JsonElement.DeepEquals(previous, field.Value)))
+                    continue;
+                Collect(field.Value, live.Members?.GetValueOrDefault(field.Key));
+            }
+        }
+        foreach (var (key, values) in observed)
+        {
+            var live = values.Distinct(StringComparer.Ordinal).ToArray();
+            if (live is not [{ } url] || !Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != "resdb") continue;
+            candidates[key].MigratedUrl = url;
+            var index = prepared.Entries.FindIndex(entry => entry.Kind == "asset" && entry.Key == key);
+            if (index >= 0)
+                prepared.Entries[index] = prepared.Entries[index] with
+                { Reason = "asset URL was migrated to resdb by a world save; state will record the live URL" };
+        }
+    }
+
+    // A re-import leaves every live reference on the previous content until its field is written again, and a world save
+    // in between moves that content to resdb. Until the fields are written, the record must not offer those references as
+    // evidence, or an interrupted apply would adopt the previous content's URL. A state written before asset fields were
+    // recorded cannot tell which field held the asset, so only Components that declare it now stop counting.
+    private static void ForgetAssetEvidence(PreparedApply prepared, string key)
+    {
+        var declared = prepared.Components.Select(component => component.StableKey).ToHashSet(StringComparer.Ordinal);
+        var declaring = prepared.Components.Where(component => (component.Spec.Fields ?? new Dictionary<string, JsonElement>())
+            .Values.Any(value => ContainsAssetReference(value, key))).Select(component => component.StableKey).ToHashSet(StringComparer.Ordinal);
+        foreach (var (stableKey, saved) in prepared.State.Components.ToArray())
+        {
+            var fields = saved.AssetFields is { } applied
+                ? applied.Where(field => !ContainsAssetReference(field.Value, key)).ToDictionary(StringComparer.Ordinal)
+                : declared.Contains(stableKey) && !declaring.Contains(stableKey) ? null : new Dictionary<string, JsonElement>();
+            prepared.State.Components[stableKey] = saved with { AssetFields = fields };
         }
     }
 
@@ -1258,6 +1343,16 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
              text.StartsWith("$slot-member:", StringComparison.Ordinal)),
         JsonValueKind.Array => value.EnumerateArray().Any(ContainsWorldReference),
         JsonValueKind.Object => value.EnumerateObject().Any(property => ContainsWorldReference(property.Value)),
+        _ => false
+    };
+
+    // With a key, only references to that asset count.
+    private static bool ContainsAssetReference(JsonElement value, string? key = null) => value.ValueKind switch
+    {
+        JsonValueKind.String => value.GetString() is { } text && (key is null
+            ? text.StartsWith("$asset:", StringComparison.Ordinal) : text == "$asset:" + key),
+        JsonValueKind.Array => value.EnumerateArray().Any(item => ContainsAssetReference(item, key)),
+        JsonValueKind.Object => value.EnumerateObject().Any(property => ContainsAssetReference(property.Value, key)),
         _ => false
     };
 
@@ -1647,7 +1742,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
     }
 
     private static ApplyStateComponent CreateComponentState(ComponentRuntime component, string id,
-        IReadOnlyDictionary<string, string>? resolvedFields = null)
+        IReadOnlyDictionary<string, string>? resolvedFields = null, ApplyStateComponent? previous = null)
     {
         var memberNames = (component.Spec.Fields?.Keys ?? [])
             .Concat(component.Spec.InitialFields?.Keys ?? []).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
@@ -1666,9 +1761,14 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var referenceSelectors = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var name in memberNames)
             if (TryGetReferenceSelector(component.Spec, name, out var selector)) referenceSelectors[name] = selector;
+        // Record asset references only once the fields are written. Earlier checkpoints keep the last applied record,
+        // and an empty record still tells a current state apart from one written before this was recorded.
+        var assetFields = resolvedFields is null ? previous?.AssetFields :
+            (component.Spec.Fields ?? new Dictionary<string, JsonElement>()).Where(field => ContainsAssetReference(field.Value))
+                .ToDictionary(field => field.Key, field => field.Value.Clone(), StringComparer.Ordinal);
         return new ApplyStateComponent(id, component.Node.StableKey, component.ResolvedType ?? component.Spec.Type,
             component.TypeOrdinal, component.ComponentIndex, memberNames, identityValues,
-            referenceSelectors.Count == 0 ? null : referenceSelectors);
+            referenceSelectors.Count == 0 ? null : referenceSelectors, assetFields);
     }
 
     private static bool TryGetReferenceSelector(ApplyComponentSpec component, string memberName, out string selector)
@@ -2009,5 +2109,6 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         public string? DirectUrl { get; } = directUrl;
         public string Action { get; } = action;
         public string? Url { get; set; }
+        public string? MigratedUrl { get; set; }
     }
 }
