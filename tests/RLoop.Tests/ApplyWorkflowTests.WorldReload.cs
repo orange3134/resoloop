@@ -85,6 +85,89 @@ public sealed partial class ApplyWorkflowTests
         Assert.Equal(0, client.Writes);
     }
 
+    [Theory]
+    [InlineData("same-session")]
+    [InlineData("new-session")]
+    [InlineData("world-reload")]
+    public async Task RelocatableRootMovedDeeperInsideTheParentKeepsItsDescendants(string reconnect)
+    {
+        var (service, client, state) = await ApplyAndMoveRelocatableToolAsync("relocatable-deeper-" + reconnect, reconnect);
+        // A new name declares a new path, so the plan relocates the item instead of stopping at APPLY_RUNTIME_RELOCATABLE_ACTIVE.
+        var renamed = ReloadDocument("relocatable-deeper-" + reconnect + "-renamed", RelocatableTool("RenamedTool"));
+
+        var plan = await service.PlanApplyAsync(renamed, new ApplyOptions(state));
+
+        Assert.Equal(0, plan.Creates);
+        Assert.Contains(plan.Operations, operation => operation.Action == "relocate" && operation.Kind == "slot" && operation.Key == "root");
+        Assert.Contains(plan.Operations, operation => operation.Action == "no-op" && operation.Kind == "slot" && operation.Key == "tip");
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Fact]
+    public async Task PruneAfterWorldReloadDeletesTheDescendantOfARelocatableRootMovedDeeper()
+    {
+        var (service, client, state) = await ApplyAndMoveRelocatableToolAsync("relocatable-deeper-prune", "world-reload");
+        var trimmed = ReloadDocument("relocatable-deeper-prune-trimmed", """
+            {"schemaVersion":"1","ownership":{"key":"relocatable"},"slot":{"key":"root","name":"RenamedTool","parent":"Root","runtimeRelocatable":true},
+             "components":[{"key":"identity","type":"Test.Target","fields":{"Enabled":true},"identityFields":["Enabled"]}],
+             "children":[{"slot":{"key":"grip","name":"Grip"}}]}
+            """);
+
+        var plan = await service.PlanApplyAsync(trimmed, new ApplyOptions(state, Prune: true));
+
+        var deletedSlot = Assert.Single(plan.Operations, operation => operation.Action == "delete" && operation.Kind == "slot");
+        Assert.Equal("tip", deletedSlot.Key);
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Fact]
+    public async Task RelocatableRootConvergesAfterWorldReloadWithoutMove()
+    {
+        var document = ReloadDocument("relocatable-stay", RelocatableTool("ManagedTool"));
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "relocatable-stay.state.json");
+        await service.ApplyAsync(document, new ApplyOptions(state));
+        client.ReloadWorld("session-reloaded");
+        client.ResetWriteCounts();
+
+        var plan = await service.PlanApplyAsync(document, new ApplyOptions(state));
+
+        Assert.Equal(0, plan.Creates);
+        Assert.Equal(0, plan.Deletes);
+        Assert.Empty(plan.Changes);
+        var applied = await service.ApplyAsync(document, new ApplyOptions(state));
+        Assert.Equal(0, applied.SlotsCreated);
+        Assert.Equal(0, applied.ComponentsAdded);
+        Assert.Equal(0, applied.ComponentsUpdated);
+        Assert.Equal(0, client.Writes);
+    }
+
+    private static string RelocatableTool(string name) => $$$"""
+        {"schemaVersion":"1","ownership":{"key":"relocatable"},"slot":{"key":"root","name":"{{{name}}}","parent":"Root","runtimeRelocatable":true},
+         "components":[{"key":"identity","type":"Test.Target","fields":{"Enabled":true},"identityFields":["Enabled"]}],
+         "children":[{"slot":{"key":"grip","name":"Grip"},
+           "children":[{"slot":{"key":"tip","name":"Tip"},
+             "components":[{"key":"tip-target","type":"Test.Target","fields":{"Enabled":true}}]}]}]}
+        """;
+
+    private async Task<(WorldService Service, FakeResoniteClient Client, string State)> ApplyAndMoveRelocatableToolAsync(
+        string name, string reconnect)
+    {
+        var document = ReloadDocument(name, RelocatableTool("ManagedTool"));
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, name + ".state.json");
+        var applied = await service.ApplyAsync(document, new ApplyOptions(state));
+        // Root/Shelf/ManagedTool stays inside the parent snapshot, but Tip falls below the depth that snapshot reads.
+        var shelf = await client.CreateSlotAsync(new SlotCreateRequest("Root", "Shelf"));
+        await client.UpdateSlotAsync(new SlotUpdateRequest(applied.SlotId, ParentId: shelf));
+        if (reconnect == "world-reload") client.ReloadWorld("session-reloaded");
+        else if (reconnect == "new-session") client.SessionId = "session-2";
+        client.ResetWriteCounts();
+        return (service, client, state);
+    }
+
     private ApplyDocument ReloadDocument(string name, string json)
     {
         var path = Path.Combine(_root, name + ".json");

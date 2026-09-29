@@ -913,7 +913,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var parentSegments = await ObserveAbsoluteSegmentsAsync(parent, cancellationToken);
         var snapshots = new List<(SlotInfo Slot, string Path)> { (parent, parentPath) };
         var rootKey = document.Slot!.Key!;
-        if (state.Slots.TryGetValue(rootKey, out var rootState) && !ContainsSlot(parent, rootState.Id))
+        if (state.Slots.TryGetValue(rootKey, out var rootState) && !IsDirectChild(parent, rootState.Id))
         {
             if (rootState.RuntimeRelocatable && !sameSession)
             {
@@ -921,14 +921,14 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     state.OwnershipKey, true, rootState.PathSegments);
                 var relocated = await ResolveRelocatableSlotAsync(statePath, stable, cancellationToken);
                 state.Slots[rootKey] = rootState = rootState with { Id = relocated.Id };
-                AddSnapshotIfNew(snapshots, relocated, relocated.Path ?? rootState.Path);
+                AddRootSnapshot(snapshots, parent, relocated, relocated.Path ?? rootState.Path);
             }
             else
             try
             {
                 var oldRootId = sameSession && !string.IsNullOrWhiteSpace(rootState.Id)
                     ? rootState.Id : await ResolveSlotIdAsync(SlotPaths.Selector(rootState.Path, rootState.PathSegments), cancellationToken);
-                AddSnapshotIfNew(snapshots, await client.GetSlotAsync(oldRootId, Math.Clamp(stateDepth, 0, 64), true, cancellationToken), rootState.Path);
+                AddRootSnapshot(snapshots, parent, await client.GetSlotAsync(oldRootId, Math.Clamp(stateDepth, 0, 64), true, cancellationToken), rootState.Path);
             }
             catch (RLoopException ex) when (ex.Code is "SLOT_NOT_FOUND" or "SLOT_PATH_NOT_FOUND" or "RESONITE_OPERATION_FAILED")
             {
@@ -938,7 +938,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                         state.OwnershipKey, true, rootState.PathSegments);
                     var relocated = await ResolveRelocatableSlotAsync(statePath, stable, cancellationToken);
                     state.Slots[rootKey] = rootState = rootState with { Id = relocated.Id };
-                    AddSnapshotIfNew(snapshots, relocated, relocated.Path ?? rootState.Path);
+                    AddRootSnapshot(snapshots, parent, relocated, relocated.Path ?? rootState.Path);
                 }
             }
         }
@@ -1890,12 +1890,13 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         foreach (var child in slot.Children) Visit(child, path + "/" + child.Name, visitor);
     }
 
-    private static bool ContainsSlot(SlotInfo root, string id) => root.Id == id || root.Children.Any(child => ContainsSlot(child, id));
+    private static bool IsDirectChild(SlotInfo parent, string id) => parent.Children.Any(child => child.Id == id);
 
-    // After a world reload the saved root ID is gone, and the root resolved again by path is usually already inside the parent snapshot.
-    private static void AddSnapshotIfNew(List<(SlotInfo Slot, string Path)> snapshots, SlotInfo slot, string path)
+    // The parent snapshot is only deep enough for a root directly under the parent. A root found anywhere else keeps its own
+    // snapshot, placed first so that the ID de-duplication keeps its full subtree and its saved path segments.
+    private static void AddRootSnapshot(List<(SlotInfo Slot, string Path)> snapshots, SlotInfo parent, SlotInfo root, string path)
     {
-        if (!snapshots.Any(snapshot => ContainsSlot(snapshot.Slot, slot.Id))) snapshots.Add((slot, path));
+        if (!IsDirectChild(parent, root.Id)) snapshots.Insert(0, (root, path));
     }
 
     private sealed class PreparedApply(ApplyDocument document, ApplyOptions options, ApplyState state,
