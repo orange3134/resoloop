@@ -921,14 +921,14 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     state.OwnershipKey, true, rootState.PathSegments);
                 var relocated = await ResolveRelocatableSlotAsync(statePath, stable, cancellationToken);
                 state.Slots[rootKey] = rootState = rootState with { Id = relocated.Id };
-                snapshots.Add((relocated, relocated.Path ?? rootState.Path));
+                AddSnapshotIfNew(snapshots, relocated, relocated.Path ?? rootState.Path);
             }
             else
             try
             {
                 var oldRootId = sameSession && !string.IsNullOrWhiteSpace(rootState.Id)
                     ? rootState.Id : await ResolveSlotIdAsync(SlotPaths.Selector(rootState.Path, rootState.PathSegments), cancellationToken);
-                snapshots.Add((await client.GetSlotAsync(oldRootId, Math.Clamp(stateDepth, 0, 64), true, cancellationToken), rootState.Path));
+                AddSnapshotIfNew(snapshots, await client.GetSlotAsync(oldRootId, Math.Clamp(stateDepth, 0, 64), true, cancellationToken), rootState.Path);
             }
             catch (RLoopException ex) when (ex.Code is "SLOT_NOT_FOUND" or "SLOT_PATH_NOT_FOUND" or "RESONITE_OPERATION_FAILED")
             {
@@ -938,7 +938,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                         state.OwnershipKey, true, rootState.PathSegments);
                     var relocated = await ResolveRelocatableSlotAsync(statePath, stable, cancellationToken);
                     state.Slots[rootKey] = rootState = rootState with { Id = relocated.Id };
-                    snapshots.Add((relocated, relocated.Path ?? rootState.Path));
+                    AddSnapshotIfNew(snapshots, relocated, relocated.Path ?? rootState.Path);
                 }
             }
         }
@@ -1892,6 +1892,12 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
 
     private static bool ContainsSlot(SlotInfo root, string id) => root.Id == id || root.Children.Any(child => ContainsSlot(child, id));
 
+    // After a world reload the saved root ID is gone, and the root resolved again by path is usually already inside the parent snapshot.
+    private static void AddSnapshotIfNew(List<(SlotInfo Slot, string Path)> snapshots, SlotInfo slot, string path)
+    {
+        if (!snapshots.Any(snapshot => ContainsSlot(snapshot.Slot, slot.Id))) snapshots.Add((slot, path));
+    }
+
     private sealed class PreparedApply(ApplyDocument document, ApplyOptions options, ApplyState state,
         string statePath, SessionInfo session, string parentId, bool sameSession, IReadOnlyList<(SlotInfo Slot, string Path)> snapshots,
         IReadOnlyDictionary<string, string> slotMigrations, IReadOnlyDictionary<string, string> componentMigrations, IReadOnlyList<string> parentSegments)
@@ -1907,7 +1913,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         public IReadOnlyDictionary<string, IReadOnlyList<string>> SnapshotSegments { get; } = BuildSegments(snapshots, state, parentId, parentSegments);
         public IReadOnlyDictionary<string, string> SlotMigrations { get; } = slotMigrations;
         public IReadOnlyDictionary<string, string> ComponentMigrations { get; } = componentMigrations;
-        public IReadOnlyList<SlotInfo> SnapshotSlots { get; } = snapshots.SelectMany(snapshot => Flatten(snapshot.Slot, snapshot.Path)).ToArray();
+        public IReadOnlyList<SlotInfo> SnapshotSlots { get; } = snapshots.SelectMany(snapshot => Flatten(snapshot.Slot, snapshot.Path))
+            .DistinctBy(slot => slot.Id, StringComparer.Ordinal).ToArray();
         public List<NodeRuntime> Nodes { get; } = [];
         public List<ComponentRuntime> Components { get; } = [];
         public List<ApplyPlanEntry> Entries { get; } = [];
@@ -1920,7 +1927,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             var result = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
             void VisitSegments(SlotInfo slot, IReadOnlyList<string> names)
             {
-                result[slot.Id] = names;
+                if (!result.TryAdd(slot.Id, names)) names = result[slot.Id];
                 foreach (var child in slot.Children) VisitSegments(child, [.. names, child.Name]);
             }
             foreach (var root in roots)

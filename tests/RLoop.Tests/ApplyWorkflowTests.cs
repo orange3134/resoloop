@@ -1607,6 +1607,59 @@ public sealed partial class ApplyWorkflowTests : IDisposable
             [new ClientOperationMetric("fake", _requests, 0)]);
         public void ResetWriteCounts() { Writes = 0; BatchUpdates = 0; }
 
+        // Simulates saving the world and loading it again: every Slot and Component except Root gets a new ID.
+        public void ReloadWorld(string sessionId)
+        {
+            var ids = new Dictionary<string, string>(StringComparer.Ordinal);
+            void Assign(FakeSlot slot)
+            {
+                if (slot != Root) ids[slot.Id] = "S" + _nextSlot++;
+                foreach (var component in slot.Components) ids[component.Id] = "C" + _nextComponent++;
+                foreach (var child in slot.Children) Assign(child);
+            }
+            Assign(Root);
+            string? Remap(string? id)
+            {
+                if (id is null) return null;
+                var separator = id.IndexOf(':');
+                var owner = separator < 0 ? id : id[..separator];
+                return ids.TryGetValue(owner, out var mapped) ? mapped + (separator < 0 ? "" : id[separator..]) : id;
+            }
+            MemberValue RemapMember(MemberValue member) => member with
+            {
+                Id = Remap(member.Id), TargetId = Remap(member.TargetId),
+                Members = member.Members?.ToDictionary(pair => pair.Key, pair => RemapMember(pair.Value), StringComparer.Ordinal),
+                Elements = member.Elements?.Select(RemapMember).ToArray()
+            };
+            FakeSlot Copy(FakeSlot slot, string? parentId)
+            {
+                var copy = slot == Root ? slot : new FakeSlot(ids[slot.Id], slot.Name, parentId, slot.Position, slot.Rotation, slot.Scale);
+                var components = slot.Components.Select(component =>
+                {
+                    var moved = new FakeComponent(ids[component.Id], component.Type);
+                    foreach (var member in component.Members) moved.Members[member.Key] = RemapMember(member.Value);
+                    return moved;
+                }).ToArray();
+                var children = slot.Children.Select(child => Copy(child, copy.Id)).ToArray();
+                copy.Components.Clear();
+                copy.Components.AddRange(components);
+                copy.Children.Clear();
+                copy.Children.AddRange(children);
+                return copy;
+            }
+            Copy(Root, null);
+            _slots.Clear();
+            _components.Clear();
+            void Register(FakeSlot slot)
+            {
+                _slots[slot.Id] = slot;
+                foreach (var component in slot.Components) _components[component.Id] = component;
+                foreach (var child in slot.Children) Register(child);
+            }
+            Register(Root);
+            SessionId = sessionId;
+        }
+
         public FakeComponent PrependComponent(FakeSlot slot, string type, IReadOnlyDictionary<string, string> fields)
         {
             var component = new FakeComponent("C" + _nextComponent++, type);
