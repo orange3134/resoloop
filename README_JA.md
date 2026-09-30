@@ -2,6 +2,8 @@
 
 # resoloop
 
+ワールド保存・再読込後は、state の `assetFields` に記録した `$asset:` 宣言が一致する場合、import 済みアセットの `resdb:///` URL を保持します。記録のない旧 state で対応関係を確認できない場合は、変更前に `APPLY_ASSET_MIGRATION_UNVERIFIED` で停止します。アセットの実体を確認し、manifest の asset source に検証済みの保存先 URI（例: `"source": "resdb:///…"`）を明示してから `diff` を再実行してください。変更済みの宣言だけで対応を推測したり、state を削除して検査を回避したりしないでください。フィールド書き込みが中断した場合は checkpoint を保持し、同じ manifest で再実行します。
+
 ## UIX制作の効率化
 
 新規制作では `children` に `{"$recipe":"button","$with":{"key":"accept","rect":{}}}` と直接記述できます。include/export不要で、生成キーは `uix-button--accept` を接頭辞にします。既存prototypeのキーは変わりません。適用済み宣言の移行にはキー変更の確認が必要です。
