@@ -140,17 +140,22 @@ public sealed partial class ApplyWorkflowTests
     }
 
     [Fact]
-    public async Task StateWithoutRecordedAssetFieldsStillAdoptsTheMigratedUrl()
+    public async Task LegacySavedAssetRequiresExplicitVerifiedSourceBeforeApply()
     {
         var (document, client, service, state) = await ApplySavedAssetWorldAsync("saved-legacy");
         SaveAssetUrls(client, "resdb:///saved-crate", "resdb:///saved-crate");
         RemoveRecordedAssetFields(state);
 
-        var plan = await service.PlanApplyAsync(document, new ApplyOptions(state));
-
-        Assert.Contains("migrated to resdb by a world save", Assert.Single(plan.Operations, operation => operation.Kind == "asset").Reason);
-        Assert.Empty(plan.Changes);
-        await service.ApplyAsync(document, new ApplyOptions(state));
+        var stateHash = SHA256.HashData(File.ReadAllBytes(state));
+        var planError = await Assert.ThrowsAsync<RLoopException>(() => service.PlanApplyAsync(document, new ApplyOptions(state)));
+        var applyError = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(document, new ApplyOptions(state)));
+        Assert.Equal("APPLY_ASSET_MIGRATION_UNVERIFIED", planError.Code);
+        Assert.Equal(planError.Code, applyError.Code);
+        Assert.Equal(stateHash, SHA256.HashData(File.ReadAllBytes(state)));
+        Assert.Equal(0, client.Writes);
+        // Recovery requires an explicitly verified source, never an inferred mapping from the new declaration.
+        var verified = ReloadDocument("saved-legacy-verified", SavedAssetWorld.Replace("crate.bin", "resdb:///saved-crate"));
+        await service.ApplyAsync(verified, new ApplyOptions(state));
         Assert.Equal(0, client.Writes);
         Assert.Equal("resdb:///saved-crate", StateAsset(state, "mesh")["url"]!.GetValue<string>());
         Assert.True(JsonNode.DeepEquals(JsonNode.Parse("""{"URL":"$asset:mesh"}"""),
@@ -173,6 +178,17 @@ public sealed partial class ApplyWorkflowTests
         Assert.Equal("APPLY_CANCELLED", stopped.Code);
         Assert.Equal("local://machine/asset-3", StateAsset(state, "mesh")["url"]!.GetValue<string>());
         SaveAssetUrls(client, "resdb:///saved-old-mesh", "resdb:///saved-other");
+
+        if (legacyState)
+        {
+            var stateHash = SHA256.HashData(File.ReadAllBytes(state));
+            var error = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(document, new ApplyOptions(state)));
+            Assert.Equal("APPLY_ASSET_MIGRATION_UNVERIFIED", error.Code);
+            Assert.Equal("other", error.Context!["assetKey"]);
+            Assert.Equal(stateHash, SHA256.HashData(File.ReadAllBytes(state)));
+            Assert.Equal(0, client.Writes);
+            return;
+        }
 
         var plan = await service.PlanApplyAsync(document, new ApplyOptions(state));
 
@@ -248,6 +264,59 @@ public sealed partial class ApplyWorkflowTests
         Assert.Equal("source hash and imported URL match state", Assert.Single(plan.Operations, operation => operation.Kind == "asset").Reason);
         await service.ApplyAsync(document, new ApplyOptions(state));
         Assert.Equal("local://machine/asset-1", StateAsset(state, "mesh")["url"]!.GetValue<string>());
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Fact]
+    public async Task LegacyRepointDoesNotBindAnAssetToAnotherAssetsSavedContent()
+    {
+        var (client, service, state) = await ApplyTwoAssetWorldAsync("legacy-repoint", "other");
+        RemoveRecordedAssetFields(state);
+        var holder = Assert.Single(Holders(client));
+        holder.Members["URL"] = holder.Members["URL"] with { Value = JsonValue.Create("resdb:///saved-other") };
+        client.ReloadWorld("session-saved");
+        client.ResetWriteCounts();
+        var repointed = ReloadDocument("legacy-repoint-mesh", TwoAssetWorld("legacy-repoint", "mesh"));
+        var stateHash = SHA256.HashData(File.ReadAllBytes(state));
+
+        var planError = await Assert.ThrowsAsync<RLoopException>(() => service.PlanApplyAsync(repointed, new ApplyOptions(state)));
+        var applyError = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(repointed, new ApplyOptions(state)));
+
+        Assert.Equal("APPLY_ASSET_MIGRATION_UNVERIFIED", planError.Code);
+        Assert.Equal(planError.Code, applyError.Code);
+        Assert.Equal(stateHash, SHA256.HashData(File.ReadAllBytes(state)));
+        Assert.Equal("local://machine/asset-1", StateAsset(state, "mesh")["url"]!.GetValue<string>());
+        Assert.Equal("resdb:///saved-other", Assert.Single(HolderUrls(client)));
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LostFieldWriteResponseDoesNotLeaveAssetEvidenceForRevertedDeclaration(bool responseLost)
+    {
+        var (client, service, state) = await ApplyTwoAssetWorldAsync("lost-field-response", "mesh", "other");
+        var repointed = ReloadDocument("lost-field-response-other", TwoAssetWorld("lost-field-response", "other", "other"));
+        client.ResetWriteCounts();
+        if (responseLost) client.LoseNextFieldWriteResponse = true;
+        else client.FailOnWrite = 1;
+        await Assert.ThrowsAsync<IOException>(() => service.ApplyAsync(repointed, new ApplyOptions(state)));
+        Assert.Equal(responseLost ? "local://machine/asset-2" : "local://machine/asset-1", HolderUrls(client)[0]);
+        Assert.Empty(JsonNode.Parse(File.ReadAllText(state))!["components"]!["holder-0"]!["assetFields"]!.AsObject());
+        SaveAssetUrls(client, responseLost ? "resdb:///saved-other" : "resdb:///saved-mesh", "resdb:///saved-other");
+        client.FailOnWrite = null;
+        var reverted = ReloadDocument("lost-field-response-reverted", TwoAssetWorld("lost-field-response", "mesh", "other"));
+
+        var plan = await service.PlanApplyAsync(reverted, new ApplyOptions(state));
+        Assert.Contains(plan.Changes, operation => operation.Key == "holder-0" && operation.Action == "update");
+        await service.ApplyAsync(reverted, new ApplyOptions(state));
+
+        Assert.Equal("local://machine/asset-1", StateAsset(state, "mesh")["url"]!.GetValue<string>());
+        Assert.Equal(["local://machine/asset-1", "resdb:///saved-other"], HolderUrls(client));
+        // The untouched holder retains valid evidence for the other asset, and successful writes restore evidence.
+        SaveAssetUrls(client, "resdb:///saved-mesh", "resdb:///saved-other");
+        await service.ApplyAsync(reverted, new ApplyOptions(state));
+        Assert.Equal("resdb:///saved-mesh", StateAsset(state, "mesh")["url"]!.GetValue<string>());
         Assert.Equal(0, client.Writes);
     }
 

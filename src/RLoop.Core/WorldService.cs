@@ -468,8 +468,10 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                         initialFields = await ResolveFieldsAsync(createFields, byKey, slotsByKey, assetUrls, cancellationToken);
                         component.AppliedOnCreate = initialFields;
                     }
-                    prepared.State.Components[component.StableKey] = CreateComponentState(component, string.Empty,
-                        previous: prepared.State.Components.GetValueOrDefault(component.StableKey));
+                    // A new Component may be created even if its response is lost. Its old source's
+                    // declarations cannot prove which asset the replacement's fields now contain.
+                    prepared.State.Components[component.StableKey] = CreateComponentState(component, string.Empty)
+                        with { AssetFields = new Dictionary<string, JsonElement>() };
                     Checkpoint(prepared);
                     var created = await client.AddComponentAsync(component.Node.Id!, component.Spec.Type, initialFields, cancellationToken);
                     component.Id = created.Id;
@@ -497,6 +499,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                                     !MemberMatchesRaw(current, field.Value)).ToDictionary(StringComparer.Ordinal);
                 if (changed.Count > 0)
                 {
+                    ForgetComponentAssetEvidence(prepared, component.StableKey, changed.Keys);
+                    Checkpoint(prepared);
                     await client.SetComponentMembersAsync(component.Id!, component.ResolvedType ?? component.Spec.Type, changed, cancellationToken);
                     if (component.Existing is not null) { counts.ComponentsUpdated++; updatedComponents.Add(component.Id!); }
                 }
@@ -572,6 +576,9 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 var missing = fields.Where(field => !current.Members.TryGetValue(field.Key, out var observed) ||
                     !MemberMatchesRaw(observed, field.Value)).ToDictionary(pair => pair.Key, pair => pair.Value);
                 if (missing.Count == 0) continue;
+                var previousAssetFields = prepared.State.Components[component.StableKey].AssetFields;
+                ForgetComponentAssetEvidence(prepared, component.StableKey, missing.Keys);
+                Checkpoint(prepared);
                 await client.SetComponentMembersAsync(component.Id!, component.ResolvedType ?? component.Spec.Type, missing, cancellationToken);
                 if (component.Existing is not null && updatedComponents.Add(component.Id!))
                 {
@@ -586,6 +593,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                         ExitCodes.OperationFailed, new Dictionary<string, object?> { ["stateFile"] = prepared.StatePath,
                             ["componentKey"] = component.StableKey, ["componentId"] = component.Id, ["members"] = rejected },
                         ["Inspect the exact targets and any obsolete field owner. If deletion is needed, review diff --deletes-only and use apply --prune --yes; no implicit pruning occurs."]);
+                prepared.State.Components[component.StableKey] = prepared.State.Components[component.StableKey]
+                    with { AssetFields = previousAssetFields };
                 Checkpoint(prepared);
                 options.Progress?.Invoke(new ApplyProgress("references", completed, total, component.Path, "reconciled references after removals"));
             }
@@ -1147,12 +1156,20 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             .ToDictionary(asset => asset.Key, StringComparer.Ordinal);
         if (candidates.Count == 0) return;
         var observed = new Dictionary<string, List<string?>>(StringComparer.Ordinal);
-        void Collect(JsonElement desired, MemberValue? live)
+        void Collect(JsonElement desired, MemberValue? live, bool verified)
         {
             if (desired.ValueKind == JsonValueKind.String)
             {
                 var text = desired.GetString() ?? string.Empty;
                 if (!text.StartsWith("$asset:", StringComparison.Ordinal) || !candidates.ContainsKey(text[7..])) return;
+                if (!verified && live is { Kind: "field", Value: JsonValue legacyValue } &&
+                    legacyValue.TryGetValue<string>(out var legacyUrl) &&
+                    Uri.TryCreate(legacyUrl, UriKind.Absolute, out var legacyUri) && legacyUri.Scheme == "resdb")
+                    throw new RLoopException("APPLY_ASSET_MIGRATION_UNVERIFIED",
+                        $"Legacy state cannot verify which asset the saved URL for '{text[7..]}' belongs to. No changes were made.",
+                        ExitCodes.ValidationFailed, new Dictionary<string, object?>
+                        { ["assetKey"] = text[7..], ["stateFile"] = prepared.StatePath, ["liveUrl"] = legacyUrl },
+                        ["Inspect the saved asset and explicitly declare its verified resdb URI as the asset source, or restore a state with recorded assetFields. Do not infer the mapping from a changed manifest."]);
                 if (!observed.TryGetValue(text[7..], out var values)) observed[text[7..]] = values = [];
                 values.Add(live is { Kind: "field", Value: JsonValue value } && value.TryGetValue<string>(out var url) ? url : null);
             }
@@ -1161,23 +1178,23 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 var elements = live?.Elements ?? [];
                 var index = 0;
                 foreach (var item in desired.EnumerateArray())
-                    Collect(item, index < elements.Count ? elements[index++] : null);
+                    Collect(item, index < elements.Count ? elements[index++] : null, verified);
             }
             else if (desired.ValueKind == JsonValueKind.Object)
                 foreach (var property in desired.EnumerateObject())
-                    Collect(property.Value, live?.Members?.GetValueOrDefault(property.Name));
+                    Collect(property.Value, live?.Members?.GetValueOrDefault(property.Name), verified);
         }
         foreach (var component in prepared.Components)
         {
             var live = component.Existing ?? component.RelocationSource;
             if (live is null) continue;
-            // A state written before asset fields were recorded has no record, so every declared reference counts.
+            // Legacy state has no declaration provenance. Never guess a saved URL's asset from today's manifest.
             var applied = prepared.State.Components.GetValueOrDefault(component.StableKey)?.AssetFields;
             foreach (var field in component.Spec.Fields ?? new Dictionary<string, JsonElement>())
             {
                 if (applied is not null && (!applied.TryGetValue(field.Key, out var previous) || !JsonElement.DeepEquals(previous, field.Value)))
                     continue;
-                Collect(field.Value, live.Members?.GetValueOrDefault(field.Key));
+                Collect(field.Value, live.Members?.GetValueOrDefault(field.Key), applied is not null);
             }
         }
         foreach (var (key, values) in observed)
@@ -1190,6 +1207,19 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 prepared.Entries[index] = prepared.Entries[index] with
                 { Reason = "asset URL was migrated to resdb by a world save; state will record the live URL" };
         }
+    }
+
+    // Persist this before a remote write: the server may apply fields and then lose its response.
+    // Retain evidence for untouched fields, and restore changed declarations only after success.
+    private static void ForgetComponentAssetEvidence(PreparedApply prepared, string stableKey, IEnumerable<string> members)
+    {
+        var saved = prepared.State.Components[stableKey];
+        var changed = members.ToHashSet(StringComparer.Ordinal);
+        prepared.State.Components[stableKey] = saved with
+        {
+            AssetFields = saved.AssetFields?.Where(field => !changed.Contains(field.Key)).ToDictionary(StringComparer.Ordinal)
+                ?? new Dictionary<string, JsonElement>()
+        };
     }
 
     // A re-import leaves every live reference on the previous content until its field is written again, and a world save

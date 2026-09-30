@@ -13,6 +13,8 @@ resoloop automatically adds `FrooxEngine.AI_GeneratedContent` to the root of the
 > [!NOTE]
 > resoloop is currently in preview. ResoniteLink is also in Beta, so updates may change its behavior.
 
+After saving and reloading a world, resoloop preserves imported assets' `resdb:///` URLs when the state records the matching `$asset:` declarations. Older state files without `assetFields` stop before mutation with `APPLY_ASSET_MIGRATION_UNVERIFIED` if a saved URL cannot be verified. Inspect the asset, then explicitly set its verified saved URI as the manifest asset source (for example, `"source": "resdb:///…"`) and run `diff` again. Do not infer this mapping from a changed declaration or delete the state to bypass the check. Interrupted field writes invalidate their old asset evidence before the remote mutation; rerun the same manifest to converge.
+
 ## Installation
 
 Requirements:

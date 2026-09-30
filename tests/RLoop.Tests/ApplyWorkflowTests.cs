@@ -1464,6 +1464,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public CancellationTokenSource? Cancellation { get; set; }
         public string SessionId { get; set; } = "session-1";
         public bool LoseNextSlotCreateResponse { get; set; }
+        public bool LoseNextFieldWriteResponse { get; set; }
         public int AssetImports { get; private set; }
         public string ImportUrlPrefix { get; set; } = "resdb:///asset-";
         public List<string> DescribedTypes { get; } = [];
@@ -1568,6 +1569,11 @@ public sealed partial class ApplyWorkflowTests : IDisposable
             Write();
             BatchUpdates++;
             SetFields(_components[componentId], fields);
+            if (LoseNextFieldWriteResponse)
+            {
+                LoseNextFieldWriteResponse = false;
+                throw new IOException("Simulated lost response after applying fields.");
+            }
             if (TargetClaimedBy is not null && componentId != TargetClaimedBy && _components.ContainsKey(TargetClaimedBy) && fields.ContainsKey("Target"))
                 _components[componentId].Members["Target"] = new MemberValue("reference", componentId + ":Target");
             return Task.CompletedTask;
