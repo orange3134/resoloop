@@ -43,14 +43,14 @@ resoloop が生成する作業ルートには `FrooxEngine.AI_GeneratedContent` 
 PowerShell で resoloop をインストールします。
 
 ~~~powershell
-dotnet tool install --global ResoLoop --version 0.1.0-preview.14
+dotnet tool install --global ResoLoop --version 0.1.0-preview.15
 resoloop --version
 ~~~
 
 すでにインストール済みの場合は、次のコマンドで更新できます。
 
 ~~~powershell
-dotnet tool update --global ResoLoop --version 0.1.0-preview.14
+dotnet tool update --global ResoLoop --version 0.1.0-preview.15
 ~~~
 
 ## 使い方
