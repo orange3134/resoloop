@@ -614,7 +614,10 @@ internal sealed record ApplyStateComponent(string Id, string SlotKey, string Typ
     IReadOnlyDictionary<string, string>? IdentityValues = null,
     IReadOnlyDictionary<string, string>? ReferenceSelectors = null,
     // Declared fields that reference $asset: when the fields were last applied. Null means an older state.
-    IReadOnlyDictionary<string, JsonElement>? AssetFields = null);
+    IReadOnlyDictionary<string, JsonElement>? AssetFields = null,
+    // The Component that a list-shrink recreate replaces, kept until apply removes it. Null when no recreate is in progress,
+    // and then not written, so that a state without a recreate stays unchanged.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SupersededId = null);
 internal sealed record ApplyStateAsset(string Kind, string SourceHash, string Url);
 
 internal sealed class ApplyState
