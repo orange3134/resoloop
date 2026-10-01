@@ -1460,6 +1460,8 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public List<string> Mutations { get; } = [];
         public int? CancelAfterWrites { get; set; }
         public int? FailOnWrite { get; set; }
+        // The write with this number lands, and then its response is lost.
+        public int? LoseResponseOnWrite { get; set; }
         public string? TargetClaimedBy { get; set; }
         public CancellationTokenSource? Cancellation { get; set; }
         public string SessionId { get; set; } = "session-1";
@@ -1512,6 +1514,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
                 LoseNextSlotCreateResponse = false;
                 throw new OperationCanceledException("Simulated lost create response.");
             }
+            Acknowledge();
             return Task.FromResult(id);
         }
 
@@ -1530,6 +1533,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
             if (request.Position is not null) slot.Position = request.Position;
             if (request.Rotation is not null) slot.Rotation = request.Rotation;
             if (request.Scale is not null) slot.Scale = request.Scale;
+            Acknowledge();
             return Task.CompletedTask;
         }
 
@@ -1539,6 +1543,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
             var slot = _slots[id];
             _slots[slot.ParentId!].Children.Remove(slot);
             RemoveSlotTree(slot);
+            Acknowledge();
             return Task.CompletedTask;
         }
 
@@ -1556,6 +1561,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
                 component.Members["Target"] = new MemberValue("reference", id + ":Target");
             _components[id] = component;
             _slots[slotId].Components.Add(component);
+            Acknowledge();
             return Task.FromResult(new ComponentCreateResult(id, componentType));
         }
 
@@ -1576,6 +1582,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
             }
             if (TargetClaimedBy is not null && componentId != TargetClaimedBy && _components.ContainsKey(TargetClaimedBy) && fields.ContainsKey("Target"))
                 _components[componentId].Members["Target"] = new MemberValue("reference", componentId + ":Target");
+            Acknowledge();
             return Task.CompletedTask;
         }
 
@@ -1585,6 +1592,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
             var component = _components[componentId];
             foreach (var slot in _slots.Values) slot.Components.Remove(component);
             _components.Remove(componentId);
+            Acknowledge();
             return Task.CompletedTask;
         }
         public Task<IReadOnlyList<string>> SearchComponentTypesAsync(string query, int limit, CancellationToken cancellationToken = default) =>
@@ -1683,6 +1691,12 @@ public sealed partial class ApplyWorkflowTests : IDisposable
             Writes++;
             if (FailOnWrite == Writes) throw new IOException("Simulated write failure.");
             if (CancelAfterWrites == Writes) Cancellation?.Cancel();
+        }
+
+        // Called once a write has landed in the fake world.
+        private void Acknowledge()
+        {
+            if (LoseResponseOnWrite == Writes) throw new IOException("Simulated lost response after the write landed.");
         }
 
         private void RemoveSlotTree(FakeSlot slot)

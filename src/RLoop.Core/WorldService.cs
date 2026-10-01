@@ -1274,6 +1274,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             var slot = ResolveOwned(stateSlot.Value);
             if (slot is null || !IsWithin(slot.Id, rootId, false) || slot.Id == "Root") continue;
             staleSlots.Add((stateSlot.Key, stateSlot.Value, slot, slot.Path ?? stateSlot.Value.Path));
+            // Keep the binding: once a checkpoint records this session, a stale ID would hide the Slot from later plans.
+            if (stateSlot.Value.Id != slot.Id) prepared.State.Slots[stateSlot.Key] = stateSlot.Value with { Id = slot.Id };
         }
         var parentSlotDeletions = staleSlots.OrderBy(x => x.Path.Count(ch => ch == '/'))
             .Where(candidate => !staleSlots.Any(other => other.Slot.Id != candidate.Slot.Id && IsWithin(candidate.Slot.Id, other.Slot.Id)))
@@ -1296,6 +1298,10 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     stateComponent.Value.TypeOrdinal, stateComponent.Value, false, topology);
             }
             if (component is null) continue;
+            // Keep the binding and its position, so later plans in this session and SaveSlotIndexesAsync still find it.
+            var index = slot.Components.ToList().FindIndex(candidate => candidate.Id == component.Id);
+            if (stateComponent.Value.Id != component.Id || stateComponent.Value.ComponentIndex != index)
+                prepared.State.Components[stateComponent.Key] = stateComponent.Value with { Id = component.Id, ComponentIndex = index };
             var deletion = new DeletionRuntime("component", stateComponent.Key, component.Id,
                 slot.Path + "/@" + stateComponent.Key, "stable key is no longer declared inside the owned boundary",
                 SlotKey: stateComponent.Value.SlotKey, SlotId: slot.Id);
