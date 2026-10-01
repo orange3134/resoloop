@@ -54,7 +54,7 @@ Slot fieldはComponent fieldと区別して`$slot-member`を使います。例: 
 
 vector、quaternion、color/colorXなどの構造値はJSON arrayまたは`x/y/z/w`・`r/g/b/a` objectをcanonical入力とします。従来のcomma stringも互換入力として受理し、runtimeのobject表現と同じ値なら2回目applyで差分を出しません。不正な要素数や数値はmutation前にtarget typeと受理例付きで拒否されます。
 
-Componentの`fields`はapplyごとに収束させます。runtimeが更新するcounter、history、選択状態などは`initialFields`へ置くと、新規作成時だけ初期化され、adopt・再applyでは上書きされません。同型Componentが複数あり再接続時の識別が必要なら、不変な管理値のmember名を`identityFields`へ指定してください。identity fieldは`fields`または`initialFields`にも存在する必要があります。stateはtype ordinalだけでなく、Slot内index、管理member集合、identity値を保存し、複数候補が残る場合は`STABLE_COMPONENT_AMBIGUOUS`として停止します。
+Componentの`fields`はapplyごとに収束させます。runtimeが更新するcounter、history、選択状態などは`initialFields`へ置くと、新規作成時だけ初期化され、adopt・再applyでは上書きされません。同型Componentが複数あり再接続時の識別が必要なら、不変な管理値のmember名を`identityFields`へ指定してください。identity fieldは`fields`または`initialFields`にも存在する必要があります。stateはtype ordinalだけでなく、Slot内index、管理member集合、identity値を保存し、複数候補が残る場合は`STABLE_COMPONENT_AMBIGUOUS`として停止します。applyがComponentを削除・移動した後は、同じSlotに残るkeyのindexも実機の並びに合わせて保存し直します。
 
 CLI の `validate --strict`、`plan`、`apply`、`test` は、ownership の作業ルートへ `FrooxEngine.AI_GeneratedContent` を自動追加し、`Source` を実行中の resoloop の名前とバージョン（例: `[resoloop 0.1.0-preview.5]`）へ収束させます。子 Slot のうち `runtimeRelocatable: true` のルート、または `Grabbable`、`RawDataTool`、`AvatarRoot`、`ObjectRoot` を持つルートにも同じ Component を追加します。この自動 Component は plan と state に含まれ、2回目の apply では書き込みません。入力 JSON 自体は書き換えません。低水準の `slot create` では、そのコマンドで作った Slot 自体を生成オブジェクトのルートとして同様にタグ付けします。
 

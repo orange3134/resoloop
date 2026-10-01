@@ -513,6 +513,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     await client.RemoveComponentAsync(component.RelocationSource.Id, cancellationToken);
                     counts.ComponentsDeleted++;
                     component.RelocationSource = null;
+                    await SaveSlotIndexesAsync(prepared, component.RelocationSourceSlotKey!, component.RelocationSourceSlotId!,
+                        cancellationToken);
                 }
                 prepared.State.Components[component.StableKey] = CreateComponentState(component, component.Id!, fields);
                 Checkpoint(prepared);
@@ -542,6 +544,9 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     await client.RemoveComponentAsync(deletion.Id, cancellationToken);
                     prepared.State.Components.Remove(deletion.Key);
                     counts.ComponentsDeleted++;
+                    // Save the removal before reading the Slot again, so a cancel or a failed read cannot keep the removed key.
+                    Checkpoint(prepared);
+                    await SaveSlotIndexesAsync(prepared, deletion.SlotKey!, deletion.SlotId!, cancellationToken);
                     Checkpoint(prepared);
                     options.Progress?.Invoke(new ApplyProgress("prune", counts.ComponentsDeleted + counts.SlotsDeleted,
                         prepared.Deletions.Count, deletion.Path, "deleted owned Component"));
@@ -1049,6 +1054,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                         MatchComponent(sourceSlot.Components, spec.Type, ordinal, stateComponent, prepared.SameSession,
                             topologyTargets);
                     if (runtime.RelocationSource?.Id == existing?.Id) runtime.RelocationSource = null;
+                    if (runtime.RelocationSource is not null)
+                        (runtime.RelocationSourceSlotKey, runtime.RelocationSourceSlotId) = (stateComponent.SlotKey, sourceSlot!.Id);
                 }
                 prepared.Components.Add(runtime);
             }
@@ -1290,7 +1297,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             }
             if (component is null) continue;
             var deletion = new DeletionRuntime("component", stateComponent.Key, component.Id,
-                slot.Path + "/@" + stateComponent.Key, "stable key is no longer declared inside the owned boundary");
+                slot.Path + "/@" + stateComponent.Key, "stable key is no longer declared inside the owned boundary",
+                SlotKey: stateComponent.Value.SlotKey, SlotId: slot.Id);
             prepared.Deletions.Add(deletion);
             prepared.Entries.Add(new ApplyPlanEntry("delete", deletion.Kind, deletion.Path, deletion.Key,
                 component.Type, Reason: deletion.Reason));
@@ -1971,6 +1979,28 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         NearlyEqual(current.X, desired[0]) && NearlyEqual(current.Y, desired[1]) && NearlyEqual(current.Z, desired[2]) && NearlyEqual(current.W, desired[3]);
     private static bool NearlyEqual(float left, float right) => Math.Abs(left - right) <= 0.00001f * Math.Max(1, Math.Max(Math.Abs(left), Math.Abs(right)));
 
+    // Removing a Component moves the ones after it, and after a world reload a key without identity values is bound by
+    // its saved index. Read the Slot again and save every key whose saved ID is on it at that Component's position.
+    // A key whose ID is not on the Slot keeps its index. The Components declared on the Slot take the same positions in
+    // this apply too, because the fields phase saves each one's index again. The caller's next checkpoint persists the result.
+    private async Task SaveSlotIndexesAsync(PreparedApply prepared, string slotKey, string slotId,
+        CancellationToken cancellationToken)
+    {
+        var layout = (await client.GetSlotAsync(slotId, 0, false, cancellationToken)).Components
+            .Select(component => component.Id).ToList();
+        foreach (var (key, saved) in prepared.State.Components.Where(pair => pair.Value.SlotKey == slotKey).ToArray())
+        {
+            var index = string.IsNullOrEmpty(saved.Id) ? -1 : layout.IndexOf(saved.Id);
+            if (index >= 0 && saved.ComponentIndex != index)
+                prepared.State.Components[key] = saved with { ComponentIndex = index };
+        }
+        foreach (var runtime in prepared.Components.Where(runtime => runtime.Node.StableKey == slotKey && !string.IsNullOrEmpty(runtime.Id)))
+        {
+            var index = layout.IndexOf(runtime.Id!);
+            if (index >= 0) runtime.ComponentIndex = index;
+        }
+    }
+
     private static void Checkpoint(PreparedApply prepared)
     {
         prepared.State.SessionId = prepared.Session.UniqueSessionId;
@@ -2100,12 +2130,14 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         public ComponentSummary? Existing { get; } = existing;
         public string StableKey { get; } = stableKey;
         public int TypeOrdinal { get; } = typeOrdinal;
-        public int ComponentIndex { get; } = componentIndex;
+        public int ComponentIndex { get; set; } = componentIndex;
         public string Path { get; } = path;
         public string? Id { get; set; }
         public string? ResolvedType { get; set; }
         public IReadOnlyDictionary<string, string>? AppliedOnCreate { get; set; }
         public ComponentSummary? RelocationSource { get; set; }
+        public string? RelocationSourceSlotKey { get; set; }
+        public string? RelocationSourceSlotId { get; set; }
         public Dictionary<string, string> MemberIds { get; } = new(StringComparer.Ordinal);
     }
 
@@ -2127,7 +2159,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         IReadOnlyDictionary<string, string> Components);
 
     private sealed record DeletionRuntime(string Kind, string Key, string Id, string Path, string Reason,
-        IReadOnlyList<string>? CoveredSlotKeys = null, IReadOnlyList<string>? CoveredComponentKeys = null);
+        IReadOnlyList<string>? CoveredSlotKeys = null, IReadOnlyList<string>? CoveredComponentKeys = null,
+        string? SlotKey = null, string? SlotId = null);
 
     private sealed class AssetRuntime(string key, ApplyAssetSpec spec, string resolvedSource,
         string sourceHash, string? directUrl, string action)
