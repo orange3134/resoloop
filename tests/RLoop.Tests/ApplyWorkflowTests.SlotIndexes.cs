@@ -92,6 +92,109 @@ public sealed partial class ApplyWorkflowTests
     }
 
     [Fact]
+    public async Task APruneInterruptedBeforeIndexSaveCannotWriteToAnUnmanagedSiblingAfterReload()
+    {
+        const string name = "indexes-interrupted-reload";
+        var full = ReloadDocument(name, IndexedSiblings(name, ["v1", "v2"]));
+        var trimmed = ReloadDocument(name + "-trimmed", IndexedSiblings(name, ["v2"]));
+        var client = new FakeResoniteClient(full);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, name + ".state.json");
+        await service.ApplyAsync(full, new ApplyOptions(state));
+        await client.AddComponentAsync(client.Root.Children.Single().Id, "Test.Indexed",
+            new Dictionary<string, string> { ["Value"] = "999" });
+        using var cancellation = new CancellationTokenSource();
+        client.Cancellation = cancellation;
+        client.CancelAfterWrites = 1;
+        client.ResetWriteCounts();
+
+        var interrupted = await Assert.ThrowsAsync<RLoopException>(() =>
+            service.ApplyAsync(trimmed, new ApplyOptions(state, Prune: true, ConfirmDeletes: true), cancellation.Token));
+
+        Assert.Equal("APPLY_CANCELLED", interrupted.Code);
+        var checkpoint = JsonNode.Parse(File.ReadAllText(state))!;
+        Assert.Null(checkpoint["components"]!["v1"]);
+        Assert.Equal(-1, checkpoint["components"]!["v2"]!["componentIndex"]!.GetValue<int>());
+        client.CancelAfterWrites = null;
+        client.ReloadWorld("session-reloaded-before-index-save");
+        client.ResetWriteCounts();
+
+        var error = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(trimmed, new ApplyOptions(state)));
+
+        Assert.Equal("STABLE_COMPONENT_AMBIGUOUS", error.Code);
+        Assert.Contains(client.Root.Children.Single().Components.Last().Id,
+            Assert.IsAssignableFrom<IEnumerable<string>>(error.Context["candidateIds"]));
+        Assert.Equal(0, client.Writes);
+        Assert.Equal("999", client.Root.Children.Single().Components.Last().Members["Value"].Value?.ToJsonString());
+    }
+
+    [Fact]
+    public async Task APruneWhoseRemoveResponseIsLostRepairsItsCheckpointOnConfirmedRetry()
+    {
+        const string name = "indexes-lost-remove-response";
+        var full = ReloadDocument(name, IndexedSiblings(name, ["v1", "v2"]));
+        var trimmed = ReloadDocument(name + "-trimmed", IndexedSiblings(name, ["v2"]));
+        var client = new FakeResoniteClient(full);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, name + ".state.json");
+        await service.ApplyAsync(full, new ApplyOptions(state));
+        client.ResetWriteCounts();
+        client.LoseResponseOnWrite = 1;
+
+        await Assert.ThrowsAsync<IOException>(() =>
+            service.ApplyAsync(trimmed, new ApplyOptions(state, Prune: true, ConfirmDeletes: true)));
+
+        var checkpoint = JsonNode.Parse(File.ReadAllText(state))!;
+        Assert.Equal(-1, checkpoint["components"]!["v1"]!["componentIndex"]!.GetValue<int>());
+        Assert.Equal(-1, checkpoint["components"]!["v2"]!["componentIndex"]!.GetValue<int>());
+        client.LoseResponseOnWrite = null;
+        await service.ApplyAsync(trimmed, new ApplyOptions(state, Prune: true, ConfirmDeletes: true));
+
+        Assert.Equal(new[] { "v2" }, JsonNode.Parse(File.ReadAllText(state))!["components"]!.AsObject().Select(pair => pair.Key));
+        AssertSavedIndexesMatchLayout(client, state);
+        client.ReloadWorld("session-reloaded-after-recovery");
+        client.ResetWriteCounts();
+        await service.ApplyAsync(trimmed, new ApplyOptions(state));
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Fact]
+    public async Task ARelocationInterruptedAfterRemovingItsSourceLeavesNoBindableIndexOnReload()
+    {
+        for (var write = 1; write <= 12; write++)
+        {
+            var name = "indexes-relocate-lost-source-" + write;
+            var full = ReloadDocument(name, IndexedSiblings(name, ["v1", "v2"]));
+            var moved = ReloadDocument(name + "-moved", IndexedSiblings(name, ["v2"], ["v1"]));
+            var client = new FakeResoniteClient(full);
+            var service = new WorldService(client);
+            var state = Path.Combine(_root, name + ".state.json");
+            await service.ApplyAsync(full, new ApplyOptions(state));
+            var original = client.Root.Children.Single();
+            var sourceId = original.Components[0].Id;
+            await client.AddComponentAsync(original.Id, "Test.Indexed", new Dictionary<string, string> { ["Value"] = "999" });
+            client.ResetWriteCounts();
+            client.LoseResponseOnWrite = write;
+
+            var interruption = await Record.ExceptionAsync(() => service.ApplyAsync(moved, new ApplyOptions(state)));
+
+            if (original.Components.Any(component => component.Id == sourceId)) continue;
+            Assert.IsType<IOException>(interruption);
+            var checkpoint = JsonNode.Parse(File.ReadAllText(state))!;
+            Assert.Equal(-1, checkpoint["components"]!["v2"]!["componentIndex"]!.GetValue<int>());
+            client.LoseResponseOnWrite = null;
+            client.ReloadWorld("session-after-relocation-interruption");
+            client.ResetWriteCounts();
+            var error = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(moved, new ApplyOptions(state)));
+            Assert.Equal("STABLE_COMPONENT_AMBIGUOUS", error.Code);
+            Assert.Equal(0, client.Writes);
+            Assert.Equal("999", client.Root.Children.Single().Components.Last().Members["Value"].Value?.ToJsonString());
+            return;
+        }
+        throw new Xunit.Sdk.XunitException("The fake never interrupted after removing the relocation source.");
+    }
+
+    [Fact]
     public async Task UndeclaredKeysStayInTheDeletionPlanAfterAnApplyInTheReloadedSession()
     {
         var document = ReloadDocument("bindings", ReloadedWorld);

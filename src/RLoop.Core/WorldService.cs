@@ -394,6 +394,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var total = prepared.Nodes.Count + prepared.Components.Count * 2;
         try
         {
+            await ReconcileUnverifiedIndexesAsync(prepared, options, cancellationToken);
             foreach (var asset in prepared.Assets)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -524,6 +525,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 }
                 if (component.RelocationSource is not null && component.RelocationSource.Id != component.Id)
                 {
+                    MarkSlotIndexesUnverified(prepared, component.RelocationSourceSlotKey!);
                     await client.RemoveComponentAsync(component.RelocationSource.Id, cancellationToken);
                     counts.ComponentsDeleted++;
                     component.RelocationSource = null;
@@ -574,6 +576,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 foreach (var deletion in prepared.Deletions.Where(x => x.Kind == "component"))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    MarkSlotIndexesUnverified(prepared, deletion.SlotKey!);
                     await client.RemoveComponentAsync(deletion.Id, cancellationToken);
                     prepared.State.Components.Remove(deletion.Key);
                     counts.ComponentsDeleted++;
@@ -1007,6 +1010,17 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         await PrepareRelocationTransformsAsync(prepared, parentPath, cancellationToken);
         BuildAssetPlans(prepared);
         ThrowIfRecreateInterruptedAcrossSessions(prepared);
+        var unverified = prepared.State.Components.Where(pair => pair.Value.ComponentIndex == -1).ToArray();
+        if (!prepared.SameSession && unverified.Length > 0)
+            throw new RLoopException("STABLE_COMPONENT_AMBIGUOUS",
+                "A Component was removed before its Slot indexes could be saved, and the session has changed. Inspect the saved bindings before applying; positional matching is unsafe.",
+                ExitCodes.ValidationFailed, new Dictionary<string, object?>
+                {
+                    ["stateFile"] = prepared.StatePath,
+                    ["componentKeys"] = unverified.Select(pair => pair.Key).ToArray(),
+                    ["candidateIds"] = unverified.SelectMany(pair => FindStateSlot(prepared, pair.Value.SlotKey)?.Components
+                        .Select(component => component.Id) ?? []).Distinct(StringComparer.Ordinal).ToArray()
+                }, ["Inspect candidateIds and the saved Component bindings before applying again; do not guess by position."]);
         BuildComponentPlans(prepared);
         BuildDeletionPlans(prepared);
         ValidateInterruptedRecreates(prepared);
@@ -2008,6 +2022,12 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             var byId = components.SingleOrDefault(x => x.Id == state.Id);
             if (byId is not null) return byId;
         }
+        if (state?.ComponentIndex == -1)
+            throw new RLoopException("STABLE_COMPONENT_AMBIGUOUS",
+                $"Component '{state.Id}' has an unverified index and its saved ID is no longer on the Slot. Positional matching is unsafe.",
+                ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["candidateIds"] = components.Select(x => x.Id).ToArray(),
+                    ["slotKey"] = state.SlotKey },
+                ["Inspect the saved Component binding before applying again."]);
         var matches = StableComponentCandidates(components, state?.Type ?? type, state?.ComponentIndex,
             state?.MemberNames, state?.IdentityValues, referenceTargets);
         if (matches.Length > 1 && state is not null && (state.MemberNames is not null || state.IdentityValues is not null))
@@ -2391,6 +2411,46 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 ["inProgress"] = inProgress,
                 ["recovery"] = recovery
             }, suggestions);
+    }
+
+    private async Task ReconcileUnverifiedIndexesAsync(PreparedApply prepared, ApplyOptions options,
+        CancellationToken cancellationToken)
+    {
+        var slotKeys = prepared.State.Components.Where(pair => pair.Value.ComponentIndex == -1)
+            .Select(pair => pair.Value.SlotKey).Distinct(StringComparer.Ordinal).ToArray();
+        var declared = prepared.Components.Select(component => component.StableKey).ToHashSet(StringComparer.Ordinal);
+        foreach (var slotKey in slotKeys)
+        {
+            if (!prepared.State.Slots.TryGetValue(slotKey, out var savedSlot))
+                throw new RLoopException("STABLE_COMPONENT_AMBIGUOUS",
+                    $"The Slot for an unverified Component index ('{slotKey}') is missing from the checkpoint.",
+                    ExitCodes.ValidationFailed);
+            var layout = (await client.GetSlotAsync(savedSlot.Id, 0, false, cancellationToken)).Components
+                .Select(component => component.Id).ToHashSet(StringComparer.Ordinal);
+            foreach (var (key, saved) in prepared.State.Components.Where(pair => pair.Value.SlotKey == slotKey &&
+                         pair.Value.ComponentIndex == -1).ToArray())
+            {
+                if (saved.Id is not null && layout.Contains(saved.Id)) continue;
+                if (!declared.Contains(key) && options.Prune && options.ConfirmDeletes)
+                    prepared.State.Components.Remove(key);
+                else
+                    throw new RLoopException("STABLE_COMPONENT_AMBIGUOUS",
+                        $"Component '{key}' is not on its saved Slot after an interrupted removal. Its binding cannot be inferred by position.",
+                        ExitCodes.ValidationFailed, new Dictionary<string, object?>
+                        { ["componentKey"] = key, ["candidateIds"] = layout.ToArray(), ["stateFile"] = prepared.StatePath },
+                        ["Inspect the Slot. If this was a confirmed prune, retry with --prune --yes in the same session."]);
+            }
+            await SaveSlotIndexesAsync(prepared, slotKey, savedSlot.Id, cancellationToken);
+            Checkpoint(prepared);
+        }
+    }
+
+    private static void MarkSlotIndexesUnverified(PreparedApply prepared, string slotKey)
+    {
+        foreach (var (key, saved) in prepared.State.Components.Where(pair => pair.Value.SlotKey == slotKey &&
+                     pair.Value.SupersededId is null).ToArray())
+            prepared.State.Components[key] = saved with { ComponentIndex = -1 };
+        Checkpoint(prepared);
     }
 
     // Removing a Component moves the ones after it, and after a world reload a key without identity values is bound by
