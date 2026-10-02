@@ -7,7 +7,7 @@ public sealed record StableSlotReference(string Key, string Id, string Path, str
 public sealed record StableComponentReference(string Key, string Id, string SlotKey, string Type, int TypeOrdinal,
     string? SessionId, string OwnershipKey, int? ComponentIndex = null,
     IReadOnlyList<string>? MemberNames = null, IReadOnlyDictionary<string, string>? IdentityValues = null,
-    IReadOnlyDictionary<string, string>? ReferenceSelectors = null);
+    IReadOnlyDictionary<string, string>? ReferenceSelectors = null, string? SupersededId = null);
 public sealed record ResolvedWorldReference(string Selector, string Id, string Kind, string? Type, string? Path = null);
 public sealed record StableSelector(string Original, string Kind, string Key, string? MemberName = null);
 
@@ -100,7 +100,8 @@ public static class StableReferenceResolver
                 root.TryGetProperty("sessionId", out var session) ? session.GetString() : null,
                 root.GetProperty("ownershipKey").GetString() ?? string.Empty,
                 component.TryGetProperty("componentIndex", out var index) && index.ValueKind == JsonValueKind.Number ? index.GetInt32() : null,
-                memberNames, identityValues, referenceSelectors);
+                memberNames, identityValues, referenceSelectors,
+                component.TryGetProperty("supersededId", out var supersededId) ? supersededId.GetString() : null);
         }, reference);
     }
 

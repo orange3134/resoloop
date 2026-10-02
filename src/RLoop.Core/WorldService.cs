@@ -205,17 +205,41 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var memberName = syntax.MemberName;
 
         var stableComponent = StableReferenceResolver.ResolveComponent(stateFile, componentSelector);
+        var requiresVerifiedId = !string.IsNullOrEmpty(stableComponent.SupersededId) || stableComponent.ComponentIndex == -1;
+        RLoopException UnverifiedSavedComponent(string reason) => new("STABLE_COMPONENT_AMBIGUOUS",
+            $"Stable component '{stableComponent.Key}' is in an interrupted recreate or has an unverified index, and its saved ID cannot be confirmed in the current session. No mutations were performed.",
+            ExitCodes.ValidationFailed, new Dictionary<string, object?>
+            {
+                ["selector"] = selector, ["stateFile"] = Path.GetFullPath(stateFile), ["componentKey"] = stableComponent.Key,
+                ["reason"] = reason, ["savedId"] = stableComponent.Id, ["supersededId"] = stableComponent.SupersededId,
+                ["componentIndex"] = stableComponent.ComponentIndex, ["savedSessionId"] = stableComponent.SessionId,
+                ["currentSessionId"] = currentConnectionId
+            }, ["Preserve the existing state file and inspect the exact Components and their ownership. Recover the interrupted recreate or confirm the unverified indexes before using stable selectors; do not infer ownership by type, position, or ordinal, and do not discard the state."]);
+        if (requiresVerifiedId && (string.IsNullOrWhiteSpace(currentConnectionId) || stableComponent.SessionId != currentConnectionId))
+            throw UnverifiedSavedComponent("session-unverified");
+        if (requiresVerifiedId && string.IsNullOrWhiteSpace(stableComponent.Id))
+            throw UnverifiedSavedComponent("saved-id-empty");
         var firstVisit = resolvingComponents.Add(stableComponent.Key);
         try
         {
             ComponentInfo? component = null;
             if (stableComponent.SessionId == currentConnectionId && !string.IsNullOrWhiteSpace(stableComponent.Id))
             {
+                if (requiresVerifiedId)
+                {
+                    var slotId = (await ResolveStableReferenceCoreAsync(stateFile, "$slot:" + stableComponent.SlotKey,
+                        currentConnectionId, resolvingComponents, cancellationToken, observedComponents)).Id;
+                    var slot = await client.GetSlotAsync(slotId, 0, false, cancellationToken);
+                    if (!slot.Components.Any(candidate => candidate.Id == stableComponent.Id &&
+                            TypeNamesEquivalent(candidate.Type, stableComponent.Type)))
+                        throw UnverifiedSavedComponent("saved-id-not-found");
+                }
                 try { component = await ReadComponent(stableComponent.Id); }
                 catch (RLoopException ex) when (ex.Code is "COMPONENT_NOT_FOUND" or "RESONITE_OPERATION_FAILED") { }
             }
             if (component is null)
             {
+                if (requiresVerifiedId) throw UnverifiedSavedComponent("saved-id-not-found");
                 var stableSlot = StableReferenceResolver.ResolveSlot(stateFile, "$slot:" + stableComponent.SlotKey);
                 var slotId = (await ResolveStableReferenceCoreAsync(stateFile, "$slot:" + stableComponent.SlotKey,
                     currentConnectionId, resolvingComponents, cancellationToken, observedComponents)).Id;
@@ -372,7 +396,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             prepared.Entries.Count(x => x.Action == "no-op"),
             prepared.Entries.Count(x => x.Action == "rename"),
             prepared.Entries.Count(x => x.Action == "delete"), false,
-            $"Non-atomic preview. State checkpoint: {prepared.StatePath}. Re-run apply to converge; deletion requires --prune --yes.")
+            $"Non-atomic preview. State checkpoint: {prepared.StatePath}. Re-run apply to converge; pruning stale targets requires --prune --yes. Replacements for recreate/relocate delete their old Components as part of the lifecycle without --prune.")
             { Warnings = ComponentIdentityDiagnostics.Analyze(document) };
     }
 
@@ -1522,7 +1546,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 $"A list-shrink recreate of '{key}' was interrupted and the world session changed, so the replaced Component and its replacement can no longer be told apart by ID. No mutations were performed.",
                 sameTypeKeys
                     ? new[] { "Another key on this Slot has the same type, so the candidates include its Components and apply cannot tell the recreate's Components apart. Keep the state file as it is, check in Resonite what each candidate references and what references it, and do not repair this by guessing IDs." }
-                    : new[] { "Keep the candidate that the Components in its referencedBy point at, or either one if none is referenced, and remove the other with 'resoloop component remove ID --yes'. Use only the IDs in candidates; supersededId and savedId are IDs from the earlier session.",
+                    : new[] { "Candidates may include unmanaged same-type Components and are not necessarily the replaced Component and its replacement. Verify which candidates belong to the interrupted recreate before choosing one to keep or delete; referencedBy, lists, and position are observations, not proof of ownership. Keep the verified candidate that the Components in its referencedBy point at, or either verified one if none is referenced, and remove only an exact candidate ID confirmed to belong to the interrupted recreate with 'resoloop component remove ID --yes'. Use only the IDs in candidates; supersededId and savedId are IDs from the earlier session. If ownership cannot be confirmed, leave all candidates untouched, keep the state file as it is, and do not guess or continue with the state edits below.",
                               $"Then back up the state file, set components.{key}.id to its supersededId if the ID is empty, delete supersededId, and adjust the Slot indexes as described below before re-running apply.",
                               $"Removing a Component makes those after it move one position earlier. Without identityFields, apply matches Components after a world reload by their saved componentIndex. Set components.{key}.componentIndex to the kept candidate's position, then subtract 1 only from indexes greater than the removed candidate's position, for every key in slotKeys. If only one candidate remains and nothing is removed, do not subtract 1. For any componentIndex of -1, identify its Component with 'resoloop component inspect ID' and set its current position; if you cannot identify it, keep the state file as it is and do not guess." }),
             "key-not-declared" => (
