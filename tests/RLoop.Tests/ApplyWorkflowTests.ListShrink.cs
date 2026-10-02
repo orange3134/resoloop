@@ -946,6 +946,8 @@ public sealed partial class ApplyWorkflowTests
     [Theory]
     [InlineData("one-recreate", false)]
     [InlineData("one-recreate", true)]
+    [InlineData("one-recreate-unmanaged", false)]
+    [InlineData("one-recreate-unmanaged", true)]
     [InlineData("shared-slot", false)]
     [InlineData("shared-slot", true)]
     public async Task AWorldReloadDuringARecreateStopsBeforeAnyWrite(string scenario, bool responseLost)
@@ -953,6 +955,12 @@ public sealed partial class ApplyWorkflowTests
         for (var write = 1; ; write++)
         {
             var (client, service, state, shrunk, referenced, expected) = await ApplyScenarioAsync($"{scenario}-reload-{responseLost}-{write}", scenario);
+            if (scenario == "one-recreate-unmanaged")
+            {
+                var slot = AllSlots(client.Root).Single(slot => slot.Name == "Rubble01");
+                await client.AddComponentAsync(slot.Id, "Test.Indexed", new Dictionary<string, string> { ["Value"] = "999" });
+            }
+            client.ResetWriteCounts();
             if (responseLost) client.LoseResponseOnWrite = write;
             else client.FailOnWrite = write;
 
@@ -986,16 +994,33 @@ public sealed partial class ApplyWorkflowTests
                 {
                     // The recovery in the suggestions: keep the candidate that something references, remove the other, and
                     // clear the recreate in the state.
-                    Assert.True(candidates.Count(candidate => candidate!["referencedBy"]!.AsArray().Count > 0) <= 1,
-                        $"write {write}: more than one candidate is referenced.");
-                    var kept = candidates.FirstOrDefault(candidate => candidate!["referencedBy"]!.AsArray().Count > 0) ?? candidates[0];
-                    foreach (var candidate in candidates.Where(candidate => candidate != kept))
-                        await client.RemoveComponentAsync(candidate!["id"]!.GetValue<string>());
+                    await RecoverRecreateAfterReloadAsync(client, state, error);
                     var saved = JsonNode.Parse(File.ReadAllText(state))!;
-                    var record = saved["components"]![(string)error.Context["componentKey"]!]!.AsObject();
-                    if (record["id"]!.GetValue<string>().Length == 0) record["id"] = record["supersededId"]!.GetValue<string>();
-                    record.Remove("supersededId");
-                    File.WriteAllText(state, saved.ToJsonString());
+                    var unverified = saved["components"]!.AsObject().Where(pair => pair.Value!["componentIndex"]?.GetValue<int>() == -1)
+                        .Select(pair => pair.Key).ToArray();
+                    if (unverified.Length > 0)
+                    {
+                        client.ResetWriteCounts();
+                        var stopped = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(shrunk, new ApplyOptions(state)));
+                        Assert.Equal("STABLE_COMPONENT_AMBIGUOUS", stopped.Code);
+                        Assert.Equal(0, client.Writes);
+                        if (scenario == "one-recreate-unmanaged") AssertUnmanagedIndexedValue(client);
+                        var slot = AllSlots(client.Root).Single(slot => slot.Name == "Rubble01");
+                        foreach (var key in unverified)
+                        {
+                            Assert.Contains(key, new[] { "source", "v1" });
+                            var identified = key == "source"
+                                ? Assert.Single(slot.Components, component => component.Type == "Test.Source")
+                                : Assert.Single(slot.Components, component => component.Type == "Test.Indexed" &&
+                                    component.Members["Value"].Value!.GetValue<int>() == 1);
+                            if (key == "source")
+                            {
+                                var kept = candidates.FirstOrDefault(candidate => candidate!["referencedBy"]!.AsArray().Count > 0) ?? candidates[0]!;
+                                Assert.Equal(kept["id"]!.GetValue<string>(), identified.Members["Target"].TargetId);
+                            }
+                            await ConfirmRecoveryIndexAsync(client, state, key, identified);
+                        }
+                    }
                     await service.ApplyAsync(shrunk, new ApplyOptions(state));
                     await AssertListShrinkConvergedAsync(client, service, shrunk, state, referenced, expected, $"write {write}: ");
                 }
@@ -1005,6 +1030,7 @@ public sealed partial class ApplyWorkflowTests
                 await service.ApplyAsync(shrunk, new ApplyOptions(state));
                 await AssertListShrinkConvergedAsync(client, service, shrunk, state, referenced, expected, $"write {write}: ");
             }
+            if (scenario == "one-recreate-unmanaged") AssertUnmanagedIndexedValue(client);
             if (!interrupted) break;
         }
     }
@@ -1118,9 +1144,18 @@ public sealed partial class ApplyWorkflowTests
     private async Task<(FakeResoniteClient Client, WorldService Service, string State, ApplyDocument Shrunk, string Referenced,
         Dictionary<string, string[]> Expected)> ApplyScenarioAsync(string name, string scenario)
     {
-        if (scenario == "one-recreate")
+        if (scenario is "one-recreate" or "one-recreate-unmanaged")
         {
-            var (client, service, state, shrunk) = await ApplyRubbleAsync(name, RubbleWorld(name, ["m1", "m2", "m3"], "rubble", watcher: true));
+            string World(bool watcher, params string[] materials)
+            {
+                var world = RubbleWorld(name, materials, "rubble", watcher);
+                return scenario == "one-recreate-unmanaged"
+                    ? world.Replace("""{"key":"source","type":"Test.Source","fields":{"Target":"$ref:renderer"}}""",
+                        """{"key":"source","type":"Test.Source","fields":{"Target":"$ref:renderer"}},{"key":"v1","type":"Test.Indexed","fields":{"Value":1}}""", StringComparison.Ordinal)
+                    : world;
+            }
+            var (client, service, state, shrunk) = await ApplyRubbleAsync(name,
+                World(true, "m1", "m2", "m3"), World(false, "m1", "m2", "m3", "m4"));
             return (client, service, state, shrunk, "renderer", new() { ["renderer"] = ["m1", "m2", "m3"] });
         }
         var initial = ReloadDocument(name, TwoRendererWorld(name, ["m1", "m2", "m3", "m4"], ["m1", "m2", "m3"], shared: true));

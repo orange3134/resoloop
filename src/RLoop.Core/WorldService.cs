@@ -546,6 +546,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 cancellationToken.ThrowIfCancellationRequested();
                 if (component.Superseded is not null)
                 {
+                    MarkSlotIndexesUnverified(prepared, component.Node.StableKey);
                     await client.RemoveComponentAsync(component.Superseded.Id, cancellationToken);
                     counts.ComponentsDeleted++;
                     component.Superseded = null;
@@ -1510,8 +1511,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
     private static RLoopException RecreateInterrupted(PreparedApply prepared, string reason, string key, ApplyStateComponent saved,
         IReadOnlyList<ComponentSummary>? candidates = null)
     {
-        candidates ??= (prepared.Nodes.FirstOrDefault(node => node.StableKey == saved.SlotKey)?.Existing?.Components ?? [])
-            .Where(component => TypeNamesEquivalent(component.Type, saved.Type)).ToArray();
+        var slotComponents = prepared.Nodes.FirstOrDefault(node => node.StableKey == saved.SlotKey)?.Existing?.Components ?? [];
+        candidates ??= slotComponents.Where(component => TypeNamesEquivalent(component.Type, saved.Type)).ToArray();
         // After a reload, nothing tells the recreate's Components apart from those of another same-type key on the Slot.
         var sameTypeKeys = prepared.State.Components.Any(pair => pair.Key != key && pair.Value.SlotKey == saved.SlotKey &&
             TypeNamesEquivalent(pair.Value.Type, saved.Type));
@@ -1522,7 +1523,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 sameTypeKeys
                     ? new[] { "Another key on this Slot has the same type, so the candidates include its Components and apply cannot tell the recreate's Components apart. Keep the state file as it is, check in Resonite what each candidate references and what references it, and do not repair this by guessing IDs." }
                     : new[] { "Keep the candidate that the Components in its referencedBy point at, or either one if none is referenced, and remove the other with 'resoloop component remove ID --yes'. Use only the IDs in candidates; supersededId and savedId are IDs from the earlier session.",
-                              $"Then back up the state file, set components.{key}.id to its supersededId if the ID is empty, delete supersededId, and re-run apply." }),
+                              $"Then back up the state file, set components.{key}.id to its supersededId if the ID is empty, delete supersededId, and adjust the Slot indexes as described below before re-running apply.",
+                              $"Removing a Component makes those after it move one position earlier. Without identityFields, apply matches Components after a world reload by their saved componentIndex. Set components.{key}.componentIndex to the kept candidate's position, then subtract 1 only from indexes greater than the removed candidate's position, for every key in slotKeys. If only one candidate remains and nothing is removed, do not subtract 1. For any componentIndex of -1, identify its Component with 'resoloop component inspect ID' and set its current position; if you cannot identify it, keep the state file as it is and do not guess." }),
             "key-not-declared" => (
                 $"A list-shrink recreate of '{key}' was interrupted, and the document no longer declares the key on its Slot. No mutations were performed.",
                 new[] { "Declare the key again on the same Slot and re-run apply in this session to finish the recreate. Then remove the key and apply with --prune --yes if you no longer want it." }),
@@ -1534,7 +1536,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 new[] { "If a candidate's lists match the declaration, it is most likely the replacement that the interrupted apply created. If the declaration references a Component that the same apply creates later, apply creates the replacement without initial values, so its lists are all empty; a Component with empty lists that you added looks the same. Inspect each candidate with 'resoloop component inspect ID', remove only one you can confirm the interrupted apply created with 'resoloop component remove ID --yes', and re-run apply; apply creates the replacement again.",
                         $"If no candidate fits that description, back up the state file, set components.{key}.id back to its supersededId, delete supersededId, and re-run apply to start the recreate again." })
         };
-        return new RLoopException("APPLY_RECREATE_INTERRUPTED", message, ExitCodes.ValidationFailed, new Dictionary<string, object?>
+        var context = new Dictionary<string, object?>
         {
             ["reason"] = reason,
             ["stateFile"] = prepared.StatePath,
@@ -1547,11 +1549,16 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             ["candidates"] = candidates.Select(component => new
             {
                 id = component.Id,
+                position = slotComponents.ToList().FindIndex(candidate => candidate.Id == component.Id),
                 lists = (component.Members ?? new Dictionary<string, MemberValue>()).Where(member => member.Value.Kind == "list")
                     .ToDictionary(member => member.Key, member => member.Value.Elements?.Count ?? 0, StringComparer.Ordinal),
                 referencedBy = ReferencesTo(prepared, component)
             }).ToArray()
-        }, suggestions);
+        };
+        if (reason == "session-changed")
+            context["slotKeys"] = prepared.State.Components.Where(pair => pair.Value.SlotKey == saved.SlotKey)
+                .Select(pair => new { key = pair.Key, componentIndex = pair.Value.ComponentIndex }).ToArray();
+        return new RLoopException("APPLY_RECREATE_INTERRUPTED", message, ExitCodes.ValidationFailed, context, suggestions);
     }
 
     // The Components in the snapshots that apply read whose members point at this Component or at one of its members.
@@ -2376,6 +2383,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         foreach (var component in undone)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            MarkSlotIndexesUnverified(prepared, component.Node.StableKey);
             await client.RemoveComponentAsync(component.Id!, cancellationToken);
             counts.ComponentsDeleted++;
             var restored = component.StateBeforeRecreate ??
