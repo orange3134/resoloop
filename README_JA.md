@@ -4,7 +4,7 @@
 
 ワールド保存・再読込後は、state の `assetFields` に記録した `$asset:` 宣言が一致する場合、import 済みアセットの `resdb:///` URL を保持します。記録のない旧 state で対応関係を確認できない場合は、変更前に `APPLY_ASSET_MIGRATION_UNVERIFIED` で停止します。アセットの実体を確認し、manifest の asset source に検証済みの保存先 URI（例: `"source": "resdb:///…"`）を明示してから `diff` を再実行してください。変更済みの宣言だけで対応を推測したり、state を削除して検査を回避したりしないでください。フィールド書き込みが中断した場合は checkpoint を保持し、同じ manifest で再実行します。
 
-ResoniteLink は list の要素を削除できません。`MeshRenderer.Materials` などの list member を実機より短く宣言すると、`diff` は `recreate` を示し、apply は同じ Slot で Component を作り直します。宣言した field で新しい Component を作って list を確かめ、管理 Component の参照を張り替えてから、旧 Component を `--prune` なしで削除します。新しい Component では、`initialFields` は宣言の初期値に、宣言していない member は型の既定値に戻ります。apply が読んだ範囲で、旧 Component を管理 Component の宣言済み参照以外が参照している場合は変更前に `APPLY_LIST_SHRINK_REFERENCED`、runtime が list を宣言より長いまま残す場合は新しい Component を削除したうえで `APPLY_LIST_SHRINK_NOT_CONVERGED`、中断した作り直しを同じセッションで再開できない場合は変更前に `APPLY_RECREATE_INTERRUPTED` で停止します。エラーの suggestions に従って復旧してください。
+ResoniteLink は list の要素を削除できません。`MeshRenderer.Materials` などの list member を実機より短く宣言すると、`diff` は `recreate` を示し、apply は同じ Slot で Component を作り直します。宣言した field で新しい Component を作って list を確かめ、管理 Component の参照を張り替えてから、旧 Component を `--prune` なしで削除します。新しい Component では、`initialFields` は宣言の初期値に、宣言していない member は型の既定値に戻ります。apply が読んだ範囲で、旧 Component を管理 Component の宣言済み参照以外が参照している場合は変更前に `APPLY_LIST_SHRINK_REFERENCED`、runtime が置換先の list を宣言より長いまま残す場合は、旧 Component を削除する前に `APPLY_LIST_SHRINK_NOT_CONVERGED` で停止し、安全に取り消せる置換先だけを削除します。既に参照されている置換先や旧 Component が消えている場合は置換先と checkpoint を残します。中断した作り直しを同じセッションで再開できない場合は変更前に `APPLY_RECREATE_INTERRUPTED` で停止します。エラー固有の `recovery` と suggestions に従い、原因を直さない再実行は避けてください。apply 前の `resoloop test` は、`diff` が `recreate` を計画した場合も現在存在する Component を検査します。
 
 ## UIX制作の効率化
 

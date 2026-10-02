@@ -667,10 +667,12 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 ["componentsDeleted"] = counts.ComponentsDeleted,
                 ["slotsDeleted"] = counts.SlotsDeleted,
                 ["assetsImported"] = counts.AssetsImported,
-                ["atomic"] = false,
-                ["recovery"] = $"Re-run the same apply command. Checkpoint: {prepared.StatePath}"
+                ["atomic"] = false
             };
-            var suggestions = ex.Suggestions.Concat(["Re-run the same apply command after resolving the error; completed operations are checkpointed."])
+            var hasRecovery = context.ContainsKey("recovery");
+            if (!hasRecovery) context["recovery"] = $"Re-run the same apply command. Checkpoint: {prepared.StatePath}";
+            var suggestions = (hasRecovery ? ex.Suggestions : ex.Suggestions.Concat(
+                    ["Re-run the same apply command after resolving the error; completed operations are checkpointed."]))
                 .Distinct(StringComparer.Ordinal).ToArray();
             throw new RLoopException(ex.Code, ex.Message, ex.ExitCode, context, suggestions, ex);
         }
@@ -701,10 +703,11 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         foreach (var node in prepared.Nodes) node.Id = node.Existing?.Id;
         foreach (var component in prepared.Components)
         {
-            component.Id = component.Existing?.Id;
-            component.ResolvedType = component.Existing?.Type;
+            var current = component.Existing ?? component.Superseded;
+            component.Id = current?.Id;
+            component.ResolvedType = current?.Type;
         }
-        var byKey = prepared.Components.Where(x => !string.IsNullOrWhiteSpace(x.Spec.Key) && x.Existing is not null)
+        var byKey = prepared.Components.Where(x => !string.IsNullOrWhiteSpace(x.Spec.Key) && x.Id is not null)
             .ToDictionary(x => x.Spec.Key!, x => x, StringComparer.Ordinal);
         var slotsByKey = prepared.Nodes.ToDictionary(x => x.StableKey, StringComparer.Ordinal);
         var assetUrls = PlanAssetUrls(prepared);
@@ -738,7 +741,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     {
                         var key = SymbolKey(probe.Target);
                         byKey.TryGetValue(key, out var target);
-                        if (!string.Equals(probe.Kind, "set-members", StringComparison.OrdinalIgnoreCase) && target?.Existing is null)
+                        var targetCurrent = target?.Existing ?? target?.Superseded;
+                        if (!string.Equals(probe.Kind, "set-members", StringComparison.OrdinalIgnoreCase) && targetCurrent is null)
                             throw UnknownApplyReference(probe.Target, byKey.Keys);
                         switch (probe.Kind?.ToLowerInvariant())
                         {
@@ -746,7 +750,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                             {
                                 if (string.IsNullOrWhiteSpace(probe.Method))
                                     throw new RLoopException("PROBE_METHOD_MISSING", $"Test '{test.Name}' method probe requires method.", ExitCodes.ValidationFailed);
-                                var definition = await client.DescribeComponentTypeAsync(target!.Existing!.Type, cancellationToken);
+                                var definition = await client.DescribeComponentTypeAsync(targetCurrent!.Type, cancellationToken);
                                 if (definition.Methods?.Any(x => x.Name == probe.Method && !x.IsStatic) != true)
                                 {
                                     structuralOnly = true;
@@ -754,7 +758,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                                 }
                                 else
                                 {
-                                    var call = await client.CallComponentMethodAsync(target.Existing.Id, probe.Method, probe.Arguments, cancellationToken);
+                                    var call = await client.CallComponentMethodAsync(targetCurrent.Id, probe.Method, probe.Arguments, cancellationToken);
                                     if (!call.Success)
                                         throw new RLoopException("PROBE_FAILED", call.Error ?? $"Probe '{probe.Method}' failed.", ExitCodes.OperationFailed);
                                     probeExecuted = true;
@@ -774,10 +778,12 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                                 {
                                     var selector = pair.Key[(pair.Key.IndexOf(':') + 1)..];
                                     var separator = selector.LastIndexOf('.');
-                                    if (!byKey.TryGetValue(selector[..separator], out var currentTarget) || currentTarget.Existing is null)
+                                    if (!byKey.TryGetValue(selector[..separator], out var currentTarget))
                                         throw UnknownApplyReference(pair.Key, byKey.Keys);
+                                    var currentSummary = currentTarget.Existing ?? currentTarget.Superseded;
+                                    if (currentSummary is null) throw UnknownApplyReference(pair.Key, byKey.Keys);
                                     var memberName = selector[(separator + 1)..];
-                                    var current = await client.GetComponentAsync(currentTarget.Existing.Id, cancellationToken);
+                                    var current = await client.GetComponentAsync(currentSummary.Id, cancellationToken);
                                     if (!current.Members.TryGetValue(memberName, out var original))
                                         throw new RLoopException("PROBE_MEMBER_NOT_FOUND", $"Probe member '{pair.Key}' was not found.", ExitCodes.NotFound);
                                     if (original.Kind != "field")
@@ -891,7 +897,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var memberName = selector[(separator + 1)..];
         var component = refresh ? await client.GetComponentAsync(runtime.Id, cancellationToken) :
             new ComponentInfo(runtime.Id, runtime.ResolvedType ?? runtime.Spec.Type,
-                runtime.Existing?.Members ?? new Dictionary<string, MemberValue>());
+                (runtime.Existing ?? runtime.Superseded)?.Members ?? new Dictionary<string, MemberValue>());
         if (!component.Members.TryGetValue(memberName, out var member))
             return new ApplyAssertionResult(testName, assertion.Target, phase, assertion.Exists == false,
                 assertion.Expected is { } absentExpected ? JsonNode.Parse(absentExpected.GetRawText()) : JsonValue.Create(assertion.Exists), null, "Member does not exist.");
@@ -1098,7 +1104,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     ListShrinkReason(spec, existing);
                 // A key whose create was interrupted has no saved ID, so this Component was matched by type and position only.
                 // It may be unmanaged content; never remove it as a replaced Component.
-                if (recreateReason is not null && stateComponent?.Id is { Length: 0 })
+                if (recreateReason is not null && string.IsNullOrEmpty(stateComponent?.Id))
                     throw new RLoopException("STABLE_COMPONENT_AMBIGUOUS",
                         $"Component '{stableKey}' has no saved ID, so it was matched by type and position only, and its list is longer than declared. Apply does not recreate a Component it cannot verify. No mutations were performed.",
                         ExitCodes.ValidationFailed,
@@ -1188,6 +1194,10 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
     }
 
     private static string RecreatePlanReason(ComponentRuntime component) => component.RecreateReason ??
+        (component.Resumed && component.Existing is not null && component.Superseded is not null &&
+         ListShrinkReason(component.Spec, component.Existing) is not null
+            ? "resumes an interrupted recreate: the replacement is longer than the shorter declaration; an unreferenced replacement may be undone so the original can be recreated on the next apply"
+            : null) ??
         (component.Existing, component.Superseded) switch
         {
             (null, null) => "resumes an interrupted recreate: the replaced Component is already removed; apply creates the replacement",
@@ -2281,23 +2291,20 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         NearlyEqual(current.X, desired[0]) && NearlyEqual(current.Y, desired[1]) && NearlyEqual(current.Z, desired[2]) && NearlyEqual(current.W, desired[3]);
     private static bool NearlyEqual(float left, float right) => Math.Abs(left - right) <= 0.00001f * Math.Max(1, Math.Max(Math.Abs(left), Math.Abs(right)));
 
-    // Write each replacement's declared fields and read it back before any managed reference moves to it. Runtime
-    // logic that refills a list would make every apply recreate the Component again, so a list still longer than declared
-    // undoes the replacements that nothing can reference yet and stops.
+    // A replacement cannot become a target for managed fields until all replacement lists have been written and read back.
+    // References between replacements use their allocated IDs only inside this verification phase.
     private async Task VerifyReplacementsAsync(PreparedApply prepared, IReadOnlyList<ComponentRuntime> recreates,
         Dictionary<string, ComponentRuntime> byKey, IReadOnlyDictionary<string, NodeRuntime> slotsByKey,
         IReadOnlyDictionary<string, string> assetUrls, ApplyCounts counts, CancellationToken cancellationToken)
     {
+        var awaiting = recreates.Where(component => component.AwaitsVerification).ToArray();
         var failures = new List<(ComponentRuntime Component, string Member, int Declared, int Observed)>();
-        // A recreate whose replaced Component is already gone has nothing left to verify or undo.
-        foreach (var component in recreates.Where(component => component.AwaitsVerification))
+        async Task WriteAndCheckAsync(ComponentRuntime component, IReadOnlyDictionary<string, ComponentRuntime> targets)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            // No replacement, this one included, is a reference target until every replacement passes, so the fields that
-            // reference one are left to the fields phase.
-            var resolvable = MergeCreateFields(component.Spec).Where(field => CanResolve(field.Value, byKey, slotsByKey))
+            var resolvable = MergeCreateFields(component.Spec).Where(field => CanResolve(field.Value, targets, slotsByKey))
                 .ToDictionary(field => field.Key, field => field.Value, StringComparer.Ordinal);
-            var fields = await ResolveFieldsAsync(resolvable, byKey, slotsByKey, assetUrls, cancellationToken);
+            var fields = await ResolveFieldsAsync(resolvable, targets, slotsByKey, assetUrls, cancellationToken);
             var unwritten = fields.Where(field => component.AppliedOnCreate is null ||
                                                   !component.AppliedOnCreate.TryGetValue(field.Key, out var applied) || applied != field.Value)
                 .Where(field => component.Existing?.Members is null ||
@@ -2309,7 +2316,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 Checkpoint(prepared);
                 await client.SetComponentMembersAsync(component.Id!, component.ResolvedType ?? component.Spec.Type, unwritten, cancellationToken);
             }
-            // The fields phase must not write these again.
+            // The fields phase must not write verified fields again.
             component.AppliedOnCreate = fields;
             var replacement = await client.GetComponentAsync(component.Id!, cancellationToken);
             foreach (var field in component.Spec.Fields ?? new Dictionary<string, JsonElement>())
@@ -2318,20 +2325,34 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     (list.Elements?.Count ?? 0) > field.Value.GetArrayLength())
                     failures.Add((component, field.Key, field.Value.GetArrayLength(), list.Elements!.Count));
         }
+
+        // First reject ordinary runtime refills without writing references to another unverified replacement.
+        foreach (var component in awaiting) await WriteAndCheckAsync(component, byKey);
+        var checkedWithReplacementIds = failures.Count == 0 && awaiting.Length > 0;
+        if (checkedWithReplacementIds)
+        {
+            var targets = new Dictionary<string, ComponentRuntime>(byKey, StringComparer.Ordinal);
+            foreach (var component in awaiting.Where(component => !string.IsNullOrWhiteSpace(component.Spec.Key)))
+                targets[component.Spec.Key!] = component;
+            // Now every replacement has an ID. Write deferred mutual-reference lists and read back their final lengths
+            // before the ordinary fields phase is allowed to move any other managed references to them.
+            foreach (var component in awaiting) await WriteAndCheckAsync(component, targets);
+        }
         if (failures.Count == 0)
         {
-            // Every replacement passed, so the fields phase may point references at them.
-            foreach (var component in recreates.Where(component => component.AwaitsVerification && !string.IsNullOrWhiteSpace(component.Spec.Key)))
+            foreach (var component in awaiting.Where(component => !string.IsNullOrWhiteSpace(component.Spec.Key)))
                 byKey[component.Spec.Key!] = component;
             return;
         }
 
-        // Nothing references a replacement this apply created, not even another replacement, so removing it cannot leave a
-        // dangling reference. A resumed replacement that passed stays, because an earlier apply may already have moved
-        // references to it.
         var failed = failures.Select(failure => failure.Component).ToHashSet();
-        var undone = recreates.Where(component => component.AwaitsVerification &&
-                                                  (component.ReplacementCreated || failed.Contains(component))).ToArray();
+        // The original must still exist before an undo can restore its ID. A resumed replacement can already be referenced
+        // by a previous apply. Once deferred fields have been written, a resumed replacement may also reference a fresh
+        // replacement, so retain the whole group in that case rather than leave any surviving reference dangling.
+        var retainGroup = checkedWithReplacementIds && awaiting.Any(component => component.Resumed);
+        var undone = awaiting.Where(component => component.Superseded is not null && !retainGroup &&
+            (component.ReplacementCreated || (failed.Contains(component) && component.Existing is not null &&
+                ReferencesTo(prepared, component.Existing).Length == 0))).ToArray();
         foreach (var component in undone)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -2344,10 +2365,21 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         foreach (var node in undone.Select(component => component.Node).Distinct())
             await SaveSlotIndexesAsync(prepared, node.StableKey, node.Id!, cancellationToken);
         Checkpoint(prepared);
-        var inProgress = recreates.Where(component => component.AwaitsVerification && !undone.Contains(component))
-            .Select(component => component.StableKey).ToArray();
+        var inProgress = awaiting.Except(undone).Select(component => component.StableKey).ToArray();
+        var retrySameDeclaration = failures.All(failure => failure.Component.Resumed &&
+            failure.Component.Existing is not null &&
+            ListShrinkReason(failure.Component.Spec, failure.Component.Existing) is not null &&
+            undone.Contains(failure.Component)) && inProgress.Length == 0;
+        var recovery = retrySameDeclaration
+            ? "The interrupted replacement was longer than the new declaration and has been undone. Re-run the same apply command to recreate it from the original Component."
+            : "Change the declared list length or stop the runtime from refilling it before re-running apply; an unchanged retry will not converge.";
+        var suggestions = new List<string> { recovery };
+        if (inProgress.Length > 0)
+            suggestions.Add($"The recreate of '{string.Join("', '", inProgress)}' stays in progress. Its replacement was not removed because it may be referenced or the original is gone. Keep the checkpoint, inspect references, and retry in this session after fixing the list; after a world reload, apply stops with APPLY_RECREATE_INTERRUPTED.");
         throw new RLoopException("APPLY_LIST_SHRINK_NOT_CONVERGED",
-            "The runtime kept a list longer than declared on a replacement Component, so recreating it cannot converge. The undone replacements were removed and their original Components are unchanged.",
+            retrySameDeclaration
+                ? "The interrupted replacement has more list elements than the new declaration. It was undone; the same apply command can recreate it from the original Component."
+                : "The runtime kept a list longer than declared on a replacement Component, so recreating it cannot converge. Only replacements safe to undo were removed; other replacements remain in progress.",
             ExitCodes.OperationFailed, new Dictionary<string, object?>
             {
                 ["failures"] = failures.Select(failure => new
@@ -2356,14 +2388,9 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     declared = failure.Declared, observed = failure.Observed
                 }).ToArray(),
                 ["undone"] = undone.Select(component => component.StableKey).ToArray(),
-                // Resumed recreates that passed keep their replacements and stay in progress.
-                ["inProgress"] = inProgress
-            },
-            new[] { "Declare the list length that the runtime keeps, or find what refills the list.",
-                    "Re-run apply only after changing the declaration; re-running the same command recreates and undoes the Component again. The undone keys have no recreate in progress." }
-                .Concat(inProgress.Length == 0 ? Array.Empty<string>() :
-                    [$"The recreate of '{string.Join("', '", inProgress)}' stays in progress. Finish it by re-running apply in this session; after a world reload, apply stops with APPLY_RECREATE_INTERRUPTED."])
-                .ToArray());
+                ["inProgress"] = inProgress,
+                ["recovery"] = recovery
+            }, suggestions);
     }
 
     // Removing a Component moves the ones after it, and after a world reload a key without identity values is bound by
@@ -2537,7 +2564,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         // True once this apply has created the replacement.
         public bool ReplacementCreated { get; set; }
         // While the replaced Component is still on the Slot, its replacement is not a reference target until verified.
-        public bool AwaitsVerification => SupersededId is not null && Superseded is not null;
+        public bool AwaitsVerification => SupersededId is not null;
         public Dictionary<string, string> MemberIds { get; } = new(StringComparer.Ordinal);
     }
 
