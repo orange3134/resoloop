@@ -1460,6 +1460,8 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public List<string> Mutations { get; } = [];
         public int? CancelAfterWrites { get; set; }
         public int? FailOnWrite { get; set; }
+        // The write with this number lands, and then its response is lost.
+        public int? LoseResponseOnWrite { get; set; }
         public string? TargetClaimedBy { get; set; }
         public CancellationTokenSource? Cancellation { get; set; }
         public string SessionId { get; set; } = "session-1";
@@ -1468,6 +1470,14 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public int AssetImports { get; private set; }
         public string ImportUrlPrefix { get; set; } = "resdb:///asset-";
         public List<string> DescribedTypes { get; } = [];
+        // Members kept as lists: string elements are references, other elements values. ResoniteLink 0.13.1 replaces only
+        // the leading elements and cannot remove any (Resonite 2026.9.18.82): [A,B] stays [A,B] after [A], [] changes
+        // nothing, and [B] then gives [B,B].
+        public HashSet<string> ListMembers { get; } = new(StringComparer.Ordinal) { "Materials" };
+        // When set, every written list is padded back to this many elements, as runtime logic that refills a list would.
+        public int? RefillListsTo { get; set; }
+        // Removing this Component fails before it lands.
+        public string? FailRemovingComponent { get; set; }
 
         public FakeResoniteClient(ApplyDocument? definitions = null)
         {
@@ -1512,6 +1522,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
                 LoseNextSlotCreateResponse = false;
                 throw new OperationCanceledException("Simulated lost create response.");
             }
+            Acknowledge();
             return Task.FromResult(id);
         }
 
@@ -1530,6 +1541,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
             if (request.Position is not null) slot.Position = request.Position;
             if (request.Rotation is not null) slot.Rotation = request.Rotation;
             if (request.Scale is not null) slot.Scale = request.Scale;
+            Acknowledge();
             return Task.CompletedTask;
         }
 
@@ -1539,6 +1551,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
             var slot = _slots[id];
             _slots[slot.ParentId!].Children.Remove(slot);
             RemoveSlotTree(slot);
+            Acknowledge();
             return Task.CompletedTask;
         }
 
@@ -1550,12 +1563,13 @@ public sealed partial class ApplyWorkflowTests : IDisposable
             var id = "C" + _nextComponent++;
             var component = new FakeComponent(id, componentType);
             foreach (var member in _knownMembers.GetValueOrDefault(componentType) ?? [])
-                component.Members[member] = new MemberValue("field", id + ":" + member, "bool", JsonValue.Create(false));
+                component.Members[member] = InitialMember(id, member);
             SetFields(component, fields);
             if (TargetClaimedBy is not null && _components.ContainsKey(TargetClaimedBy) && fields.ContainsKey("Target"))
                 component.Members["Target"] = new MemberValue("reference", id + ":Target");
             _components[id] = component;
             _slots[slotId].Components.Add(component);
+            Acknowledge();
             return Task.FromResult(new ComponentCreateResult(id, componentType));
         }
 
@@ -1576,15 +1590,18 @@ public sealed partial class ApplyWorkflowTests : IDisposable
             }
             if (TargetClaimedBy is not null && componentId != TargetClaimedBy && _components.ContainsKey(TargetClaimedBy) && fields.ContainsKey("Target"))
                 _components[componentId].Members["Target"] = new MemberValue("reference", componentId + ":Target");
+            Acknowledge();
             return Task.CompletedTask;
         }
 
         public Task RemoveComponentAsync(string componentId, CancellationToken cancellationToken = default)
         {
+            if (componentId == FailRemovingComponent) throw new IOException("Simulated failure while removing a Component.");
             Write();
             var component = _components[componentId];
             foreach (var slot in _slots.Values) slot.Components.Remove(component);
             _components.Remove(componentId);
+            Acknowledge();
             return Task.CompletedTask;
         }
         public Task<IReadOnlyList<string>> SearchComponentTypesAsync(string query, int limit, CancellationToken cancellationToken = default) =>
@@ -1597,7 +1614,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
             if (!_knownMembers.TryGetValue(type, out var known))
                 throw new RLoopException("COMPONENT_TYPE_NOT_FOUND", type, ExitCodes.NotFound);
             IReadOnlyList<MemberDefinitionInfo> members = known.Select(name =>
-                new MemberDefinitionInfo(name, name is "Target" or "Mesh" or "TargetValue" ? "reference" : "field",
+                new MemberDefinitionInfo(name, name is "Target" or "Mesh" or "TargetValue" ? "reference" : ListMembers.Contains(name) ? "list" : "field",
                     null, name == GeneratedContentMetadata.SourceMember ? "string" : "bool", null)).ToArray();
             return Task.FromResult(new ComponentTypeInfo(type, null, null, false, members));
         }
@@ -1671,7 +1688,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         {
             var component = new FakeComponent("C" + _nextComponent++, type);
             foreach (var member in _knownMembers.GetValueOrDefault(type) ?? [])
-                component.Members[member] = new MemberValue("field", component.Id + ":" + member, "bool", JsonValue.Create(false));
+                component.Members[member] = InitialMember(component.Id, member);
             SetFields(component, fields);
             _components[component.Id] = component;
             slot.Components.Insert(0, component);
@@ -1685,6 +1702,12 @@ public sealed partial class ApplyWorkflowTests : IDisposable
             if (CancelAfterWrites == Writes) Cancellation?.Cancel();
         }
 
+        // Called once a write has landed in the fake world.
+        private void Acknowledge()
+        {
+            if (LoseResponseOnWrite == Writes) throw new IOException("Simulated lost response after the write landed.");
+        }
+
         private void RemoveSlotTree(FakeSlot slot)
         {
             foreach (var child in slot.Children.ToArray()) RemoveSlotTree(child);
@@ -1692,11 +1715,35 @@ public sealed partial class ApplyWorkflowTests : IDisposable
             _slots.Remove(slot.Id);
         }
 
-        private static void SetFields(FakeComponent component, IReadOnlyDictionary<string, string> fields)
+        private MemberValue InitialMember(string componentId, string member) => ListMembers.Contains(member)
+            ? new MemberValue("list", componentId + ":" + member, Elements: [])
+            : new MemberValue("field", componentId + ":" + member, "bool", JsonValue.Create(false));
+
+        private MemberValue WriteList(MemberValue? current, string id, string raw)
+        {
+            var desired = (JsonNode.Parse(raw) as JsonArray ?? []).ToArray();
+            var kept = current?.Elements ?? [];
+            var elements = new List<MemberValue>();
+            for (var i = 0; i < Math.Max(desired.Length, kept.Count); i++)
+                elements.Add(i >= desired.Length ? kept[i]
+                    : desired[i] is null || desired[i] is JsonValue value && value.TryGetValue<string>(out _)
+                        ? new MemberValue("reference", $"{id}[{i}]", TargetId: desired[i]?.GetValue<string>())
+                        : new MemberValue("field", $"{id}[{i}]", "value", desired[i]!.DeepClone()));
+            while (RefillListsTo is { } refill && elements.Count > 0 && elements.Count < refill)
+                elements.Add(elements[^1] with { Id = $"{id}[{elements.Count}]" });
+            return new MemberValue("list", id, Elements: elements);
+        }
+
+        private void SetFields(FakeComponent component, IReadOnlyDictionary<string, string> fields)
         {
             foreach (var field in fields)
             {
                 var id = component.Id + ":" + field.Key;
+                if (ListMembers.Contains(field.Key))
+                {
+                    component.Members[field.Key] = WriteList(component.Members.GetValueOrDefault(field.Key), id, field.Value);
+                    continue;
+                }
                 if (field.Key is "Target" or "Mesh" or "TargetValue" ||
                     field.Value.StartsWith("C", StringComparison.Ordinal) || field.Value.StartsWith("S", StringComparison.Ordinal))
                     component.Members[field.Key] = new MemberValue("reference", id, TargetId: field.Value);
