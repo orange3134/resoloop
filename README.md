@@ -31,14 +31,14 @@ Requirements:
 Install resoloop in PowerShell:
 
 ~~~powershell
-dotnet tool install --global ResoLoop --version 0.1.0-preview.16
+dotnet tool install --global ResoLoop --version 0.1.0-preview.17
 resoloop --version
 ~~~
 
 If resoloop is already installed, update it with the following command:
 
 ~~~powershell
-dotnet tool update --global ResoLoop --version 0.1.0-preview.16
+dotnet tool update --global ResoLoop --version 0.1.0-preview.17
 ~~~
 
 ## Usage
