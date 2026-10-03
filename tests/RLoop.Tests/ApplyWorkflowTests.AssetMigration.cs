@@ -363,7 +363,9 @@ public sealed partial class ApplyWorkflowTests
         var holders = Holders(client);
         if (first is not null) holders[0].Members["URL"] = holders[0].Members["URL"] with { Value = JsonValue.Create(first) };
         if (second is not null) holders[1].Members["URL"] = holders[1].Members["URL"] with { Value = JsonValue.Create(second) };
-        client.ReloadWorld("session-saved");
+        // Every reload starts a different session; reusing the ID while changing Component IDs
+        // would instead simulate an in-session deletion/replacement of managed content.
+        client.ReloadWorld("session-saved-" + Guid.NewGuid().ToString("N"));
         client.ResetWriteCounts();
     }
 

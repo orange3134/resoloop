@@ -418,6 +418,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var total = prepared.Nodes.Count + prepared.Components.Count * 2;
         try
         {
+            RefreshReloadedBindings(prepared);
             await ReconcileUnverifiedIndexesAsync(prepared, options, cancellationToken);
             foreach (var asset in prepared.Assets)
             {
@@ -991,6 +992,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var sameSession = !string.IsNullOrWhiteSpace(session.UniqueSessionId) && session.UniqueSessionId == state.SessionId;
         state.SessionId = session.UniqueSessionId;
         var migrations = ApplyStateMigrations(document, state);
+        var savedSlotIds = state.Slots.ToDictionary(pair => pair.Key, pair => pair.Value.Id, StringComparer.Ordinal);
         var parentSelector = string.IsNullOrWhiteSpace(document.Slot!.Parent) ? "Root" : document.Slot.Parent;
         var parentId = await ResolveSlotIdAsync(parentSelector, cancellationToken);
         var stateDepth = state.Slots.Values.Select(x => x.PathSegments?.Count - 1 ?? x.Path.Count(ch => ch == '/')).DefaultIfEmpty(0).Max();
@@ -1029,7 +1031,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             }
         }
         var prepared = new PreparedApply(document, options, state, statePath, session, parentId, sameSession, snapshots,
-            migrations.Slots, migrations.Components, parentSegments);
+            migrations.Slots, migrations.Components, parentSegments) { SavedSlotIds = savedSlotIds };
         var rootSpec = new ApplyNodeSpec(document.Slot, document.Components, document.Children);
         BuildNode(prepared, rootSpec, null, parent, parentPath, true);
         await PrepareRelocationTransformsAsync(prepared, parentPath, cancellationToken);
@@ -1135,7 +1137,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 {
                     existing = relocating || newManagedComponent ? null :
                         MatchComponent(node.Existing?.Components ?? [], spec.Type, ordinal, stateComponent, prepared.SameSession,
-                            topologyTargets);
+                            topologyTargets, stateComponent is not null &&
+                            prepared.SavedSlotIds.GetValueOrDefault(stateComponent.SlotKey) == node.Existing?.Id);
                 }
                 // Like a move, a recreate needs a saved record: the first adopting apply updates existing content in place.
                 // A resumed recreate whose replaced Component is already gone starts again if the declaration shrank further.
@@ -1169,7 +1172,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     // stops it with key-not-declared.
                     runtime.RelocationSource = sourceSlot is null || !string.IsNullOrEmpty(stateComponent.SupersededId) ? null :
                         MatchComponent(sourceSlot.Components, spec.Type, ordinal, stateComponent, prepared.SameSession,
-                            topologyTargets);
+                            topologyTargets, prepared.SavedSlotIds.GetValueOrDefault(stateComponent.SlotKey) == sourceSlot.Id);
                     if (runtime.RelocationSource?.Id == existing?.Id) runtime.RelocationSource = null;
                     if (runtime.RelocationSource is not null)
                         (runtime.RelocationSourceSlotKey, runtime.RelocationSourceSlotId) = (stateComponent.SlotKey, sourceSlot!.Id);
@@ -2046,12 +2049,33 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         prepared.State.Slots.TryGetValue(slotKey, out var stateSlot) ? FindManagedSlot(prepared, stateSlot) : null;
 
     private static ComponentSummary? MatchComponent(IReadOnlyList<ComponentSummary> components, string type, int ordinal,
-        ApplyStateComponent? state, bool sameSession, IReadOnlyDictionary<string, string>? referenceTargets = null)
+        ApplyStateComponent? state, bool sameSession, IReadOnlyDictionary<string, string>? referenceTargets = null,
+        bool sameSlotId = false)
     {
         if (state is not null && sameSession)
         {
             var byId = components.SingleOrDefault(x => x.Id == state.Id);
             if (byId is not null) return byId;
+        }
+        if (state is not null && (sameSession || sameSlotId) &&
+            !components.Any(candidate => candidate.Id == state.Id))
+        {
+            // IDs remain authoritative within a session. A missing saved ID is not permission to
+            // adopt another Component, even when its type, fields, or position match. Saving that
+            // mistaken binding on an ordinary apply would authorize a later recreate to delete it.
+            // The CLI reconnects for each command. An unchanged Slot ID with a missing Component
+            // is also grounds to stop, never evidence authorizing an ID-based match across connections.
+            if (!string.IsNullOrWhiteSpace(state.Id) &&
+                components.Any(candidate => TypeNamesEquivalent(candidate.Type, state.Type)))
+                throw new RLoopException("STABLE_COMPONENT_AMBIGUOUS",
+                    $"Saved Component '{state.Id}' is no longer on Slot '{state.SlotKey}' while the connection or observed Slot ID is unchanged. Other same-type Components cannot prove its ownership. No mutations were performed.",
+                    ExitCodes.ValidationFailed, new Dictionary<string, object?>
+                    {
+                        ["reason"] = "saved-id-not-found", ["savedId"] = state.Id, ["slotKey"] = state.SlotKey,
+                        ["candidateIds"] = components.Where(candidate => TypeNamesEquivalent(candidate.Type, state.Type))
+                            .Select(candidate => candidate.Id).ToArray()
+                    },
+                    ["Preserve the checkpoint and inspect the saved Component and its Slot. Do not delete or adopt a same-type candidate by position. If the managed Component was deliberately removed, back up the state and remove only its verified stale key before re-running apply to create a new managed Component."]);
         }
         if (state?.ComponentIndex == -1)
             throw new RLoopException("STABLE_COMPONENT_AMBIGUOUS",
@@ -2507,6 +2531,25 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         }
     }
 
+    // The first checkpoint also advances the saved session. Keep every binding already resolved
+    // by preflight in that same session, even if apply stops before its Component phase.
+    // Preserve field/asset evidence and old relocation paths until their operations complete.
+    private static void RefreshReloadedBindings(PreparedApply prepared)
+    {
+        if (prepared.SameSession) return;
+        foreach (var node in prepared.Nodes.Where(node => node.Existing is not null))
+            if (prepared.State.Slots.TryGetValue(node.StableKey, out var saved))
+                prepared.State.Slots[node.StableKey] = saved with { Id = node.Existing!.Id };
+        foreach (var component in prepared.Components)
+        {
+            var current = component.Existing ?? component.Superseded ?? component.RelocationSource;
+            if (current is null || !prepared.State.Components.TryGetValue(component.StableKey, out var saved)) continue;
+            var slot = component.RelocationSource is null ? component.Node.Existing : FindStateSlot(prepared, saved.SlotKey);
+            var index = slot!.Components.ToList().FindIndex(candidate => candidate.Id == current.Id);
+            prepared.State.Components[component.StableKey] = saved with { Id = current.Id, ComponentIndex = index };
+        }
+    }
+
     private static void Checkpoint(PreparedApply prepared)
     {
         prepared.State.SessionId = prepared.Session.UniqueSessionId;
@@ -2576,6 +2619,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         public SessionInfo Session { get; } = session;
         public string ParentId { get; } = parentId;
         public bool SameSession { get; } = sameSession;
+        public IReadOnlyDictionary<string, string> SavedSlotIds { get; init; } = new Dictionary<string, string>();
         public IReadOnlyList<string> ParentSegments { get; } = parentSegments;
         public IReadOnlyDictionary<string, IReadOnlyList<string>> SnapshotSegments { get; } = BuildSegments(snapshots, state, parentId, parentSegments);
         public IReadOnlyDictionary<string, string> SlotMigrations { get; } = slotMigrations;
