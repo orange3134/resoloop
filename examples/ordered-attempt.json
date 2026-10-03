@@ -1,0 +1,1052 @@
+{
+  "schemaVersion": "1",
+  "ownership": {
+    "key": "ordered-attempt-study"
+  },
+  "slot": {
+    "key": "root",
+    "name": "ResoLoop_Example_OrderedAttempt",
+    "parent": "Root",
+    "position": [
+      12,
+      1.5,
+      2
+    ]
+  },
+  "children": [
+    {
+      "slot": {
+        "key": "front-material-slot",
+        "name": "Front material"
+      },
+      "components": [
+        {
+          "key": "front-material",
+          "type": "FrooxEngine.UI_UnlitMaterial",
+          "fields": {
+            "Sidedness": "Front",
+            "ZWrite": "On",
+            "ZTest": "LessOrEqual",
+            "OffsetFactor": 1,
+            "OffsetUnits": 100
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "key": "rear-material-slot",
+        "name": "Rear material"
+      },
+      "components": [
+        {
+          "key": "rear-material",
+          "type": "FrooxEngine.UI_UnlitMaterial",
+          "fields": {
+            "Sidedness": "Back",
+            "ZWrite": "On",
+            "ZTest": "LessOrEqual",
+            "OffsetFactor": 1,
+            "OffsetUnits": 100
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "key": "canvas",
+        "name": "Ordered attempt panel",
+        "scale": [
+          0.0025,
+          0.0025,
+          0.0025
+        ]
+      },
+      "components": [
+        {
+          "key": "canvas-rect",
+          "type": "FrooxEngine.UIX.RectTransform"
+        },
+        {
+          "key": "canvas-ui",
+          "type": "FrooxEngine.UIX.Canvas",
+          "fields": {
+            "Size": [
+              600,
+              440
+            ],
+            "UnitScale": 1,
+            "PixelScale": 1
+          }
+        }
+      ],
+      "children": [
+        {
+          "slot": {
+            "key": "background",
+            "name": "Background"
+          },
+          "components": [
+            {
+              "key": "background-rect",
+              "type": "FrooxEngine.UIX.RectTransform"
+            },
+            {
+              "key": "background-image",
+              "type": "FrooxEngine.UIX.Image",
+              "fields": {
+                "Tint": [
+                  0.025,
+                  0.04,
+                  0.055,
+                  1
+                ],
+                "Material": "$component:front-material",
+                "InteractionTarget": false
+              }
+            }
+          ],
+          "children": [
+            {
+              "slot": {
+                "key": "rear",
+                "name": "Rear cover"
+              },
+              "components": [
+                {
+                  "key": "rear-rect",
+                  "type": "FrooxEngine.UIX.RectTransform"
+                },
+                {
+                  "key": "rear-image",
+                  "type": "FrooxEngine.UIX.Image",
+                  "fields": {
+                    "Tint": [
+                      0.025,
+                      0.04,
+                      0.055,
+                      1
+                    ],
+                    "Material": "$component:rear-material",
+                    "InteractionTarget": false
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "slot": {
+            "key": "heading",
+            "name": "ORDERED ATTEMPT / 05"
+          },
+          "components": [
+            {
+              "key": "heading-rect",
+              "type": "FrooxEngine.UIX.RectTransform",
+              "fields": {
+                "AnchorMin": [
+                  0,
+                  0
+                ],
+                "AnchorMax": [
+                  0,
+                  0
+                ],
+                "OffsetMin": [
+                  28,
+                  371
+                ],
+                "OffsetMax": [
+                  572,
+                  419
+                ]
+              }
+            },
+            {
+              "key": "heading-text",
+              "type": "FrooxEngine.UIX.Text",
+              "fields": {
+                "Size": 28,
+                "Color": [
+                  0.8,
+                  0.9,
+                  1,
+                  1
+                ],
+                "Content": "ORDERED ATTEMPT / 05"
+              }
+            }
+          ]
+        },
+        {
+          "slot": {
+            "key": "summary",
+            "name": "READY"
+          },
+          "components": [
+            {
+              "key": "summary-rect",
+              "type": "FrooxEngine.UIX.RectTransform",
+              "fields": {
+                "AnchorMin": [
+                  0,
+                  0
+                ],
+                "AnchorMax": [
+                  0,
+                  0
+                ],
+                "OffsetMin": [
+                  28,
+                  307
+                ],
+                "OffsetMax": [
+                  572,
+                  363
+                ]
+              }
+            },
+            {
+              "key": "summary-text",
+              "type": "FrooxEngine.UIX.Text",
+              "fields": {
+                "Size": 38,
+                "Color": [
+                  1,
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "initialFields": {
+                "Content": "READY"
+              }
+            }
+          ]
+        },
+        {
+          "slot": {
+            "key": "attempts-readout",
+            "name": "attempts-readout"
+          },
+          "components": [
+            {
+              "key": "attempts-readout-rect",
+              "type": "FrooxEngine.UIX.RectTransform",
+              "fields": {
+                "AnchorMin": [
+                  0,
+                  0
+                ],
+                "AnchorMax": [
+                  0,
+                  0
+                ],
+                "OffsetMin": [
+                  28,
+                  257
+                ],
+                "OffsetMax": [
+                  288,
+                  299
+                ]
+              }
+            },
+            {
+              "key": "attempts-readout-text",
+              "type": "FrooxEngine.UIX.Text",
+              "fields": {
+                "Size": 26,
+                "Color": [
+                  0.8,
+                  0.9,
+                  1,
+                  1
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "slot": {
+            "key": "target-readout",
+            "name": "target-readout"
+          },
+          "components": [
+            {
+              "key": "target-readout-rect",
+              "type": "FrooxEngine.UIX.RectTransform",
+              "fields": {
+                "AnchorMin": [
+                  0,
+                  0
+                ],
+                "AnchorMax": [
+                  0,
+                  0
+                ],
+                "OffsetMin": [
+                  308,
+                  257
+                ],
+                "OffsetMax": [
+                  572,
+                  299
+                ]
+              }
+            },
+            {
+              "key": "target-readout-text",
+              "type": "FrooxEngine.UIX.Text",
+              "fields": {
+                "Size": 26,
+                "Color": [
+                  0.8,
+                  0.9,
+                  1,
+                  1
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "slot": {
+            "key": "mode-caption",
+            "name": "Choose what TRY will do"
+          },
+          "components": [
+            {
+              "key": "mode-caption-rect",
+              "type": "FrooxEngine.UIX.RectTransform",
+              "fields": {
+                "AnchorMin": [
+                  0,
+                  0
+                ],
+                "AnchorMax": [
+                  0,
+                  0
+                ],
+                "OffsetMin": [
+                  28,
+                  213
+                ],
+                "OffsetMax": [
+                  572,
+                  247
+                ]
+              }
+            },
+            {
+              "key": "mode-caption-text",
+              "type": "FrooxEngine.UIX.Text",
+              "fields": {
+                "Size": 20,
+                "Color": [
+                  0.8,
+                  0.9,
+                  1,
+                  1
+                ],
+                "Content": "Choose what TRY will do"
+              }
+            }
+          ]
+        },
+        {
+          "slot": {
+            "key": "modes",
+            "name": "Attempt mode"
+          },
+          "components": [
+            {
+              "key": "modes-rect",
+              "type": "FrooxEngine.UIX.RectTransform",
+              "fields": {
+                "AnchorMin": [
+                  0,
+                  0
+                ],
+                "AnchorMax": [
+                  0,
+                  0
+                ],
+                "OffsetMin": [
+                  28,
+                  158
+                ],
+                "OffsetMax": [
+                  572,
+                  204
+                ]
+              }
+            },
+            {
+              "key": "mode",
+              "type": "[FrooxEngine]FrooxEngine.ValueField<int>",
+              "initialFields": {
+                "Value": 1
+              }
+            }
+          ],
+          "children": [
+            {
+              "$recipe": "choice",
+              "$with": {
+                "key": "skip",
+                "rect": {
+                  "AnchorMin": [
+                    0,
+                    0
+                  ],
+                  "AnchorMax": [
+                    0,
+                    0
+                  ],
+                  "OffsetMin": [
+                    0,
+                    0
+                  ],
+                  "OffsetMax": [
+                    172,
+                    46
+                  ]
+                },
+                "valueType": "int",
+                "state": "$member:mode.Value",
+                "option": 0
+              },
+              "components": [
+                {
+                  "key": "skip-image",
+                  "type": "FrooxEngine.UIX.Image",
+                  "fields": {
+                    "InteractionTarget": true
+                  }
+                },
+                {
+                  "key": "skip-highlight",
+                  "type": "[FrooxEngine]FrooxEngine.BooleanValueDriver<colorX>",
+                  "fields": {
+                    "TargetField": "$member:skip-image.Tint",
+                    "FalseValue": [
+                      0.13,
+                      0.19,
+                      0.25,
+                      1
+                    ],
+                    "TrueValue": [
+                      0.15,
+                      0.45,
+                      0.5,
+                      1
+                    ]
+                  }
+                },
+                {
+                  "key": "skip-selected-copy",
+                  "type": "[FrooxEngine]FrooxEngine.ValueCopy<bool>",
+                  "fields": {
+                    "Source": "$member:uix-choice--skip-selected.Value",
+                    "Target": "$member:skip-highlight.State",
+                    "WriteBack": false
+                  }
+                }
+              ],
+              "children": [
+                {
+                  "slot": {
+                    "key": "skip-label",
+                    "name": "SKIP"
+                  },
+                  "components": [
+                    {
+                      "key": "skip-label-rect",
+                      "type": "FrooxEngine.UIX.RectTransform",
+                      "fields": {
+                        "AnchorMin": [
+                          0,
+                          0
+                        ],
+                        "AnchorMax": [
+                          0,
+                          0
+                        ],
+                        "OffsetMin": [
+                          12,
+                          2
+                        ],
+                        "OffsetMax": [
+                          162,
+                          44
+                        ]
+                      }
+                    },
+                    {
+                      "key": "skip-label-text",
+                      "type": "FrooxEngine.UIX.Text",
+                      "fields": {
+                        "Size": 23,
+                        "Color": [
+                          0.8,
+                          0.9,
+                          1,
+                          1
+                        ],
+                        "Content": "SKIP"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "$recipe": "choice",
+              "$with": {
+                "key": "success",
+                "rect": {
+                  "AnchorMin": [
+                    0,
+                    0
+                  ],
+                  "AnchorMax": [
+                    0,
+                    0
+                  ],
+                  "OffsetMin": [
+                    184,
+                    0
+                  ],
+                  "OffsetMax": [
+                    356,
+                    46
+                  ]
+                },
+                "valueType": "int",
+                "state": "$member:mode.Value",
+                "option": 1
+              },
+              "components": [
+                {
+                  "key": "success-image",
+                  "type": "FrooxEngine.UIX.Image",
+                  "fields": {
+                    "InteractionTarget": true
+                  }
+                },
+                {
+                  "key": "success-highlight",
+                  "type": "[FrooxEngine]FrooxEngine.BooleanValueDriver<colorX>",
+                  "fields": {
+                    "TargetField": "$member:success-image.Tint",
+                    "FalseValue": [
+                      0.13,
+                      0.19,
+                      0.25,
+                      1
+                    ],
+                    "TrueValue": [
+                      0.15,
+                      0.45,
+                      0.5,
+                      1
+                    ]
+                  }
+                },
+                {
+                  "key": "success-selected-copy",
+                  "type": "[FrooxEngine]FrooxEngine.ValueCopy<bool>",
+                  "fields": {
+                    "Source": "$member:uix-choice--success-selected.Value",
+                    "Target": "$member:success-highlight.State",
+                    "WriteBack": false
+                  }
+                }
+              ],
+              "children": [
+                {
+                  "slot": {
+                    "key": "success-label",
+                    "name": "SUCCESS"
+                  },
+                  "components": [
+                    {
+                      "key": "success-label-rect",
+                      "type": "FrooxEngine.UIX.RectTransform",
+                      "fields": {
+                        "AnchorMin": [
+                          0,
+                          0
+                        ],
+                        "AnchorMax": [
+                          0,
+                          0
+                        ],
+                        "OffsetMin": [
+                          12,
+                          2
+                        ],
+                        "OffsetMax": [
+                          162,
+                          44
+                        ]
+                      }
+                    },
+                    {
+                      "key": "success-label-text",
+                      "type": "FrooxEngine.UIX.Text",
+                      "fields": {
+                        "Size": 23,
+                        "Color": [
+                          0.8,
+                          0.9,
+                          1,
+                          1
+                        ],
+                        "Content": "SUCCESS"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "$recipe": "choice",
+              "$with": {
+                "key": "fail",
+                "rect": {
+                  "AnchorMin": [
+                    0,
+                    0
+                  ],
+                  "AnchorMax": [
+                    0,
+                    0
+                  ],
+                  "OffsetMin": [
+                    368,
+                    0
+                  ],
+                  "OffsetMax": [
+                    540,
+                    46
+                  ]
+                },
+                "valueType": "int",
+                "state": "$member:mode.Value",
+                "option": 2
+              },
+              "components": [
+                {
+                  "key": "fail-image",
+                  "type": "FrooxEngine.UIX.Image",
+                  "fields": {
+                    "InteractionTarget": true
+                  }
+                },
+                {
+                  "key": "fail-highlight",
+                  "type": "[FrooxEngine]FrooxEngine.BooleanValueDriver<colorX>",
+                  "fields": {
+                    "TargetField": "$member:fail-image.Tint",
+                    "FalseValue": [
+                      0.13,
+                      0.19,
+                      0.25,
+                      1
+                    ],
+                    "TrueValue": [
+                      0.15,
+                      0.45,
+                      0.5,
+                      1
+                    ]
+                  }
+                },
+                {
+                  "key": "fail-selected-copy",
+                  "type": "[FrooxEngine]FrooxEngine.ValueCopy<bool>",
+                  "fields": {
+                    "Source": "$member:uix-choice--fail-selected.Value",
+                    "Target": "$member:fail-highlight.State",
+                    "WriteBack": false
+                  }
+                }
+              ],
+              "children": [
+                {
+                  "slot": {
+                    "key": "fail-label",
+                    "name": "FAIL"
+                  },
+                  "components": [
+                    {
+                      "key": "fail-label-rect",
+                      "type": "FrooxEngine.UIX.RectTransform",
+                      "fields": {
+                        "AnchorMin": [
+                          0,
+                          0
+                        ],
+                        "AnchorMax": [
+                          0,
+                          0
+                        ],
+                        "OffsetMin": [
+                          12,
+                          2
+                        ],
+                        "OffsetMax": [
+                          162,
+                          44
+                        ]
+                      }
+                    },
+                    {
+                      "key": "fail-label-text",
+                      "type": "FrooxEngine.UIX.Text",
+                      "fields": {
+                        "Size": 23,
+                        "Color": [
+                          0.8,
+                          0.9,
+                          1,
+                          1
+                        ],
+                        "Content": "FAIL"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "slot": {
+            "key": "mode-note",
+            "name": "SKIP: no write    SUCCESS: +1    FAIL: no target"
+          },
+          "components": [
+            {
+              "key": "mode-note-rect",
+              "type": "FrooxEngine.UIX.RectTransform",
+              "fields": {
+                "AnchorMin": [
+                  0,
+                  0
+                ],
+                "AnchorMax": [
+                  0,
+                  0
+                ],
+                "OffsetMin": [
+                  28,
+                  115
+                ],
+                "OffsetMax": [
+                  572,
+                  148
+                ]
+              }
+            },
+            {
+              "key": "mode-note-text",
+              "type": "FrooxEngine.UIX.Text",
+              "fields": {
+                "Size": 19,
+                "Color": [
+                  0.8,
+                  0.9,
+                  1,
+                  1
+                ],
+                "Content": "SKIP: no write    SUCCESS: +1    FAIL: no target"
+              }
+            }
+          ]
+        },
+        {
+          "slot": {
+            "key": "try",
+            "name": "TRY"
+          },
+          "components": [
+            {
+              "key": "try-rect",
+              "type": "FrooxEngine.UIX.RectTransform",
+              "fields": {
+                "AnchorMin": [
+                  0,
+                  0
+                ],
+                "AnchorMax": [
+                  0,
+                  0
+                ],
+                "OffsetMin": [
+                  28,
+                  56
+                ],
+                "OffsetMax": [
+                  294,
+                  106
+                ]
+              }
+            },
+            {
+              "key": "try-native",
+              "type": "FrooxEngine.UIX.Button",
+              "fields": {
+                "SendSlotEvents": true,
+                "ColorDrivers": []
+              }
+            },
+            {
+              "key": "try-image",
+              "type": "FrooxEngine.UIX.Image",
+              "fields": {
+                "Tint": [
+                  0.15,
+                  0.3,
+                  0.42,
+                  1
+                ],
+                "InteractionTarget": true
+              }
+            }
+          ],
+          "children": [
+            {
+              "slot": {
+                "key": "try-label",
+                "name": "TRY"
+              },
+              "components": [
+                {
+                  "key": "try-label-rect",
+                  "type": "FrooxEngine.UIX.RectTransform",
+                  "fields": {
+                    "AnchorMin": [
+                      0,
+                      0
+                    ],
+                    "AnchorMax": [
+                      0,
+                      0
+                    ],
+                    "OffsetMin": [
+                      14,
+                      4
+                    ],
+                    "OffsetMax": [
+                      252,
+                      46
+                    ]
+                  }
+                },
+                {
+                  "key": "try-label-text",
+                  "type": "FrooxEngine.UIX.Text",
+                  "fields": {
+                    "Size": 25,
+                    "Color": [
+                      0.8,
+                      0.9,
+                      1,
+                      1
+                    ],
+                    "Content": "TRY"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "slot": {
+            "key": "reset",
+            "name": "RESET COUNTS"
+          },
+          "components": [
+            {
+              "key": "reset-rect",
+              "type": "FrooxEngine.UIX.RectTransform",
+              "fields": {
+                "AnchorMin": [
+                  0,
+                  0
+                ],
+                "AnchorMax": [
+                  0,
+                  0
+                ],
+                "OffsetMin": [
+                  306,
+                  56
+                ],
+                "OffsetMax": [
+                  572,
+                  106
+                ]
+              }
+            },
+            {
+              "key": "reset-native",
+              "type": "FrooxEngine.UIX.Button",
+              "fields": {
+                "SendSlotEvents": true,
+                "ColorDrivers": []
+              }
+            },
+            {
+              "key": "reset-image",
+              "type": "FrooxEngine.UIX.Image",
+              "fields": {
+                "Tint": [
+                  0.15,
+                  0.3,
+                  0.42,
+                  1
+                ],
+                "InteractionTarget": true
+              }
+            }
+          ],
+          "children": [
+            {
+              "slot": {
+                "key": "reset-label",
+                "name": "RESET COUNTS"
+              },
+              "components": [
+                {
+                  "key": "reset-label-rect",
+                  "type": "FrooxEngine.UIX.RectTransform",
+                  "fields": {
+                    "AnchorMin": [
+                      0,
+                      0
+                    ],
+                    "AnchorMax": [
+                      0,
+                      0
+                    ],
+                    "OffsetMin": [
+                      14,
+                      4
+                    ],
+                    "OffsetMax": [
+                      252,
+                      46
+                    ]
+                  }
+                },
+                {
+                  "key": "reset-label-text",
+                  "type": "FrooxEngine.UIX.Text",
+                  "fields": {
+                    "Size": 25,
+                    "Color": [
+                      0.8,
+                      0.9,
+                      1,
+                      1
+                    ],
+                    "Content": "RESET COUNTS"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "slot": {
+            "key": "footer",
+            "name": "Every TRY counts once, including SKIP and FAIL."
+          },
+          "components": [
+            {
+              "key": "footer-rect",
+              "type": "FrooxEngine.UIX.RectTransform",
+              "fields": {
+                "AnchorMin": [
+                  0,
+                  0
+                ],
+                "AnchorMax": [
+                  0,
+                  0
+                ],
+                "OffsetMin": [
+                  28,
+                  15
+                ],
+                "OffsetMax": [
+                  572,
+                  45
+                ]
+              }
+            },
+            {
+              "key": "footer-text",
+              "type": "FrooxEngine.UIX.Text",
+              "fields": {
+                "Size": 19,
+                "Color": [
+                  0.6,
+                  0.75,
+                  0.85,
+                  1
+                ],
+                "Content": "Every TRY counts once, including SKIP and FAIL."
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "slot": {
+        "key": "logic",
+        "name": "Attempt state and display drivers"
+      },
+      "components": [
+        {
+          "key": "attempts",
+          "type": "[FrooxEngine]FrooxEngine.ValueField<int>",
+          "initialFields": {
+            "Value": 0
+          }
+        },
+        {
+          "key": "target",
+          "type": "[FrooxEngine]FrooxEngine.ValueField<float>",
+          "initialFields": {
+            "Value": 0
+          }
+        },
+        {
+          "key": "attempts-format",
+          "type": "[FrooxEngine]FrooxEngine.ValueTextFormatDriver<int>",
+          "fields": {
+            "Source": "$member:attempts.Value",
+            "Text": "$member:attempts-readout-text.Content",
+            "Format": "Attempts: {0}"
+          }
+        },
+        {
+          "key": "target-format",
+          "type": "[FrooxEngine]FrooxEngine.ValueTextFormatDriver<float>",
+          "fields": {
+            "Source": "$member:target.Value",
+            "Text": "$member:target-readout-text.Content",
+            "Format": "Value: {0:0}"
+          }
+        }
+      ]
+    }
+  ]
+}

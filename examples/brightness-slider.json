@@ -1,0 +1,82 @@
+{
+  "schemaVersion": "1",
+  "ownership": { "key": "protoflux-brightness-study" },
+  "slot": { "key": "root", "name": "ResoLoop_Example_BrightnessSlider", "parent": "Root", "position": [0, 1.4, 1.8] },
+  "children": [
+    { "slot": { "key": "front-material-slot", "name": "Front material" }, "components": [
+      { "key": "front-material", "type": "FrooxEngine.UI_UnlitMaterial", "fields": { "Sidedness": "Front", "ZWrite": "On", "ZTest": "LessOrEqual", "OffsetFactor": 1, "OffsetUnits": 100 } }
+    ] },
+    { "slot": { "key": "rear-material-slot", "name": "Rear material" }, "components": [
+      { "key": "rear-material", "type": "FrooxEngine.UI_UnlitMaterial", "fields": { "Sidedness": "Back", "ZWrite": "On", "ZTest": "LessOrEqual", "OffsetFactor": 1, "OffsetUnits": 100 } }
+    ] },
+    { "slot": { "key": "lamp-material-slot", "name": "Lamp material" }, "components": [
+      { "key": "lamp-material", "type": "FrooxEngine.PBS_Metallic", "fields": { "AlbedoColor": [0.15, 0.15, 0.15, 1], "Metallic": 0, "Smoothness": 0.35 } }
+    ] },
+    { "slot": { "key": "lamp", "name": "Lamp", "position": [0.85, 0.1, 0] }, "components": [
+      { "key": "lamp-mesh", "type": "FrooxEngine.SphereMesh", "fields": { "Radius": 0.18 } },
+      { "key": "lamp-renderer", "type": "FrooxEngine.MeshRenderer", "fields": { "Mesh": "$component:lamp-mesh", "Materials": ["$component:lamp-material"] } },
+      { "key": "lamp-light", "type": "FrooxEngine.Light", "fields": { "Range": 2, "Color": [1, 1, 1, 1] } }
+    ] },
+    { "slot": { "key": "canvas", "name": "Brightness control", "scale": [0.0025, 0.0025, 0.0025] },
+      "components": [
+        { "key": "canvas-rect", "type": "FrooxEngine.UIX.RectTransform" },
+        { "key": "canvas-ui", "type": "FrooxEngine.UIX.Canvas", "fields": { "Size": [560, 280], "UnitScale": 1, "PixelScale": 1 } }
+      ],
+      "children": [
+        { "slot": { "key": "background", "name": "Background" }, "components": [
+          { "key": "background-rect", "type": "FrooxEngine.UIX.RectTransform" },
+          { "key": "background-image", "type": "FrooxEngine.UIX.Image", "fields": { "Tint": [0.025, 0.04, 0.055, 1], "Material": "$component:front-material", "InteractionTarget": false } }
+        ], "children": [
+          { "slot": { "key": "rear", "name": "Rear cover" }, "components": [
+            { "key": "rear-rect", "type": "FrooxEngine.UIX.RectTransform" },
+            { "key": "rear-image", "type": "FrooxEngine.UIX.Image", "fields": { "Tint": [0.025, 0.04, 0.055, 1], "Material": "$component:rear-material", "InteractionTarget": false } }
+          ] }
+        ] },
+        { "slot": { "key": "heading", "name": "Heading" }, "components": [
+          { "key": "heading-rect", "type": "FrooxEngine.UIX.RectTransform", "fields": { "AnchorMin": [0, 1], "AnchorMax": [1, 1], "OffsetMin": [28, -70], "OffsetMax": [-28, -22] } },
+          { "key": "heading-text", "type": "FrooxEngine.UIX.Text", "fields": { "Content": "BRIGHTNESS / 01", "Size": 28, "Color": [0.8, 0.95, 1, 1] } }
+        ] },
+        { "slot": { "key": "readout", "name": "Derived percentage" }, "components": [
+          { "key": "readout-rect", "type": "FrooxEngine.UIX.RectTransform", "fields": { "AnchorMin": [0, 1], "AnchorMax": [1, 1], "OffsetMin": [28, -132], "OffsetMax": [-28, -76] } },
+          { "key": "readout-text", "type": "FrooxEngine.UIX.Text", "fields": { "Size": 44, "Color": [1, 1, 1, 1] } }
+        ] },
+        { "$recipe": "slider", "$with": { "key": "brightness", "rect": { "AnchorMin": [0, 0], "AnchorMax": [1, 0], "OffsetMin": [40, 72], "OffsetMax": [-40, 108] }, "min": 0, "max": 1, "initial": 0.5, "direction": "Horizontal", "anchorOffset": [0, 0.5], "handle": "handle-rect" },
+          "components": [
+            { "key": "slider-hit", "type": "FrooxEngine.UIX.Image", "fields": { "Tint": [0.09, 0.14, 0.18, 1], "InteractionTarget": true } }
+          ],
+          "children": [
+            { "slot": { "key": "handle", "name": "Slider handle" }, "components": [
+              { "key": "handle-rect", "type": "FrooxEngine.UIX.RectTransform", "fields": { "OffsetMin": [-10, -23], "OffsetMax": [10, 23] } },
+              { "key": "handle-image", "type": "FrooxEngine.UIX.Image", "fields": { "Tint": [0.3, 0.85, 1, 1], "InteractionTarget": false } }
+            ] }
+          ]
+        },
+        { "slot": { "key": "footer", "name": "Shared input note" }, "components": [
+          { "key": "footer-rect", "type": "FrooxEngine.UIX.RectTransform", "fields": { "AnchorMin": [0, 0], "AnchorMax": [1, 0], "OffsetMin": [28, 16], "OffsetMax": [-28, 52] } },
+          { "key": "footer-text", "type": "FrooxEngine.UIX.Text", "fields": { "Content": "Shared input  /  Drag to compare 0 - 100 %", "Size": 18, "Color": [0.55, 0.7, 0.8, 1] } }
+        ] }
+      ]
+    },
+    { "slot": { "key": "logic", "name": "ProtoFlux - BrightnessSlider", "position": [0, -0.65, 0] } }
+  ],
+  "tests": [
+    { "name": "Zero input", "probe": { "kind": "set-member", "target": "$member:uix-slider--brightness-slider.Value", "value": 0, "safe": true, "restore": true }, "assertions": [
+      { "target": "$member:lamp-light.Intensity", "expected": 0, "phase": "after" },
+      { "target": "$member:lamp-material.EmissiveColor", "expected": { "r": 0, "g": 0, "b": 0, "a": 1, "profile": "Linear" }, "phase": "after" },
+      { "target": "$member:readout-text.Content", "expected": "0 %", "phase": "after" },
+      { "target": "$member:handle-rect.AnchorMin", "expected": [0, 0.5], "phase": "after" }
+    ] },
+    { "name": "Midpoint input", "probe": { "kind": "set-member", "target": "$member:uix-slider--brightness-slider.Value", "value": 0.5, "safe": true, "restore": true }, "assertions": [
+      { "target": "$member:lamp-light.Intensity", "expected": 2, "phase": "after" },
+      { "target": "$member:lamp-material.EmissiveColor", "expected": { "r": 0.5, "g": 0.5, "b": 0.5, "a": 1, "profile": "Linear" }, "phase": "after" },
+      { "target": "$member:readout-text.Content", "expected": "50 %", "phase": "after" },
+      { "target": "$member:handle-rect.AnchorMin", "expected": [0.5, 0.5], "phase": "after" }
+    ] },
+    { "name": "Maximum input", "probe": { "kind": "set-member", "target": "$member:uix-slider--brightness-slider.Value", "value": 1, "safe": true, "restore": true }, "assertions": [
+      { "target": "$member:lamp-light.Intensity", "expected": 4, "phase": "after" },
+      { "target": "$member:lamp-material.EmissiveColor", "expected": { "r": 1, "g": 1, "b": 1, "a": 1, "profile": "Linear" }, "phase": "after" },
+      { "target": "$member:readout-text.Content", "expected": "100 %", "phase": "after" },
+      { "target": "$member:handle-rect.AnchorMin", "expected": [1, 0.5], "phase": "after" }
+    ] }
+  ]
+}

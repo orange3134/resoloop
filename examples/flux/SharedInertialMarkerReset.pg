@@ -1,0 +1,24 @@
+module SharedInertialMarkerReset
+
+in Operator: User mutable
+in Running: bool mutable
+in Acceleration: float mutable
+in Position: float3 mutable
+in Velocity: float mutable
+
+where {
+    // Read-only default-null Store; see the SDK workaround in SharedInertialMarker.
+    store _noUser: User;
+    _reset = impulse {
+        bind _stopped = (Running <- false).OnWritten;
+        bind _positionReset = (Position <- Pack_Float3(0.0, 0.0, 0.0)).OnWritten;
+        bind _velocityReset = (Velocity <- 0.0).OnWritten;
+        bind _accelerationReset = (Acceleration <- 0.0).OnWritten;
+        Operator <- _noUser;
+    };
+    OnStart(OnlyHost=true, Trigger=_reset);
+    switch UserLeft(OnlyHost=true) | OnLeft _left |> impulse {
+        // User reference may already have been cleared when deletion is observed.
+        if Running and (Operator == _left.LeftUser or IsNull<User>(Operator)) then _reset;
+    };
+}

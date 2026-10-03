@@ -41,14 +41,14 @@ Resonite本体のデコンパイルはビルド・実行の必須依存ではあ
 ## Installation
 
 ~~~powershell
-dotnet tool install --global ResoLoop --version 0.1.0-preview.15
+dotnet tool install --global ResoLoop --version 0.1.0-preview.16
 resoloop --version
 ~~~
 
 Preview版の更新:
 
 ~~~powershell
-dotnet tool update --global ResoLoop --version 0.1.0-preview.15
+dotnet tool update --global ResoLoop --version 0.1.0-preview.16
 ~~~
 
 release自動化とnuget.org Trusted Publishingの設定は[docs/RELEASING.md](docs/RELEASING.md)を参照してください。
@@ -59,7 +59,7 @@ release自動化とnuget.org Trusted Publishingの設定は[docs/RELEASING.md](d
 dotnet build ResoLoop.slnx
 dotnet test ResoLoop.slnx --no-build
 dotnet pack src/RLoop.Cli/RLoop.Cli.csproj -c Release -o artifacts
-dotnet tool update --global --add-source .\artifacts ResoLoop --version 0.1.0-preview.15
+dotnet tool update --global --add-source .\artifacts ResoLoop --version 0.1.0-preview.16
 ~~~
 
 開発中は次でも実行できます。
@@ -251,6 +251,16 @@ schema 2のexact Slot名保持、同名兄弟・不正assetの事前検証、ラ
 diff/planはofflineとruntime Reflectionの検証を内部で実行します。通常の変更ループでvalidateの両モードを先に重ねる必要はありません。単独validateはオフライン作業や診断用に維持し、apply直前の再検証も維持します。要約表示によって検証・観測範囲や削除の`--yes`要件は変わりません。
 
 ## Flux-SDK
+
+処理を実装する前に、目的に合う既存ComponentをReflectionで確認します。直接的で読みやすく実現できるならComponentを優先し、Componentでは実現できない処理や回りくどい構成になる部分にはFluxを使います。併用も可能です。Slot数・Component数に加え、同期範囲、出力の制御権、後からの読みやすさを比較します。[明るさスライダーの比較と評価](docs/PROTOFLUX-BRIGHTNESS-STUDY.md)に具体例を記録しています。
+
+[遅延して閉じるドア](docs/DELAYED-DOOR-STUDY.md)は、押下時の期限書き込みと表示にComponent、時刻の加算・比較に7ノード、ホスト限定の起動時初期化に5ノードのFluxを使う併用例です。再操作では期限を上書きし、古い閉鎖処理を残しません。保存期限とワールド時刻の寿命を揃えるため、起動時に期限を0へ戻します。実機での時間経過プローブと、未確認の操作・同期・保存再読込を分けて記録しています。
+
+[慣性マーカー](docs/INERTIAL-MARKER-STUDY.md)は、LocalUpdateで継続計算する対照例です。操作設定を共有し、各ユーザーのStoreで速度・位置を積分してローカル表示をDriveします。操作・表示はComponent、運動計算とホスト限定の初期化は別々のFluxにしています。
+
+[使用者が計算する共有版](docs/SHARED-INERTIAL-MARKER-STUDY.md)では、STARTを押した使用者をUpdateに指定し、位置・速度を共有フィールドへWriteします。同じ運動でも目的によって実行者と状態の置き場所が変わる比較例です。操作は誰でも可能で、ユーザーから複数人試験で問題なしとの評価を受けました。参加・退出や保存再読込など個別条件の実施範囲は評価記録で区別しています。
+
+[順序が必要な試行カウンター](docs/ORDERED-ATTEMPT-STUDY.md)は、条件付きWriteを試した後、成功・スキップ・失敗のいずれでも試行を記録する対照例です。2つの処理をつなぐSequenceを1個だけ使い、記録やリセットの依存するWriteは`bind _uniqueName = (Target <- value).OnWritten;`で接続します。6ケースの実機プローブと、実際のボタン操作の評価を分けて記録しています。
 
 ~~~powershell
 dotnet tool install --global Papaltine.FluxSDK --version 1.9.0

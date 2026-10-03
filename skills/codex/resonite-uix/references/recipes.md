@@ -1,5 +1,7 @@
 # Structural UIX recipes
 
+Choose the composition boundary before repeating recipes. The single-target boolean-state recipe is useful on its own, but repeating it for the same source adds a ValueCopy and a Slot per output. For two or more destinations without WriteBack, prefer one ValueMultiDriver<T> and group related state/drivers on one logic Slot; use its Value as owned state or feed it once from an external source. See [interaction and migration](interaction-and-migration.md) for the observed shared-button wiring and state-preserving consolidation. Keep independent controls and their layout boundaries separate. Existing applied recipe instances need an explicit reviewed migration rather than automatic flattening.
+
 Use recipes for recurring native wiring, while designing visuals for the current request. They contain no Image, Text, font, sprite, material, color, fixed dimensions, or pressed animation. Recipe `rect`, `off` and `on` values are supplied by the caller. A recipe alone is not a finished visible control.
 
 For new content, use `$recipe` directly in `children`; no export/include or prototype-copying helper is needed. `$with` takes the parameters in the table below. The compiler gives built-in instances the prefix `uix-<recipe>--<key>`: replace `<key>` in the port table with that entire prefix. Shared state and a control may use the same logical key without colliding. All parameters are required; missing and unknown names fail together before live mutation.

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "1",
+  "projectDirectory": ".",
+  "parent": "$slot:logic",
+  "worldState": "../../.resoloop/state/delayed-door.json",
+  "deployState": "../../.resoloop/flux-state/delayed-door.json",
+  "modules": [
+    {
+      "name": "delayed-door",
+      "source": "DelayedDoor.pg",
+      "module": "DelayedDoor",
+      "bindings": {
+        "CloseAt": {
+          "target": "$member:close-at.Value",
+          "mode": "source"
+        },
+        "NextCloseAt": {
+          "target": "$member:open-action.SetValue",
+          "mode": "drive"
+        },
+        "IsOpen": {
+          "target": "$member:open-state.Value",
+          "mode": "drive"
+        }
+      }
+    },
+    {
+      "name": "delayed-door-reset",
+      "source": "DelayedDoorReset.pg",
+      "module": "DelayedDoorReset",
+      "dependsOn": [
+        "delayed-door"
+      ],
+      "bindings": {
+        "CloseAt": {
+          "target": "$member:close-at.Value",
+          "mode": "source"
+        }
+      }
+    }
+  ]
+}

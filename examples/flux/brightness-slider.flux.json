@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1",
+  "projectDirectory": ".",
+  "parent": "$slot:logic",
+  "worldState": "../../.resoloop/state/brightness-slider.json",
+  "deployState": "../../.resoloop/flux-state/brightness-slider.json",
+  "modules": [
+    {
+      "name": "brightness-slider",
+      "source": "BrightnessSlider.pg",
+      "module": "BrightnessSlider",
+      "bindings": {
+        "Brightness": { "target": "$member:uix-slider--brightness-slider.Value", "mode": "source" },
+        "LightIntensity": { "target": "$member:lamp-light.Intensity", "mode": "drive" },
+        "EmissionColor": { "target": "$member:lamp-material.EmissiveColor", "mode": "drive" },
+        "Readout": { "target": "$member:readout-text.Content", "mode": "drive" }
+      }
+    }
+  ]
+}

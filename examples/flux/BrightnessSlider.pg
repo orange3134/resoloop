@@ -1,0 +1,15 @@
+module BrightnessSlider
+
+// Shared input: the native slider's non-driven Value field.
+// These outputs exclusively drive presentation fields on each user.
+in Brightness: float
+out LightIntensity: float
+out EmissionColor: colorX
+out Readout: string
+
+where {
+    _level = Clamp01_Float(Brightness);
+    LightIntensity = _level * 4.0;
+    EmissionColor = Pack_ColorX(R=_level, G=_level, B=_level, A=1.0);
+    Readout = ToString_Float(V=_level * 100.0, Format="0' %'");
+}

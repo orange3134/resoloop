@@ -1,0 +1,74 @@
+{
+  "schemaVersion": "1",
+  "projectDirectory": ".",
+  "parent": "$slot:logic",
+  "worldState": "../../.resoloop/state/shared-inertial-marker.json",
+  "deployState": "../../.resoloop/flux-state/shared-inertial-marker.json",
+  "modules": [
+    {
+      "source": "SharedInertialMarker.pg",
+      "bindings": {
+        "Running": {
+          "target": "$member:running.Value",
+          "mode": "source"
+        },
+        "Acceleration": {
+          "target": "$member:uix-slider--force-slider.Value",
+          "mode": "source"
+        },
+        "Operator": {
+          "target": "$member:operator.Reference",
+          "mode": "source"
+        },
+        "OperatorLabel": {
+          "target": "$member:footer-text.Content",
+          "mode": "drive"
+        },
+        "RunButton": {
+          "target": "$component:run-button-native",
+          "mode": "source"
+        },
+        "Velocity": {
+          "target": "$member:velocity.Value",
+          "mode": "source"
+        },
+        "Position": {
+          "target": "$member:position-output.Value",
+          "mode": "source"
+        }
+      },
+      "module": "SharedInertialMarker",
+      "name": "shared-inertial-marker"
+    },
+    {
+      "source": "SharedInertialMarkerReset.pg",
+      "bindings": {
+        "Operator": {
+          "target": "$member:operator.Reference",
+          "mode": "source"
+        },
+        "Velocity": {
+          "target": "$member:velocity.Value",
+          "mode": "source"
+        },
+        "Running": {
+          "target": "$member:running.Value",
+          "mode": "source"
+        },
+        "Acceleration": {
+          "target": "$member:uix-slider--force-slider.Value",
+          "mode": "source"
+        },
+        "Position": {
+          "target": "$member:position-output.Value",
+          "mode": "source"
+        }
+      },
+      "module": "SharedInertialMarkerReset",
+      "name": "shared-inertial-marker-reset",
+      "dependsOn": [
+        "shared-inertial-marker"
+      ]
+    }
+  ]
+}

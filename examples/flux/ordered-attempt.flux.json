@@ -1,0 +1,40 @@
+{
+  "schemaVersion": "1",
+  "projectDirectory": ".",
+  "parent": "$slot:logic",
+  "worldState": "../../.resoloop/state/ordered-attempt.json",
+  "deployState": "../../.resoloop/flux-state/ordered-attempt.json",
+  "modules": [
+    {
+      "name": "ordered-attempt",
+      "source": "OrderedAttempt.pg",
+      "module": "OrderedAttempt",
+      "bindings": {
+        "Mode": {
+          "target": "$member:mode.Value",
+          "mode": "source"
+        },
+        "Target": {
+          "target": "$member:target.Value",
+          "mode": "source"
+        },
+        "Attempts": {
+          "target": "$member:attempts.Value",
+          "mode": "source"
+        },
+        "Summary": {
+          "target": "$member:summary-text.Content",
+          "mode": "source"
+        },
+        "TryButton": {
+          "target": "$component:try-native",
+          "mode": "source"
+        },
+        "ResetButton": {
+          "target": "$component:reset-native",
+          "mode": "source"
+        }
+      }
+    }
+  ]
+}

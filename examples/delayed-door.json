@@ -1,0 +1,730 @@
+{
+  "schemaVersion": "1",
+  "ownership": {
+    "key": "delayed-door-study"
+  },
+  "slot": {
+    "key": "root",
+    "name": "ResoLoop_Example_DelayedDoor",
+    "parent": "Root",
+    "position": [
+      5.5,
+      0,
+      2
+    ]
+  },
+  "children": [
+    {
+      "slot": {
+        "key": "front-material-slot",
+        "name": "Front material"
+      },
+      "components": [
+        {
+          "key": "front-material",
+          "type": "FrooxEngine.UI_UnlitMaterial",
+          "fields": {
+            "Sidedness": "Front",
+            "ZWrite": "On",
+            "ZTest": "LessOrEqual",
+            "OffsetFactor": 1,
+            "OffsetUnits": 100
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "key": "rear-material-slot",
+        "name": "Rear material"
+      },
+      "components": [
+        {
+          "key": "rear-material",
+          "type": "FrooxEngine.UI_UnlitMaterial",
+          "fields": {
+            "Sidedness": "Back",
+            "ZWrite": "On",
+            "ZTest": "LessOrEqual",
+            "OffsetFactor": 1,
+            "OffsetUnits": 100
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "key": "cube-provider",
+        "name": "Shared unit box"
+      },
+      "components": [
+        {
+          "key": "cube",
+          "type": "FrooxEngine.BoxMesh",
+          "fields": {
+            "Size": [
+              1,
+              1,
+              1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "key": "frame-material-provider",
+        "name": "Frame material"
+      },
+      "components": [
+        {
+          "key": "frame-material",
+          "type": "FrooxEngine.PBS_Metallic",
+          "fields": {
+            "AlbedoColor": [
+              0.08,
+              0.105,
+              0.13,
+              1
+            ],
+            "Metallic": 0.6,
+            "Smoothness": 0.4
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "key": "door-material-provider",
+        "name": "Door material"
+      },
+      "components": [
+        {
+          "key": "door-material",
+          "type": "FrooxEngine.PBS_Metallic",
+          "fields": {
+            "AlbedoColor": [
+              0.12,
+              0.43,
+              0.53,
+              1
+            ],
+            "Metallic": 0.35,
+            "Smoothness": 0.45
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "key": "left-jamb",
+        "name": "Left jamb",
+        "position": [
+          -0.67,
+          1.13,
+          0
+        ],
+        "scale": [
+          0.16,
+          2.26,
+          0.26
+        ]
+      },
+      "components": [
+        {
+          "key": "left-jamb-renderer",
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$component:cube",
+            "Materials": [
+              "$component:frame-material"
+            ]
+          }
+        },
+        {
+          "key": "left-jamb-collider",
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              1,
+              1,
+              1
+            ],
+            "CharacterCollider": true
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "key": "right-jamb",
+        "name": "Right jamb",
+        "position": [
+          0.67,
+          1.13,
+          0
+        ],
+        "scale": [
+          0.16,
+          2.26,
+          0.26
+        ]
+      },
+      "components": [
+        {
+          "key": "right-jamb-renderer",
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$component:cube",
+            "Materials": [
+              "$component:frame-material"
+            ]
+          }
+        },
+        {
+          "key": "right-jamb-collider",
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              1,
+              1,
+              1
+            ],
+            "CharacterCollider": true
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "key": "lintel",
+        "name": "Header",
+        "position": [
+          0,
+          2.34,
+          0
+        ],
+        "scale": [
+          1.5,
+          0.16,
+          0.26
+        ]
+      },
+      "components": [
+        {
+          "key": "lintel-renderer",
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$component:cube",
+            "Materials": [
+              "$component:frame-material"
+            ]
+          }
+        },
+        {
+          "key": "lintel-collider",
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              1,
+              1,
+              1
+            ],
+            "CharacterCollider": true
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "key": "door",
+        "name": "Sliding door",
+        "scale": [
+          1.16,
+          2.24,
+          0.12
+        ]
+      },
+      "components": [
+        {
+          "key": "door-renderer",
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$component:cube",
+            "Materials": [
+              "$component:door-material"
+            ]
+          }
+        },
+        {
+          "key": "door-collider",
+          "type": "FrooxEngine.BoxCollider",
+          "fields": {
+            "Size": [
+              1,
+              1,
+              1
+            ],
+            "CharacterCollider": true
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "key": "canvas",
+        "name": "Door control",
+        "scale": [
+          0.002,
+          0.002,
+          0.002
+        ],
+        "position": [
+          -1.45,
+          1.4,
+          -0.2
+        ]
+      },
+      "components": [
+        {
+          "key": "canvas-rect",
+          "type": "FrooxEngine.UIX.RectTransform"
+        },
+        {
+          "key": "canvas-ui",
+          "type": "FrooxEngine.UIX.Canvas",
+          "fields": {
+            "Size": [
+              560,
+              280
+            ],
+            "UnitScale": 1,
+            "PixelScale": 1
+          }
+        }
+      ],
+      "children": [
+        {
+          "slot": {
+            "key": "background",
+            "name": "Background"
+          },
+          "components": [
+            {
+              "key": "background-rect",
+              "type": "FrooxEngine.UIX.RectTransform"
+            },
+            {
+              "key": "background-image",
+              "type": "FrooxEngine.UIX.Image",
+              "fields": {
+                "Tint": [
+                  0.025,
+                  0.04,
+                  0.055,
+                  1
+                ],
+                "Material": "$component:front-material",
+                "InteractionTarget": false
+              }
+            }
+          ],
+          "children": [
+            {
+              "slot": {
+                "key": "rear",
+                "name": "Rear cover"
+              },
+              "components": [
+                {
+                  "key": "rear-rect",
+                  "type": "FrooxEngine.UIX.RectTransform"
+                },
+                {
+                  "key": "rear-image",
+                  "type": "FrooxEngine.UIX.Image",
+                  "fields": {
+                    "Tint": [
+                      0.025,
+                      0.04,
+                      0.055,
+                      1
+                    ],
+                    "Material": "$component:rear-material",
+                    "InteractionTarget": false
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "slot": {
+            "key": "heading",
+            "name": "Heading"
+          },
+          "components": [
+            {
+              "key": "heading-rect",
+              "type": "FrooxEngine.UIX.RectTransform",
+              "fields": {
+                "AnchorMin": [
+                  0,
+                  1
+                ],
+                "AnchorMax": [
+                  1,
+                  1
+                ],
+                "OffsetMin": [
+                  28,
+                  -70
+                ],
+                "OffsetMax": [
+                  -28,
+                  -22
+                ]
+              }
+            },
+            {
+              "key": "heading-text",
+              "type": "FrooxEngine.UIX.Text",
+              "fields": {
+                "Content": "DELAYED DOOR / 03",
+                "Size": 28,
+                "Color": [
+                  0.8,
+                  0.95,
+                  1,
+                  1
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "slot": {
+            "key": "readout",
+            "name": "Derived door state"
+          },
+          "components": [
+            {
+              "key": "readout-rect",
+              "type": "FrooxEngine.UIX.RectTransform",
+              "fields": {
+                "AnchorMin": [
+                  0,
+                  1
+                ],
+                "AnchorMax": [
+                  1,
+                  1
+                ],
+                "OffsetMin": [
+                  28,
+                  -132
+                ],
+                "OffsetMax": [
+                  -28,
+                  -76
+                ]
+              }
+            },
+            {
+              "key": "readout-text",
+              "type": "FrooxEngine.UIX.Text",
+              "fields": {
+                "Size": 44,
+                "Color": [
+                  1,
+                  1,
+                  1,
+                  1
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "slot": {
+            "key": "footer",
+            "name": "Shared input note"
+          },
+          "components": [
+            {
+              "key": "footer-rect",
+              "type": "FrooxEngine.UIX.RectTransform",
+              "fields": {
+                "AnchorMin": [
+                  0,
+                  0
+                ],
+                "AnchorMax": [
+                  1,
+                  0
+                ],
+                "OffsetMin": [
+                  28,
+                  16
+                ],
+                "OffsetMax": [
+                  -28,
+                  52
+                ]
+              }
+            },
+            {
+              "key": "footer-text",
+              "type": "FrooxEngine.UIX.Text",
+              "fields": {
+                "Content": "Closes 3 s after the last press",
+                "Size": 18,
+                "Color": [
+                  0.55,
+                  0.7,
+                  0.8,
+                  1
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "components": [
+            {
+              "key": "uix-button--open-rect",
+              "type": "FrooxEngine.UIX.RectTransform",
+              "fields": {
+                "AnchorMin": [
+                  0,
+                  0
+                ],
+                "AnchorMax": [
+                  1,
+                  0
+                ],
+                "OffsetMin": [
+                  40,
+                  66
+                ],
+                "OffsetMax": [
+                  -40,
+                  118
+                ]
+              }
+            },
+            {
+              "key": "uix-button--open-button",
+              "type": "FrooxEngine.UIX.Button",
+              "fields": {
+                "ColorDrivers": [],
+                "SendSlotEvents": true
+              }
+            },
+            {
+              "key": "button-face",
+              "type": "FrooxEngine.UIX.Image",
+              "fields": {
+                "Tint": [
+                  0.12,
+                  0.35,
+                  0.45,
+                  1
+                ],
+                "InteractionTarget": true
+              }
+            },
+            {
+              "key": "open-action",
+              "type": "[FrooxEngine]FrooxEngine.ButtonValueSet<double>",
+              "fields": {
+                "TargetValue": "$member:close-at.Value"
+              }
+            }
+          ],
+          "children": [
+            {
+              "slot": {
+                "key": "button-label",
+                "name": "Button label"
+              },
+              "components": [
+                {
+                  "key": "button-label-rect",
+                  "type": "FrooxEngine.UIX.RectTransform",
+                  "fields": {
+                    "OffsetMin": [
+                      20,
+                      3
+                    ],
+                    "OffsetMax": [
+                      -20,
+                      -3
+                    ]
+                  }
+                },
+                {
+                  "key": "button-label-text",
+                  "type": "FrooxEngine.UIX.Text",
+                  "fields": {
+                    "Content": "OPEN / EXTEND 3 s",
+                    "Size": 28,
+                    "Color": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "slot": {
+            "key": "uix-button--open",
+            "name": "Open or extend"
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "key": "logic",
+        "name": "Deadline and door drivers"
+      },
+      "components": [
+        {
+          "key": "close-at",
+          "type": "[FrooxEngine]FrooxEngine.ValueField<double>",
+          "initialFields": {
+            "Value": 0
+          }
+        },
+        {
+          "key": "open-state",
+          "type": "[FrooxEngine]FrooxEngine.ValueMultiDriver<bool>",
+          "fields": {
+            "Drives": [
+              "$member:door-position.State",
+              "$member:door-label.State"
+            ]
+          }
+        },
+        {
+          "key": "door-position",
+          "type": "[FrooxEngine]FrooxEngine.BooleanValueDriver<float3>",
+          "fields": {
+            "TargetField": "$slot-member:door.Position",
+            "FalseValue": [
+              0,
+              1.12,
+              0
+            ],
+            "TrueValue": [
+              1.3,
+              1.12,
+              0
+            ]
+          }
+        },
+        {
+          "key": "door-label",
+          "type": "[FrooxEngine]FrooxEngine.BooleanValueDriver<string>",
+          "fields": {
+            "TargetField": "$member:readout-text.Content",
+            "FalseValue": "CLOSED",
+            "TrueValue": "OPEN"
+          }
+        }
+      ]
+    }
+  ],
+  "tests": [
+    {
+      "name": "Expired deadline",
+      "probe": {
+        "kind": "set-member",
+        "target": "$member:close-at.Value",
+        "value": 0,
+        "safe": true,
+        "restore": true
+      },
+      "assertions": [
+        {
+          "target": "$member:open-state.Value",
+          "expected": false,
+          "phase": "after"
+        },
+        {
+          "target": "$member:readout-text.Content",
+          "expected": "CLOSED",
+          "phase": "after"
+        },
+        {
+          "target": "$member:door-position.State",
+          "expected": false,
+          "phase": "after"
+        }
+      ]
+    },
+    {
+      "name": "Future deadline",
+      "probe": {
+        "kind": "set-member",
+        "target": "$member:close-at.Value",
+        "value": 1000000000000.0,
+        "safe": true,
+        "restore": true
+      },
+      "assertions": [
+        {
+          "target": "$member:open-state.Value",
+          "expected": true,
+          "phase": "after"
+        },
+        {
+          "target": "$member:readout-text.Content",
+          "expected": "OPEN",
+          "phase": "after"
+        },
+        {
+          "target": "$member:door-position.State",
+          "expected": true,
+          "phase": "after"
+        }
+      ]
+    }
+  ],
+  "cameras": {
+    "front": {
+      "position": [
+        5,
+        1.6,
+        -2.4
+      ],
+      "target": [
+        5,
+        1.25,
+        2
+      ],
+      "fieldOfView": 45,
+      "width": 1280,
+      "height": 800
+    },
+    "rear": {
+      "position": [
+        5,
+        1.6,
+        6.4
+      ],
+      "target": [
+        5,
+        1.25,
+        2
+      ],
+      "fieldOfView": 45,
+      "width": 1280,
+      "height": 800
+    }
+  }
+}

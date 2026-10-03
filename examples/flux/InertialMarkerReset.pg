@@ -1,0 +1,12 @@
+module InertialMarkerReset
+
+// Host initializes shared controls; local Stores start at zero for each user.
+in Running: bool mutable
+in Acceleration: float mutable
+
+where {
+    OnStart(OnlyHost=true, Trigger=impulse {
+        Running <- false;
+        Acceleration <- 0.0;
+    });
+}
