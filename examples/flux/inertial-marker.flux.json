@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "1",
+  "projectDirectory": ".",
+  "parent": "$slot:logic",
+  "worldState": "../../.resoloop/state/inertial-marker.json",
+  "deployState": "../../.resoloop/flux-state/inertial-marker.json",
+  "modules": [
+    {
+      "name": "inertial-marker",
+      "source": "InertialMarker.pg",
+      "module": "InertialMarker",
+      "bindings": {
+        "Running": {
+          "target": "$member:running.Value",
+          "mode": "source"
+        },
+        "Acceleration": {
+          "target": "$member:uix-slider--force-slider.Value",
+          "mode": "source"
+        },
+        "Position": {
+          "target": "$member:position-output.Value",
+          "mode": "drive"
+        },
+        "Velocity": {
+          "target": "$member:velocity.Value",
+          "mode": "drive"
+        }
+      }
+    },
+    {
+      "name": "inertial-marker-reset",
+      "source": "InertialMarkerReset.pg",
+      "module": "InertialMarkerReset",
+      "dependsOn": [
+        "inertial-marker"
+      ],
+      "bindings": {
+        "Running": {
+          "target": "$member:running.Value",
+          "mode": "source"
+        },
+        "Acceleration": {
+          "target": "$member:uix-slider--force-slider.Value",
+          "mode": "source"
+        }
+      }
+    }
+  ]
+}

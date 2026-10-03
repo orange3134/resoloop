@@ -1,0 +1,45 @@
+module InertialMarker
+
+// Shared controls; position/velocity are private to each user's simulation.
+in Running: bool
+in Acceleration: float
+out Position: float3
+out Velocity: float
+
+where {
+    store _position: float;
+    store _velocity: float;
+    store _wasRunning: bool;
+    local _dt: float;
+    local _nextVelocity: float;
+    local _nextPosition: float;
+
+    _update = impulse {
+        if Running then impulse {
+            // Semi-implicit integration. Cap a stalled frame instead of jumping.
+            _dt <- ValueClamp<float>(DeltaTime, 0.0, 0.05);
+            _nextVelocity <- ValueClamp<float>(
+                (_velocity + Acceleration * _dt) * (1.0 - 0.6 * _dt),
+                -1.5, 1.5);
+            _nextPosition <- _position + _nextVelocity * _dt;
+            if _nextPosition > 0.7 then impulse {
+                _nextPosition <- 0.7;
+                _nextVelocity <- -_nextVelocity * 0.65;
+            } else if _nextPosition < -0.7 then impulse {
+                _nextPosition <- -0.7;
+                _nextVelocity <- -_nextVelocity * 0.65;
+            };
+            _velocity <- _nextVelocity;
+            _position <- _nextPosition;
+        } else if _wasRunning then impulse {
+            _position <- 0.0;
+            _velocity <- 0.0;
+        };
+        _wasRunning <- Running;
+    };
+    LocalUpdate(OnUpdate=_update);
+
+    // Store writes do not invalidate cached dataflow values on their own.
+    Position = Pack_Float3(X=ContinuouslyChangingValueRelay<float>(_position), Y=0.0, Z=0.0);
+    Velocity = ContinuouslyChangingValueRelay<float>(_velocity);
+}

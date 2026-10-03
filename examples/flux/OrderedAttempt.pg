@@ -1,0 +1,44 @@
+module OrderedAttempt
+
+in Mode: int
+in Target: float mutable
+in Attempts: int mutable
+in Summary: string mutable
+in TryButton: FrooxEngine.UIX.Button element
+in ResetButton: FrooxEngine.UIX.Button element
+
+where {
+    // Impulse-local result: never synchronized until the record step.
+    local _result: string;
+
+    _attempt = if Mode == 0 then _result <- "SKIPPED"
+        else if Mode == 2 then
+            // Deliberately missing Variable demonstrates a real OnFail.
+            ValueWrite<float>(Value=Target + 1.0,
+                OnWritten=_result <- "WRITTEN",
+                OnFail=_result <- "WRITE FAILED")
+        else switch ValueIncrement<FrooxEngine.ProtoFlux.FrooxEngineContext,float>(Variable=Target)
+            | OnWritten |> _result <- "WRITTEN"
+            | OnFail |> _result <- "WRITE FAILED";
+
+    _record = impulse {
+        bind _counted = ValueIncrement<FrooxEngine.ProtoFlux.FrooxEngineContext,int>(Variable=Attempts).OnWritten;
+        Summary <- _result;
+    };
+    // One intentional Sequence: finish the synchronous attempt, then record
+    // exactly once, including the skipped and failed paths.
+    _run = impulse {
+        _attempt;
+        _record;
+    };
+    _reset = impulse {
+        bind _targetReset = (Target <- 0.0).OnWritten;
+        bind _countReset = (Attempts <- 0).OnWritten;
+        Summary <- "READY";
+    };
+
+    _tryButton = ObjectCast<FrooxEngine.UIX.Button,IButton>(TryButton);
+    _resetButton = ObjectCast<FrooxEngine.UIX.Button,IButton>(ResetButton);
+    ButtonEvents(Button=asDrivenGlobal<IButton>(_tryButton), Pressed=_run);
+    ButtonEvents(Button=asDrivenGlobal<IButton>(_resetButton), Pressed=_reset);
+}

@@ -1,0 +1,11 @@
+module DelayedDoorReset
+
+// Only the host initializes shared, session-relative state.
+// A guest joining later must not close an already-open door.
+in CloseAt: double mutable
+
+where {
+    OnStart(OnlyHost=true, Trigger=impulse {
+        CloseAt <- 0.0d;
+    });
+}

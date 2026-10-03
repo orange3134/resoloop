@@ -1,0 +1,606 @@
+{
+  "schemaVersion": "1",
+  "ownership": {
+    "key": "shared-button-study"
+  },
+  "slot": {
+    "key": "root",
+    "name": "ResoLoop_Example_SharedButton",
+    "parent": "Root",
+    "position": [
+      2.0,
+      1.4,
+      1.8
+    ]
+  },
+  "children": [
+    {
+      "slot": {
+        "key": "front-material-slot",
+        "name": "Front material"
+      },
+      "components": [
+        {
+          "key": "front-material",
+          "type": "FrooxEngine.UI_UnlitMaterial",
+          "fields": {
+            "Sidedness": "Front",
+            "ZWrite": "On",
+            "ZTest": "LessOrEqual",
+            "OffsetFactor": 1,
+            "OffsetUnits": 100
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "key": "rear-material-slot",
+        "name": "Rear material"
+      },
+      "components": [
+        {
+          "key": "rear-material",
+          "type": "FrooxEngine.UI_UnlitMaterial",
+          "fields": {
+            "Sidedness": "Back",
+            "ZWrite": "On",
+            "ZTest": "LessOrEqual",
+            "OffsetFactor": 1,
+            "OffsetUnits": 100
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "key": "lamp-material-slot",
+        "name": "Lamp material"
+      },
+      "components": [
+        {
+          "key": "lamp-material",
+          "type": "FrooxEngine.PBS_Metallic",
+          "fields": {
+            "AlbedoColor": [
+              0.15,
+              0.15,
+              0.15,
+              1
+            ],
+            "Metallic": 0,
+            "Smoothness": 0.35
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "key": "lamp",
+        "name": "Lamp",
+        "position": [
+          0.85,
+          0.1,
+          0
+        ]
+      },
+      "components": [
+        {
+          "key": "lamp-mesh",
+          "type": "FrooxEngine.SphereMesh",
+          "fields": {
+            "Radius": 0.18
+          }
+        },
+        {
+          "key": "lamp-renderer",
+          "type": "FrooxEngine.MeshRenderer",
+          "fields": {
+            "Mesh": "$component:lamp-mesh",
+            "Materials": [
+              "$component:lamp-material"
+            ]
+          }
+        },
+        {
+          "key": "lamp-light",
+          "type": "FrooxEngine.Light",
+          "fields": {
+            "Range": 2,
+            "Color": [
+              1,
+              1,
+              1,
+              1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "key": "canvas",
+        "name": "Shared button control",
+        "scale": [
+          0.0025,
+          0.0025,
+          0.0025
+        ]
+      },
+      "components": [
+        {
+          "key": "canvas-rect",
+          "type": "FrooxEngine.UIX.RectTransform"
+        },
+        {
+          "key": "canvas-ui",
+          "type": "FrooxEngine.UIX.Canvas",
+          "fields": {
+            "Size": [
+              560,
+              280
+            ],
+            "UnitScale": 1,
+            "PixelScale": 1
+          }
+        }
+      ],
+      "children": [
+        {
+          "slot": {
+            "key": "background",
+            "name": "Background"
+          },
+          "components": [
+            {
+              "key": "background-rect",
+              "type": "FrooxEngine.UIX.RectTransform"
+            },
+            {
+              "key": "background-image",
+              "type": "FrooxEngine.UIX.Image",
+              "fields": {
+                "Tint": [
+                  0.025,
+                  0.04,
+                  0.055,
+                  1
+                ],
+                "Material": "$component:front-material",
+                "InteractionTarget": false
+              }
+            }
+          ],
+          "children": [
+            {
+              "slot": {
+                "key": "rear",
+                "name": "Rear cover"
+              },
+              "components": [
+                {
+                  "key": "rear-rect",
+                  "type": "FrooxEngine.UIX.RectTransform"
+                },
+                {
+                  "key": "rear-image",
+                  "type": "FrooxEngine.UIX.Image",
+                  "fields": {
+                    "Tint": [
+                      0.025,
+                      0.04,
+                      0.055,
+                      1
+                    ],
+                    "Material": "$component:rear-material",
+                    "InteractionTarget": false
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "slot": {
+            "key": "heading",
+            "name": "Heading"
+          },
+          "components": [
+            {
+              "key": "heading-rect",
+              "type": "FrooxEngine.UIX.RectTransform",
+              "fields": {
+                "AnchorMin": [
+                  0,
+                  1
+                ],
+                "AnchorMax": [
+                  1,
+                  1
+                ],
+                "OffsetMin": [
+                  28,
+                  -70
+                ],
+                "OffsetMax": [
+                  -28,
+                  -22
+                ]
+              }
+            },
+            {
+              "key": "heading-text",
+              "type": "FrooxEngine.UIX.Text",
+              "fields": {
+                "Content": "SHARED BUTTON / 02",
+                "Size": 28,
+                "Color": [
+                  0.8,
+                  0.95,
+                  1,
+                  1
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "slot": {
+            "key": "readout",
+            "name": "Shared ON OFF state"
+          },
+          "components": [
+            {
+              "key": "readout-rect",
+              "type": "FrooxEngine.UIX.RectTransform",
+              "fields": {
+                "AnchorMin": [
+                  0,
+                  1
+                ],
+                "AnchorMax": [
+                  1,
+                  1
+                ],
+                "OffsetMin": [
+                  28,
+                  -132
+                ],
+                "OffsetMax": [
+                  -28,
+                  -76
+                ]
+              }
+            },
+            {
+              "key": "readout-text",
+              "type": "FrooxEngine.UIX.Text",
+              "fields": {
+                "Size": 44,
+                "Color": [
+                  1,
+                  1,
+                  1,
+                  1
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "slot": {
+            "key": "footer",
+            "name": "Shared input note"
+          },
+          "components": [
+            {
+              "key": "footer-rect",
+              "type": "FrooxEngine.UIX.RectTransform",
+              "fields": {
+                "AnchorMin": [
+                  0,
+                  0
+                ],
+                "AnchorMax": [
+                  1,
+                  0
+                ],
+                "OffsetMin": [
+                  28,
+                  16
+                ],
+                "OffsetMax": [
+                  -28,
+                  52
+                ]
+              }
+            },
+            {
+              "key": "footer-text",
+              "type": "FrooxEngine.UIX.Text",
+              "fields": {
+                "Content": "Shared state / Sound on press only",
+                "Size": 18,
+                "Color": [
+                  0.55,
+                  0.7,
+                  0.8,
+                  1
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "$recipe": "toggle",
+          "$with": {
+            "key": "power",
+            "rect": {
+              "AnchorMin": [
+                0,
+                0
+              ],
+              "AnchorMax": [
+                1,
+                0
+              ],
+              "OffsetMin": [
+                40,
+                66
+              ],
+              "OffsetMax": [
+                -40,
+                118
+              ]
+            },
+            "state": "$member:power-state.Value"
+          },
+          "components": [
+            {
+              "key": "button-face",
+              "type": "FrooxEngine.UIX.Image",
+              "fields": {
+                "Tint": [
+                  0.12,
+                  0.35,
+                  0.45,
+                  1
+                ],
+                "InteractionTarget": true
+              }
+            },
+            {
+              "key": "press-audio",
+              "type": "FrooxEngine.ButtonAudioClipPlayer",
+              "fields": {
+                "ParentUnder": "$slot:sounds",
+                "MinDistance": 0.5,
+                "MaxDistance": 4,
+                "DopplerLevel": 0,
+                "PressedClips": [
+                  {
+                    "Clip": "$component:click-clip",
+                    "Weight": 1,
+                    "MinVolume": 0.2,
+                    "MaxVolume": 0.2,
+                    "MinSpeed": 1,
+                    "MaxSpeed": 1,
+                    "Spatialize": true,
+                    "SpatialBlend": 1
+                  }
+                ],
+                "ReleasedClips": [],
+                "HoverEnterClips": [],
+                "HoverLeaveClips": []
+              }
+            }
+          ],
+          "children": [
+            {
+              "slot": {
+                "key": "button-label",
+                "name": "Button label"
+              },
+              "components": [
+                {
+                  "key": "button-label-rect",
+                  "type": "FrooxEngine.UIX.RectTransform",
+                  "fields": {
+                    "OffsetMin": [
+                      20,
+                      3
+                    ],
+                    "OffsetMax": [
+                      -20,
+                      -3
+                    ]
+                  }
+                },
+                {
+                  "key": "button-label-text",
+                  "type": "FrooxEngine.UIX.Text",
+                  "fields": {
+                    "Content": "TOGGLE",
+                    "Size": 28,
+                    "Color": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "slot": {
+        "key": "uix-value-state--power",
+        "name": "Shared state and display drivers"
+      },
+      "components": [
+        {
+          "key": "power-state",
+          "type": "[FrooxEngine]FrooxEngine.ValueMultiDriver<bool>",
+          "initialFields": {
+            "Value": false
+          },
+          "fields": {
+            "Drives": [
+              "$member:uix-boolean-state--light-driver.State",
+              "$member:uix-boolean-state--emission-driver.State",
+              "$member:uix-boolean-state--label-driver.State"
+            ]
+          }
+        },
+        {
+          "key": "uix-boolean-state--light-driver",
+          "type": "[FrooxEngine]FrooxEngine.BooleanValueDriver<float>",
+          "fields": {
+            "TargetField": "$member:lamp-light.Intensity",
+            "FalseValue": 0,
+            "TrueValue": 4
+          }
+        },
+        {
+          "key": "uix-boolean-state--emission-driver",
+          "type": "[FrooxEngine]FrooxEngine.BooleanValueDriver<colorX>",
+          "fields": {
+            "TargetField": "$member:lamp-material.EmissiveColor",
+            "FalseValue": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "TrueValue": [
+              1,
+              1,
+              1,
+              1
+            ]
+          }
+        },
+        {
+          "key": "uix-boolean-state--label-driver",
+          "type": "[FrooxEngine]FrooxEngine.BooleanValueDriver<string>",
+          "fields": {
+            "TargetField": "$member:readout-text.Content",
+            "FalseValue": "OFF",
+            "TrueValue": "ON"
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "key": "audio-provider",
+        "name": "Press sound clip"
+      },
+      "components": [
+        {
+          "key": "click-clip",
+          "type": "FrooxEngine.StaticAudioClip",
+          "fields": {
+            "URL": "$asset:click"
+          }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "key": "sounds",
+        "name": "Transient press sounds"
+      }
+    }
+  ],
+  "tests": [
+    {
+      "name": "Shared state OFF",
+      "probe": {
+        "kind": "set-member",
+        "target": "$member:power-state.Value",
+        "value": false,
+        "safe": true,
+        "restore": true
+      },
+      "assertions": [
+        {
+          "target": "$member:lamp-light.Intensity",
+          "expected": 0,
+          "phase": "after"
+        },
+        {
+          "target": "$member:lamp-material.EmissiveColor",
+          "expected": {
+            "r": 0,
+            "g": 0,
+            "b": 0,
+            "a": 1,
+            "profile": "sRGB"
+          },
+          "phase": "after"
+        },
+        {
+          "target": "$member:readout-text.Content",
+          "expected": "OFF",
+          "phase": "after"
+        },
+        {
+          "kind": "child-count",
+          "target": "$slot:sounds",
+          "count": 0,
+          "phase": "after"
+        }
+      ]
+    },
+    {
+      "name": "Shared state ON",
+      "probe": {
+        "kind": "set-member",
+        "target": "$member:power-state.Value",
+        "value": true,
+        "safe": true,
+        "restore": true
+      },
+      "assertions": [
+        {
+          "target": "$member:lamp-light.Intensity",
+          "expected": 4,
+          "phase": "after"
+        },
+        {
+          "target": "$member:lamp-material.EmissiveColor",
+          "expected": {
+            "r": 1,
+            "g": 1,
+            "b": 1,
+            "a": 1,
+            "profile": "sRGB"
+          },
+          "phase": "after"
+        },
+        {
+          "target": "$member:readout-text.Content",
+          "expected": "ON",
+          "phase": "after"
+        },
+        {
+          "kind": "child-count",
+          "target": "$slot:sounds",
+          "count": 0,
+          "phase": "after"
+        }
+      ]
+    }
+  ],
+  "assets": {
+    "click": {
+      "kind": "audio",
+      "source": "assets/button-click.wav"
+    }
+  }
+}

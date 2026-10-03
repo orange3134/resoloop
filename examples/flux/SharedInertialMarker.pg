@@ -1,0 +1,63 @@
+module SharedInertialMarker
+
+// Only Operator integrates motion. Position/Velocity are synchronized fields.
+in Operator: User mutable
+in Running: bool mutable
+in Acceleration: float
+in Position: float3 mutable
+in Velocity: float mutable
+in RunButton: FrooxEngine.UIX.Button element
+out OperatorLabel: string
+
+where {
+    // Read-only default-null Store avoids SDK 1.9's null<User> link serialization bug.
+    store _noUser: User;
+    local _dt: float;
+    local _nextVelocity: float;
+    local _nextPosition: float;
+
+    _stop = impulse {
+        bind _stopped = (Running <- false).OnWritten;
+        bind _positionReset = (Position <- Pack_Float3(0.0, 0.0, 0.0)).OnWritten;
+        bind _velocityReset = (Velocity <- 0.0).OnWritten;
+        Operator <- _noUser;
+    };
+    _press = impulse {
+        if IsNull<User>(Operator) then impulse {
+            // Claim first; this simple example does not arbitrate simultaneous claims.
+            bind _claimed = (Operator <- LocalUser).OnWritten;
+            Running <- true;
+        } else _stop;
+    };
+    _button = ObjectCast<FrooxEngine.UIX.Button,IButton>(RunButton);
+    ButtonEvents(Button=asDrivenGlobal<IButton>(_button), Pressed=_press);
+
+    _commit = impulse {
+        bind _velocityCommitted = (Velocity <- _nextVelocity).OnWritten;
+        Position <- Pack_Float3(_nextPosition, 0.0, 0.0);
+    };
+    _reflectAndCommit = if _nextPosition > 0.7 then impulse {
+        bind _rightClamped = (_nextPosition <- 0.7).OnWritten;
+        bind _rightReflected = (_nextVelocity <- -_nextVelocity * 0.65).OnWritten;
+        _commit;
+    } else if _nextPosition < -0.7 then impulse {
+        bind _leftClamped = (_nextPosition <- -0.7).OnWritten;
+        bind _leftReflected = (_nextVelocity <- -_nextVelocity * 0.65).OnWritten;
+        _commit;
+    } else _commit;
+
+    _update = impulse {
+        if Running and IsLocalUser(Operator) then impulse {
+            bind _dtRead = (_dt <- ValueClamp<float>(DeltaTime, 0.0, 0.05)).OnWritten;
+            bind _velocityCalculated = (_nextVelocity <- ValueClamp<float>(
+                (Velocity + Acceleration * _dt) * (1.0 - 0.6 * _dt), -1.5, 1.5)).OnWritten;
+            bind _positionCalculated = (_nextPosition <- Unpack_Float3(Position).X + _nextVelocity * _dt).OnWritten;
+            _reflectAndCommit;
+        };
+    };
+    Update(UpdatingUser=Operator->asDrivenGlobal, SkipIfNull=true->asDrivenGlobal, OnUpdate=_update);
+
+    // Every viewer displays the received shared result; nobody else integrates.
+    OperatorLabel = if IsNull<User>(Operator) then "Ready / anyone can start"
+                    else ConcatenateString("Operator: ", UserUsername(Operator));
+}

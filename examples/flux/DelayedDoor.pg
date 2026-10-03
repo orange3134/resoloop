@@ -1,0 +1,13 @@
+module DelayedDoor
+
+// Only ButtonValueSet writes the shared deadline, on the pressing user.
+// Each user derives presentation from that deadline and synchronized world time.
+in CloseAt: double
+out NextCloseAt: double
+out IsOpen: bool
+
+where {
+    _now = WorldTimeDouble;
+    NextCloseAt = _now + 3.0d;
+    IsOpen = _now < CloseAt;
+}
