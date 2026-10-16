@@ -40,15 +40,17 @@ Resonite本体のデコンパイルはビルド・実行の必須依存ではあ
 
 ## Installation
 
+0.1.0はPreview表記のない通常バージョンです。現在はローカル検証中で未公開のため、以下のNuGetコマンドは公開後に使用してください。公開前は下記のソースからの手順を使用します。
+
 ~~~powershell
-dotnet tool install --global ResoLoop --version 0.1.0-preview.17
+dotnet tool install --global ResoLoop --version 0.1.0
 resoloop --version
 ~~~
 
-Preview版の更新:
+通常バージョンの更新:
 
 ~~~powershell
-dotnet tool update --global ResoLoop --version 0.1.0-preview.17
+dotnet tool update --global ResoLoop --version 0.1.0
 ~~~
 
 release自動化とnuget.org Trusted Publishingの設定は[docs/RELEASING.md](docs/RELEASING.md)を参照してください。
@@ -56,10 +58,10 @@ release自動化とnuget.org Trusted Publishingの設定は[docs/RELEASING.md](d
 ソースから検証・package作成する場合:
 
 ~~~powershell
-dotnet build ResoLoop.slnx
-dotnet test ResoLoop.slnx --no-build
-dotnet pack src/RLoop.Cli/RLoop.Cli.csproj -c Release -o artifacts
-dotnet tool update --global --add-source .\artifacts ResoLoop --version 0.1.0-preview.17
+dotnet build ResoLoop.slnx -c Release
+dotnet test ResoLoop.slnx -c Release --no-build
+dotnet pack src/RLoop.Cli/RLoop.Cli.csproj -c Release --no-build -o artifacts
+dotnet tool update --global --source .\artifacts ResoLoop --version 0.1.0
 ~~~
 
 開発中は次でも実行できます。

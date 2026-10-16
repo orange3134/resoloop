@@ -386,6 +386,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         CancellationToken cancellationToken = default)
     {
         options ??= new ApplyOptions();
+        if (document.Origin is not null || document.Existing is not null)
+            return await new ExistingContentService(client).PlanAsync(document, options, cancellationToken);
         options.Progress?.Invoke(new ApplyProgress("validate", 0, 1, document.SourcePath, "Validating the complete document."));
         var prepared = await PrepareAsync(document, options, cancellationToken);
         options.Progress?.Invoke(new ApplyProgress("plan", prepared.Entries.Count, prepared.Entries.Count, null, "Plan is ready; no world changes were made."));
@@ -404,6 +406,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         CancellationToken cancellationToken = default)
     {
         options ??= new ApplyOptions();
+        if (document.Origin is not null || document.Existing is not null)
+            return await new ExistingContentService(client).ApplyAsync(document, options, cancellationToken);
         var stopwatch = Stopwatch.StartNew();
         using var writer = CheckpointFiles.AcquireWriter(ApplyStateStore.ResolvePath(document, options.StateFile));
         if (client is IResoniteClientDiagnostics diagnostics) diagnostics.ResetMetrics();
@@ -983,6 +987,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
 
     private async Task<PreparedApply> PrepareAsync(ApplyDocument document, ApplyOptions options, CancellationToken cancellationToken)
     {
+        if (document.Origin is not null || document.Existing is not null)
+            throw new RLoopException("IMPORT_COMMAND_UNSUPPORTED", "Existing imports support validate, diff and apply of explicit fields; generated-content test/probe workflows are not supported.", ExitCodes.ValidationFailed);
         document = GeneratedContentMetadata.AddToGeneratedRoots(document, generatedContentSource);
         var offlineValidation = await ApplyDocumentValidator.ValidateAsync(document, cancellationToken: cancellationToken);
         ApplyDocumentValidator.ThrowIfInvalid(offlineValidation);

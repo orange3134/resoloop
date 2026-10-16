@@ -28,12 +28,14 @@ resoloop は、Codex や Claude Code などの AI エージェントから Reson
 
 作りたいものを AI に伝えると、AI が現在のワールドを確認し、Slot や Component の構成をファイルへ記述して、ResoniteLink 経由で反映・検証します。作業内容がファイルとして残るため、同じ構成を繰り返し適用したり、Git で変更を管理したりできます。
 
-resoloop が生成する作業ルートには `FrooxEngine.AI_GeneratedContent` を自動で付与し、`Source` に実行中のツール名とバージョン（例: `[resoloop 0.1.0-preview.9]`）を記録します。宣言ツリー内の持ち運び・装備用ルートにも同じタグを付与します。
+resoloop が生成する作業ルートには `FrooxEngine.AI_GeneratedContent` を自動で付与し、`Source` に実行中のツール名とバージョン（例: `[resoloop 0.1.0]`）を記録します。宣言ツリー内の持ち運び・装備用ルートにも同じタグを付与します。
 
 > [!NOTE]
-> 現在はプレビュー版です。ResoniteLink も Beta のため、更新によって動作が変わる可能性があります。
+> 0.1.0からPreview表記を外した通常バージョンになります。現在はローカルで検証中で、GitHub Releases・NuGetにはまだ公開していません。ResoniteLinkは引き続きBetaです。
 
 ## インストール
+
+以下のNuGetコマンドは公開後に使用します。公開前の導入は[ローカル検証手順](docs/RELEASING.md#local-validation-before-publication)を参照してください。
 
 必要なもの:
 
@@ -45,14 +47,14 @@ resoloop が生成する作業ルートには `FrooxEngine.AI_GeneratedContent` 
 PowerShell で resoloop をインストールします。
 
 ~~~powershell
-dotnet tool install --global ResoLoop --version 0.1.0-preview.15
+dotnet tool install --global ResoLoop --version 0.1.0
 resoloop --version
 ~~~
 
 すでにインストール済みの場合は、次のコマンドで更新できます。
 
 ~~~powershell
-dotnet tool update --global ResoLoop --version 0.1.0-preview.15
+dotnet tool update --global ResoLoop --version 0.1.0
 ~~~
 
 ## 使い方

@@ -521,6 +521,16 @@ public static class Program
             case "slot": await RunSlot(args, output, client, world, cancellationToken); break;
             case "component": await RunComponent(args, output, client, world, cancellationToken); break;
             case "type": await RunType(args, output, client, cancellationToken); break;
+            case "import":
+            {
+                if (args.Positionals.Count != 2)
+                    throw new RLoopException("ARGUMENT_REQUIRED", "import requires one exact content Slot selector and --output NEW_DIRECTORY.", ExitCodes.InvalidArguments);
+                var result = await new ExistingContentService(client).ImportAsync(args.Positional(1, "Content Slot"),
+                    args.RequireOption("output"), args.IntOption("max-slots", 50_000, 1, 250_000),
+                    ApplyOptionsFrom(args, output).Progress, cancellationToken, splitSlots: args.IntOption("split-slots", 0, 0, 4096));
+                output.Success(result, w => w.WriteLine($"imported {result.Slots} Slots / {result.Components} Components without world changes -> {result.Manifest}"));
+                break;
+            }
             case "apply":
             {
                 var document = ApplyDocument.Load(args.Positional(1, "Apply file"));
@@ -547,7 +557,8 @@ public static class Program
                     connectionIdScope = "ResoniteLink connection; stable keys and paths are used across connections",
                     operations = displayed,
                     changes = result.Changes,
-                    result.Creates, result.Updates, result.NoOps, result.Renames, result.Deletes, result.Atomic, result.Recovery, result.Warnings
+                    result.Creates, result.Updates, result.NoOps, result.Renames, result.Deletes, result.Atomic, result.Recovery, result.Warnings,
+                    metrics = args.Has("profile") ? (client as IResoniteClientDiagnostics)?.SnapshotMetrics() : null
                 };
                 output.Success(response, w =>
                 {
@@ -1048,6 +1059,19 @@ public static class Program
     {
         var detail = command?.ToLowerInvariant() switch
         {
+            "import" => """
+resoloop import SLOT --output NEW_DIRECTORY [--max-slots 50000] [--split-slots 256] [--json]
+
+Reads the exact subtree and Reflection; never mutates world content. Root itself is forbidden.
+Writes manifest.json, immutable snapshot.json, state.json and report.json. Use a new directory for re-import.
+--split-slots N stores an index plus hashed Slot groups in snapshot/*.json (0/default: single snapshot).
+Edit existing.changes[COMPONENT_KEY][FIELD] or existing.referenceChanges[REFERENCE_KEY], then diff/apply manifest.json.
+Use existing.slotChanges[SLOT_KEY][ATTRIBUTE] for Position/Rotation/Scale/IsActive/IsPersistent/Tag/OrderOffset.
+existing.editFiles lists literal edit parts bound to the same ownershipKey and snapshotSha256; duplicate edits fail.
+Reference targets use {kind,key,path?} or null; get keys/structured member paths from snapshot.references.
+External dependencies remain unowned. Unsupported member writes stop; no recreation, pruning or automatic tagging.
+World-session discovery must match the endpoint. Changed sessions/missing identities block edits.
+""",
             "apply" => """
 resoloop apply FILE.json [--state FILE] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
 
@@ -1084,7 +1108,7 @@ resoloop - agent-first Resonite CLI loop
 Project setup:
   resoloop --version [--json]
   resoloop init [DIRECTORY] [--json]
-  resoloop schema list | schema describe document|node|slot|component|camera|test|assertion|probe|reflection [--json]
+  resoloop schema list | schema describe document|node|slot|component|camera|test|assertion|probe|reflection|existing [--json]
   resoloop observe '$member:KEY.NAME' [...] --state WORLD_STATE [--json]
   resoloop type query --request FILE.json [--cache auto|off|refresh] [--cache-dir DIR] [--refresh] [--profile] [--json]
   resoloop type check --request FILE.json | --manifest FILE.json [--brief] [--profile] [--cache auto|off|refresh] [--json]
@@ -1096,6 +1120,7 @@ Project setup:
   resoloop doctor [--url ws://localhost:PORT] [--json]
 
 Connection and observation:
+  resoloop import SLOT --output NEW_DIRECTORY [--max-slots 50000] [--split-slots 256] [--json]
   resoloop discover [--discovery-seconds 12] [--json]
   resoloop status|ping [--url ws://localhost:PORT] [--json]
   resoloop hierarchy [--under ID_OR_PATH_OR_STABLE --state FILE] [--depth 2] [--include-components] [--summary] [--json]

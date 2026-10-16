@@ -15,12 +15,15 @@ public sealed record ApplyDocument(
     IReadOnlyList<ApplyNodeSpec>? Children = null,
     IReadOnlyDictionary<string, ApplyAssetSpec>? Assets = null,
     IReadOnlyDictionary<string, ApplyCameraSpec>? Cameras = null,
-    IReadOnlyList<ApplyTestSpec>? Tests = null)
+    IReadOnlyList<ApplyTestSpec>? Tests = null,
+    string? Origin = null,
+    ExistingContentSpec? Existing = null)
 {
     [JsonIgnore]
     public string? SourcePath { get; init; }
 
-    public string ResolveStatePath(string? explicitPath = null) => ApplyStateStore.ResolvePath(this, explicitPath);
+    public string ResolveStatePath(string? explicitPath = null) => Origin == "existing"
+        ? ExistingContentService.StatePath(this, new(StateFile: explicitPath)) : ApplyStateStore.ResolvePath(this, explicitPath);
 
     public static ApplyDocument Load(string path)
     {
@@ -31,6 +34,16 @@ public sealed record ApplyDocument(
         try
         {
             var fullPath = Path.GetFullPath(path);
+            // Imports are literal edit documents. Observations live in a separate, hashed snapshot.
+            // Never expand user content such as "${0}:" as authoring parameters.
+            using var literal = JsonDocument.Parse(File.ReadAllText(fullPath));
+            if (literal.RootElement.TryGetProperty("origin", out var origin) && origin.ValueKind == JsonValueKind.String && origin.GetString() == "existing")
+            {
+                if (new FileInfo(fullPath).Length > 10 * 1024 * 1024)
+                    throw new RLoopException("APPLY_EXPANDED_SIZE_LIMIT", "Import edit documents are limited to 10 MiB; observations belong in the snapshot.", ExitCodes.ValidationFailed);
+                return ExistingBundleFiles.ExpandEdits((JsonSerializer.Deserialize<ApplyDocument>(literal.RootElement, JsonOptions)
+                    ?? throw new JsonException("Document was empty.")) with { SourcePath = fullPath });
+            }
             var expanded = ApplyDocumentCompiler.Compile(fullPath);
             return (JsonSerializer.Deserialize<ApplyDocument>(expanded.Json, JsonOptions)
                     ?? throw new JsonException("Document was empty.")) with
@@ -193,6 +206,8 @@ public static class ApplyDocumentValidator
         CancellationToken cancellationToken = default,
         IReadOnlyDictionary<string, string>? resolvedTypes = null)
     {
+        if (document.Origin is not null || document.Existing is not null)
+            return await ExistingContentService.ValidateAsync(document, client, cancellationToken);
         var issues = new List<ApplyValidationIssue>();
         var strict = client is not null;
         var slots = 0;

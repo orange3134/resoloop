@@ -6,7 +6,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>resoloop</ToolCommandName>
     <PackageId>ResoLoop</PackageId>
-    <Version>0.1.0-preview.17</Version>
+    <Version>0.1.0</Version>
     <Title>ResoLoop</Title>
     <Authors>orange3134</Authors>
     <Description>Agent-first CLI loop for Resonite development through ResoniteLink and Flux-SDK.</Description>
@@ -29,6 +29,7 @@
     <None Include="../../README.md" Pack="true" PackagePath="\" />
     <None Include="../../LICENSE" Pack="true" PackagePath="\" />
     <None Include="../../docs/QUICKSTART.md" Pack="true" PackagePath="docs/" />
+    <None Include="../../docs/RELEASING.md;../../docs/EXISTING-IMPORT.md;../../docs/EXISTING-REFERENCES.md;../../docs/EXISTING-BUNDLES-SLOTS.md;../../docs/RESONITELINK-IMPORT-ISSUES.md;../../docs/RESONITELINK-IMPORT-ISSUES.ja.md" Pack="true" PackagePath="docs/" />
     <None Include="../../src/**/*"
           Exclude="../../src/**/bin/**/*;../../src/**/obj/**/*;../../src/**/__pycache__/**/*"
           Pack="true"

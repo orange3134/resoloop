@@ -8,10 +8,10 @@ resoloop is a CLI for controlling Resonite worlds from AI agents such as Codex a
 
 Tell the AI what you want to create, and it will inspect the current world, describe the Slot and Component structure in files, and apply and verify the result through ResoniteLink. Because the work is stored as files, you can apply the same structure repeatedly and track changes with Git.
 
-resoloop automatically adds `FrooxEngine.AI_GeneratedContent` to the root of the content it generates and records the running tool's name and version in `Source` (for example, `[resoloop 0.1.0-preview.9]`). The same tag is also added to portable and equippable roots within the declaration tree.
+resoloop automatically adds `FrooxEngine.AI_GeneratedContent` to the root of the content it generates and records the running tool's name and version in `Source` (for example, `[resoloop 0.1.0]`). The same tag is also added to portable and equippable roots within the declaration tree.
 
 > [!NOTE]
-> resoloop is currently in preview. ResoniteLink is also in Beta, so updates may change its behavior.
+> Version 0.1.0 removes the preview designation. It is currently being validated locally and has not yet been published to GitHub Releases or NuGet. ResoniteLink remains in Beta.
 
 After saving and reloading a world, resoloop preserves imported assets' `resdb:///` URLs when the state records the matching `$asset:` declarations. Older state files without `assetFields` stop before mutation with `APPLY_ASSET_MIGRATION_UNVERIFIED` if a saved URL cannot be verified. Inspect the asset, then explicitly set its verified saved URI as the manifest asset source (for example, `"source": "resdb:///…"`) and run `diff` again. Do not infer this mapping from a changed declaration or delete the state to bypass the check. Interrupted field writes invalidate their old asset evidence before the remote mutation; rerun the same manifest to converge.
 
@@ -28,17 +28,19 @@ Requirements:
 - Resonite
 - An AI coding agent such as Codex or Claude Code
 
+The NuGet commands below apply after publication. For local builds before publication, follow the [local validation guide](docs/RELEASING.md#local-validation-before-publication).
+
 Install resoloop in PowerShell:
 
 ~~~powershell
-dotnet tool install --global ResoLoop --version 0.1.0-preview.17
+dotnet tool install --global ResoLoop --version 0.1.0
 resoloop --version
 ~~~
 
 If resoloop is already installed, update it with the following command:
 
 ~~~powershell
-dotnet tool update --global ResoLoop --version 0.1.0-preview.17
+dotnet tool update --global ResoLoop --version 0.1.0
 ~~~
 
 ## Usage
@@ -109,6 +111,29 @@ For new content, declare `{"$recipe":"button","$with":{"key":"accept","rect":{}}
 Batch known managed fields with `resoloop observe '$member:state.Value' '$member:toggle.TargetValue' --state STATE --json`. This read-only command accepts up to 64 selectors and returns typed values and reference IDs, failing if any selected field is missing. It uses normal stable re-resolution after reconnect. Cross-Component values are sequential observations, not an atomic snapshot.
 
 ## Declaration and capture assistance
+
+### Import existing content without changing the world
+
+```powershell
+resoloop import Root/WorldRoot --output artifacts/worldroot-import --url ws://localhost:PORT --command-timeout 600 --json
+resoloop diff artifacts/worldroot-import/manifest.json --summary --profile --report artifacts/import-plan.json --json
+# Optional: split a large observation into hashed groups sharing the same keys/state.
+resoloop import Root/WorldRoot --output artifacts/worldroot-split --split-slots 256 --url ws://localhost:PORT --command-timeout 600 --json
+```
+
+`import` reads the exact subtree, Reflection and captured external dependency IDs. It writes a literal `origin: existing` manifest, an immutable `snapshot.json` containing all observed Slots/Components/members and type capabilities, `state.json` for edit baselines, and `report.json` for limitations. Names (including duplicate siblings), transforms, runtime values, unknown Components, external references and existing tags are preserved. Import never adds `AI_GeneratedContent`. Re-import requires a new directory and never overwrites prior edits or observations. Keep all four files together; this is an observation and management bundle, not a portable world/asset backup.
+
+The initial `existing.changes` is empty: **diff reports zero changes even when runtime-owned values evolve**. To edit, find the exact Component key and baseline in `snapshot.json`, verify its current Reflection, and add only the desired fields to `manifest.json`, for example `"changes": { "c000042": { "Intensity": 2 } }` (replace the example key/member with the verified target). Run `diff` and review the one-field update before `apply`. Successful edits update local baselines; a concurrent world-side edit produces `IMPORT_EDIT_CONFLICT`. Interrupted writes can be retried with the same declaration; apply re-inspects each written value. Checks and writes are not atomic.
+
+P1 also records reference edges and external dependencies in `snapshot.references`. Use `existing.referenceChanges[REFERENCE_KEY]` to select an imported `component`, `slot`, `member`, `slotMember` or `external` target (or `null` to disconnect). For example, `"referenceChanges": { "r000003": { "kind": "member", "key": "c000012", "path": [{"member":"Values"},{"index":1}] } }` selects a nested member; `{"kind":"external","key":"e000002"}` selects a captured dependency without owning or editing it. Replace example keys/paths with verified observations from this bundle. Paths use literal member names, indices or dictionary keys, never dotted-string parsing. New assignments require Reflection-proven type compatibility. Writes support direct references, partial SyncObjects and unchanged-length reference lists; list element IDs/order are verified, and unrelated references are preserved. Conflicts stop before mutation; opaque external targets can be retained but cannot be newly assigned. See [reference management and verification](docs/EXISTING-REFERENCES.md).
+
+Use `existing.slotChanges` for explicit `Position`, `Rotation`, `Scale`, `IsActive`, `IsPersistent`, `Tag` and `OrderOffset` edits, for example `"slotChanges": { "s000042": { "Tag": "${0}:literal", "IsActive": false } }`. Transforms are local; Rotation is a normalized quaternion. Empty Tag text clears it (an unset runtime Tag may be null). Only requested attributes are sent, after baseline/current/desired checks; omitted runtime values are preserved. Name and Parent changes remain unsupported in this import workflow.
+
+`--split-slots 256` writes a schema-3 snapshot index plus hashed files in `snapshot/`. Keys share one namespace across all parts, so forward references resolve without copying IDs. Optional `existing.editFiles` lists relative JSON files containing `schemaVersion: 1`, matching `ownershipKey` and `snapshotSha256`, and any `changes`, `referenceChanges` or `slotChanges`. Duplicate edits fail rather than overriding one another. Parts are literal, are bound to one import and use its single state; they are not independent imports. Keep the entire directory together. See [split bundles and Slot editing](docs/EXISTING-BUNDLES-SLOTS.md) for examples and verification.
+
+Unsupported containers, events and unknown types remain observation-only. Existing imports cannot create, recreate, prune, move or auto-tag content. They require a matching world-session announcement (UDP discovery), fresh instance IDs, parent relationships and types. Changed sessions stop with `IMPORT_SESSION_CHANGED`; missing/ambiguous bindings are reported and edits to affected targets stop. No duplicate-name/ordinal fallback is used. Re-import after a world restart, and review any pending edits before transferring them; keys from different bundles are not interchangeable. P0 and single-file P1 snapshots remain readable. Imported state is dedicated to this workflow and is not a generated-content `--state` file for primitive stable selectors.
+
+See [existing import contract and verification](docs/EXISTING-IMPORT.md) and [ResoniteLink issue drafts](docs/RESONITELINK-IMPORT-ISSUES.md).
 
 New declarations can start from an offline structural scaffold. Inspect only the schema section you need; examples come from the parser DTOs. Provider scaffolds contain no visual settings.
 

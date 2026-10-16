@@ -11,7 +11,7 @@ public static class GeneratedContentMetadata
 
     internal static ApplyDocument AddToGeneratedRoots(ApplyDocument document, string? source)
     {
-        if (string.IsNullOrWhiteSpace(source) || document.Slot is null) return document;
+        if (document.Origin == "existing" || string.IsNullOrWhiteSpace(source) || document.Slot is null) return document;
         return document with
         {
             Components = EnsureMarker(document.Components, source),

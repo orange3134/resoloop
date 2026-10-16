@@ -4,6 +4,9 @@ public interface IResoniteClient : IAsyncDisposable
 {
     Task ConnectAsync(Uri uri, TimeSpan timeout, CancellationToken cancellationToken = default);
     Task<SessionInfo> GetSessionInfoAsync(CancellationToken cancellationToken = default);
+    // World-session identity, distinct from the connection-scoped SessionInfo.UniqueSessionId.
+    // Null means safe reuse of imported instance bindings cannot be established.
+    Task<string?> GetWorldSessionIdAsync(CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
     Task<SlotInfo> GetSlotAsync(string id, int depth, bool includeComponentData, CancellationToken cancellationToken = default);
     Task<ComponentInfo> GetComponentAsync(string id, CancellationToken cancellationToken = default);
     Task<string> CreateSlotAsync(SlotCreateRequest request, CancellationToken cancellationToken = default);
@@ -20,6 +23,9 @@ public interface IResoniteClient : IAsyncDisposable
         CancellationToken cancellationToken = default);
     Task<ComponentTypeInfo> DescribeComponentTypeAsync(string type,
         CancellationToken cancellationToken = default);
+    Task<MemberDefinitionInfo> DescribeComponentMemberPathAsync(string componentType, IReadOnlyList<MemberPathStep> path,
+        CancellationToken cancellationToken = default) => Task.FromException<MemberDefinitionInfo>(
+            new RLoopException("MEMBER_PATH_REFLECTION_UNAVAILABLE", "This adapter does not expose nested member Reflection.", ExitCodes.OperationFailed));
     Task<TypeInfo> DescribeTypeAsync(string type, CancellationToken cancellationToken = default);
     // Read-only conversion preflight; no world mutation or asset import.
     Task ValidateComponentMemberAsync(string componentType, string member, string rawValue,

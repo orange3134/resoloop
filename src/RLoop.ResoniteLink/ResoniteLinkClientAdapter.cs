@@ -74,6 +74,19 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         return ModelMapper.MapSlot(response.Data);
     }
 
+    public async Task<string?> GetWorldSessionIdAsync(CancellationToken cancellationToken = default)
+    {
+        EnsureConnected();
+        var sessions = await new ResoniteSessionDiscovery().DiscoverAsync(TimeSpan.FromSeconds(12), cancellationToken);
+        var matches = sessions.Where(s =>
+        {
+            var endpoint = new Uri(s.Url);
+            return endpoint.Port == _uri!.Port &&
+                (endpoint.Host == _uri.Host || endpoint.IsLoopback && _uri.IsLoopback);
+        }).ToArray();
+        return matches.Length == 1 ? matches[0].SessionId : null;
+    }
+
     public async Task<ComponentInfo> GetComponentAsync(string id, CancellationToken cancellationToken = default)
     {
         EnsureConnected();
@@ -106,6 +119,10 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         {
             ID = request.Id,
             Parent = request.ParentId is null ? null : new Link.Reference { TargetID = request.ParentId },
+            IsActive = request.IsActive is null ? null : new Link.Field_bool { Value = request.IsActive.Value },
+            IsPersistent = request.IsPersistent is null ? null : new Link.Field_bool { Value = request.IsPersistent.Value },
+            Tag = request.Tag is null ? null : new Link.Field_string { Value = request.Tag },
+            OrderOffset = request.OrderOffset is null ? null : new Link.Field_long { Value = request.OrderOffset.Value },
             Name = request.Name is null ? null : new Link.Field_string { Value = request.Name },
             Position = request.Position is null ? null : new Link.Field_float3 { Value = ToLink(request.Position) },
             Rotation = request.Rotation is null ? null : new Link.Field_floatQ { Value = ToLink(request.Rotation) },
@@ -194,6 +211,32 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     {
         EnsureConnected();
         return (await DescribeComponentMetadataAsync(type, false, cancellationToken)).Value;
+    }
+
+    public async Task<MemberDefinitionInfo> DescribeComponentMemberPathAsync(string componentType, IReadOnlyList<MemberPathStep> path,
+        CancellationToken cancellationToken = default)
+    {
+        ExistingReferences.ValidatePath(path);
+        var definition = await GetComponentDefinitionCachedAsync(componentType, cancellationToken);
+        if (!definition.Members.TryGetValue(path[0].Member!, out var member))
+            throw UnknownMember(componentType, path[0].Member!, definition.Members.Keys);
+        foreach (var step in path.Skip(1))
+        {
+            if (step.Index is not null && member is Link.ListDefinition list && list.ElementDefinition is not null)
+                member = list.ElementDefinition;
+            else if (step.Key is not null && member is Link.DictionaryDefinition dictionary && dictionary.ElementDefinition is not null)
+                member = dictionary.ElementDefinition;
+            else if (step.Member is { } name && member is Link.SyncObjectMemberDefinition sync)
+            {
+                var type = ModelMapper.Render(sync.Type) ?? throw new RLoopException("SYNC_OBJECT_TYPE_MISSING", "SyncObject type is unavailable.", ExitCodes.ValidationFailed);
+                var response = await Wait(_link.GetSyncObjectDefinition(new Link.GetSyncObjectDefinition { SyncObjectType = type, Flattened = true }), "sync-object-definition.get", cancellationToken);
+                EnsureSuccess(response, "SYNC_OBJECT_DESCRIBE_FAILED");
+                if (!response.Definition.Members.TryGetValue(name, out member))
+                    throw UnknownMember(type, name, response.Definition.Members.Keys);
+            }
+            else throw new RLoopException("MEMBER_PATH_REFLECTION_UNAVAILABLE", "Reflection does not expose this member path/container.", ExitCodes.ValidationFailed);
+        }
+        return ModelMapper.MapMemberDefinition(ExistingReferences.Display(path), member);
     }
 
     public async Task<ReflectionMetadata<ComponentTypeInfo>> DescribeComponentMetadataAsync(string type, bool refresh = false, CancellationToken ct = default)

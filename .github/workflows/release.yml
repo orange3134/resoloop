@@ -1,12 +1,12 @@
-name: Preview release
+name: Release
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: Immutable SemVer preview version
+        description: Immutable stable SemVer version
         required: true
-        default: 0.1.0-preview.17
+        default: 0.1.0
 
 permissions:
   contents: write
@@ -27,8 +27,8 @@ jobs:
       - name: Validate release input
         shell: pwsh
         run: |
-          if ($env:RELEASE_VERSION -notmatch '^\d+\.\d+\.\d+-[0-9A-Za-z.-]+$') {
-            throw "Preview version must be SemVer with a prerelease suffix."
+          if ($env:RELEASE_VERSION -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+            throw "Release version must be stable SemVer (major.minor.patch)."
           }
           if ([string]::IsNullOrWhiteSpace("${{ vars.NUGET_USER }}")) {
             throw "Set the repository variable NUGET_USER to the nuget.org profile name."
@@ -59,7 +59,7 @@ jobs:
         run: |
           $toolPath = Join-Path $env:RUNNER_TEMP "resoloop-tool"
           $projectPath = Join-Path $env:RUNNER_TEMP "resoloop-release-smoke"
-          dotnet tool install ResoLoop --tool-path $toolPath --add-source artifacts --version $env:RELEASE_VERSION
+          dotnet tool install ResoLoop --tool-path $toolPath --source artifacts --version $env:RELEASE_VERSION
           $reported = & (Join-Path $toolPath "resoloop.exe") --version
           if ($reported -ne $env:RELEASE_VERSION) { throw "Expected version $env:RELEASE_VERSION, got $reported" }
           & (Join-Path $toolPath "resoloop.exe") init $projectPath
@@ -110,7 +110,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "v$env:RELEASE_VERSION" "artifacts/ResoLoop.$env:RELEASE_VERSION.nupkg" --target "$env:GITHUB_SHA" --prerelease --generate-notes --title "ResoLoop $env:RELEASE_VERSION"
+        run: gh release create "v$env:RELEASE_VERSION" "artifacts/ResoLoop.$env:RELEASE_VERSION.nupkg" --target "$env:GITHUB_SHA" --generate-notes --title "ResoLoop $env:RELEASE_VERSION"
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v7

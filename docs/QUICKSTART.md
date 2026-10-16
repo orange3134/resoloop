@@ -4,14 +4,14 @@
 
 ## 1. resoloopをインストールする
 
-必要なものはWindows 10/11、.NET SDK 10、Resonite、対象worldで有効なResoniteLinkです。Preview版はNuGet global toolとして導入します。
+必要なものはWindows 10/11、.NET SDK 10、Resonite、対象worldで有効なResoniteLinkです。resoloopは.NET global toolとして導入します。0.1.0はPreview表記を外した通常バージョンですが、現在はローカル検証中で未公開です。以下はNuGet公開後の手順です。公開前は[ローカル検証手順](RELEASING.md#local-validation-before-publication)を使用してください。
 
 ~~~powershell
-dotnet tool install --global ResoLoop --version 0.1.0-preview.17
+dotnet tool install --global ResoLoop --version 0.1.0
 resoloop help
 ~~~
 
-更新時は `dotnet tool update --global ResoLoop --version 0.1.0-preview.17` を実行します。
+更新時は `dotnet tool update --global ResoLoop --version 0.1.0` を実行します。
 
 ## 2. 自分のプロジェクトを作る
 

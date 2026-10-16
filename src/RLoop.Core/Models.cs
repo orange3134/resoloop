@@ -144,7 +144,11 @@ public sealed record SlotUpdateRequest(
     Vector3Value? Position = null,
     QuaternionValue? Rotation = null,
     Vector3Value? Scale = null,
-    string? ParentId = null);
+    string? ParentId = null,
+    bool? IsActive = null,
+    bool? IsPersistent = null,
+    string? Tag = null,
+    long? OrderOffset = null);
 
 public sealed record MemberDefinitionInfo(
     string Name,
