@@ -1,12 +1,23 @@
 # resoloop 詳細資料
 
-公開向けの概要と導入手順は [README.md](README.md) を参照してください。この文書には、コマンド仕様、宣言的 apply、Flux-SDK、設計、制約などの詳細をまとめています。
+人間向けの概要と導入手順は [English README](README.md) / [日本語 README](README_JA.md) を参照してください。この文書には、エージェント向けの操作手順、コマンド仕様、宣言的 apply、取り込み・オフライン解析、Flux-SDK、設計、制約をまとめています。
 
 resoloopは、CodexやClaude CodeなどのAIエージェントがResoniteを
 
 観測 → 実装 → 適用 → 検証 → 解析 → 修正
 
 のループで操作するための非対話CLIです。ResoniteLinkを単純に露出せず、Slot、Component、member、runtime typeという安定した概念へ写像します。v0.1はproject初期化・診断、接続、Hierarchy/検索/inspection、Slot・Component CRUD、Reflection、再利用可能なJSON apply、scene/test artifact、安全な差分収束、Flux-SDK build/hot deploy、ログtailを実装しています。
+
+## Agent reading guide
+
+- [Reflection metadata and caching](#reflection-metadata-and-caching)
+- [Declarative apply and recovery](#declarative-apply)
+- [Existing content import](#existing-content-import)
+- [Offline bundle analysis](#offline-bundle-analysis)
+- [Declaration scaffolding and Canvas framing](#declaration-scaffolding-and-canvas-framing)
+- [UIX authoring](#uix-authoring)
+- [Flux-SDK](#flux-sdk)
+- [Known limitations](#known-limitations)
 
 ## Architecture
 
@@ -40,7 +51,7 @@ Resonite本体のデコンパイルはビルド・実行の必須依存ではあ
 
 ## Installation
 
-0.1.0はPreview表記のない通常バージョンです。現在はローカル検証中で未公開のため、以下のNuGetコマンドは公開後に使用してください。公開前は下記のソースからの手順を使用します。
+0.1.0はPreview表記のない通常バージョンです。NuGetから導入できます。ソースからビルドする場合は下記の手順を使用します。
 
 ~~~powershell
 dotnet tool install --global ResoLoop --version 0.1.0
@@ -153,15 +164,20 @@ Exit codeは、2=引数、3=設定、4=接続、5=not found、6=validation、7=�
 |---|---|
 | Project | init, doctor |
 | Connection | status, ping |
-| Observe | hierarchy, find, inspect |
+| Observe | hierarchy, find, inspect, observe |
+| Existing content | import, bundle summary/tree/find/inspect/refs/extract/collect-dependencies |
 | Slot | slot create, slot set, slot delete --yes |
 | Component | component list/inspect/add/set/remove |
-| Reflection | type search, type describe |
+| Reflection | type search, type describe, type query, type check |
 | Declarative | validate, plan/diff, apply [--prune --yes], scene summary, capture, test |
 | Flux | flux status/check/build/watch/deploy/deploy-manifest |
 | Diagnostics | doctor, logs |
 
 全オプションは `resoloop help`、事故に関係する詳細は `resoloop help apply` / `resoloop help diff` で確認できます。hierarchyのdefault depthは2、findは8です。大規模worldでは `find --under` / `--direct-children` と `inspect --component` / `--member` を優先し、depth -1は避けてください。削除は --yes 必須で、Root削除は常に拒否されます。statusの `connectionId` はResoniteLink接続ごとのIDで、安定したworld identityではありません。保存済みIDは接続変更後にpath/keyから再解決されます。
+
+## Reflection metadata and caching
+
+Reflectionは `type query --request FILE.json --json` で必要なmemberとenum候補を一括取得できます。要求形式は `schema describe reflection --json` で確認できます。保存した型定義はResonite・ResoniteLinkのバージョンとAdapter/Coreビルドが一致すれば、期限なしでcheck・diff・apply・値変換にも利用します。ローカル接続のポート変更では失効しません。`verified: true` はバージョン一致で信頼した結果も含み、`source: version-cache` と元の観測時刻で区別できます。`--refresh` は実機から更新、`--cache off` はディスクを読み書きせず実機照会、`--cache-dir DIR` は保存先の指定です。MOD/DLL構成を変えた場合は更新してください。ID・現在値・参照先は毎回実環境から確認します。`type check --manifest FILE.json --brief --json` はstrict検証を利用しますが、diff/apply直前の重複チェックは不要です。[設計・実測結果](docs/REFLECTION-EFFICIENCY.md)を参照してください。
 
 ## Declarative apply
 
@@ -203,6 +219,63 @@ resoloop test content/main.json --json
 ~~~
 
 applyの最終JSONはstdout、進捗はstderrへ分離されます。plan/diffのJSONは常に全変更を `changes` 配列へ分離し、`--changes-only` / `--creates-only` / `--deletes-only` / `--summary` は `operations` の表示量だけを絞ります。`--prune --yes`はstaleな親Slot配下を1回の親削除へ集約します。機械処理できる進捗が必要なら `--ndjson-progress`、表示を抑えるなら `--quiet` を使います。`--timeout` は各ResoniteLink request、`--command-timeout` はcommand全体のdeadlineです。Ctrl+Cやdeadlineで中断した場合はstate fileと完了件数が報告され、同じapplyで再開できます。
+
+### Generated-content labels
+
+resoloop が生成する作業ルートには `FrooxEngine.AI_GeneratedContent` を自動で付与し、`Source` に実行中のツール名とバージョン（例: `[resoloop 0.1.0]`）を記録します。宣言ツリー内の持ち運び・装備用ルートにも同じタグを付与します。
+
+### Saved assets and Component recovery
+
+ワールド保存・再読込後は、state の `assetFields` に記録した `$asset:` 宣言が一致する場合、import 済みアセットの `resdb:///` URL を保持します。記録のない旧 state で対応関係を確認できない場合は、変更前に `APPLY_ASSET_MIGRATION_UNVERIFIED` で停止します。アセットの実体を確認し、manifest の asset source に検証済みの保存先 URI（例: `"source": "resdb:///…"`）を明示してから `diff` を再実行してください。変更済みの宣言だけで対応を推測したり、state を削除して検査を回避したりしないでください。フィールド書き込み前に古いアセット対応の証拠を無効化します。書き込みが中断した場合は checkpoint を保持し、同じ manifest で再実行します。
+
+If a saved Component ID disappears while the connection or observed Slot ID is unchanged and another same-type Component remains on that Slot, plan/apply stops with `STABLE_COMPONENT_AMBIGUOUS` before mutation. It never adopts that candidate by type or position. Preserve the checkpoint and verify the missing binding; after a deliberate removal, back up state and remove only the confirmed stale Component key so apply can create a new managed Component.
+
+### List shrink and recreation
+
+ResoniteLink は list の要素を削除できません。`fields` 直下の `MeshRenderer.Materials` などの list member を実機より短く宣言すると、`diff` は `recreate` を示し、apply は同じ Slot で Component を作り直します。syncObject 内などの入れ子の list は作り直しの対象外であり、短く宣言しても収束は保証されません。宣言した field で新しい Component を作って list を確かめ、管理 Component の参照を張り替えてから、旧 Component を `--prune` なしで削除します。新しい Component では、`initialFields` は宣言の初期値に、宣言していない member は型の既定値に戻ります。apply が読んだ範囲で、旧 Component を管理 Component の宣言済み参照以外が参照している場合は変更前に `APPLY_LIST_SHRINK_REFERENCED`、runtime が置換先の list を宣言より長いまま残す場合は、旧 Component を削除する前に `APPLY_LIST_SHRINK_NOT_CONVERGED` で停止し、安全に取り消せる置換先だけを削除します。既に参照されている置換先や旧 Component が消えている場合は置換先と checkpoint を残します。中断した作り直しを同じセッションで再開できない場合は変更前に `APPLY_RECREATE_INTERRUPTED` で停止します。エラー固有の `recovery` と suggestions に従い、原因を直さない再実行は避けてください。apply 前の `resoloop test` は、`diff` が `recreate` を計画した場合も現在存在する Component を検査します。
+
+## Existing content import
+
+```powershell
+resoloop import Root/WorldRoot --output artifacts/worldroot-import --url ws://localhost:PORT --command-timeout 600 --json
+resoloop diff artifacts/worldroot-import/manifest.json --summary --profile --report artifacts/import-plan.json --json
+# Optional: split a large observation into hashed groups sharing the same keys/state.
+resoloop import Root/WorldRoot --output artifacts/worldroot-split --split-slots 256 --url ws://localhost:PORT --command-timeout 600 --json
+```
+
+`import` reads the exact subtree, Reflection and captured external dependency IDs. It writes a literal `origin: existing` manifest, an immutable `snapshot.json` containing all observed Slots/Components/members and type capabilities, `state.json` for edit baselines, and `report.json` for limitations. Names (including duplicate siblings), transforms, runtime values, unknown Components, external references and existing tags are preserved. Import never adds `AI_GeneratedContent`. Re-import requires a new directory and never overwrites prior edits or observations. Keep all four files together; this is an observation and management bundle, not a portable world/asset backup.
+
+The initial `existing.changes` is empty: **diff reports zero changes even when runtime-owned values evolve**. To edit, find the exact Component key and baseline in `snapshot.json`, verify its current Reflection, and add only the desired fields to `manifest.json`, for example `"changes": { "c000042": { "Intensity": 2 } }` (replace the example key/member with the verified target). Run `diff` and review the one-field update before `apply`. Successful edits update local baselines; a concurrent world-side edit produces `IMPORT_EDIT_CONFLICT`. Interrupted writes can be retried with the same declaration; apply re-inspects each written value. Checks and writes are not atomic.
+
+P1 also records reference edges and external dependencies in `snapshot.references`. Use `existing.referenceChanges[REFERENCE_KEY]` to select an imported `component`, `slot`, `member`, `slotMember` or `external` target (or `null` to disconnect). For example, `"referenceChanges": { "r000003": { "kind": "member", "key": "c000012", "path": [{"member":"Values"},{"index":1}] } }` selects a nested member; `{"kind":"external","key":"e000002"}` selects a captured dependency without owning or editing it. Replace example keys/paths with verified observations from this bundle. Paths use literal member names, indices or dictionary keys, never dotted-string parsing. New assignments require Reflection-proven type compatibility. Writes support direct references, partial SyncObjects and unchanged-length reference lists; list element IDs/order are verified, and unrelated references are preserved. Conflicts stop before mutation; opaque external targets can be retained but cannot be newly assigned. See [reference management and verification](docs/EXISTING-REFERENCES.md).
+
+Use `existing.slotChanges` for explicit `Position`, `Rotation`, `Scale`, `IsActive`, `IsPersistent`, `Tag` and `OrderOffset` edits, for example `"slotChanges": { "s000042": { "Tag": "${0}:literal", "IsActive": false } }`. Transforms are local; Rotation is a normalized quaternion. Empty Tag text clears it (an unset runtime Tag may be null). Only requested attributes are sent, after baseline/current/desired checks; omitted runtime values are preserved. Name and Parent changes remain unsupported in this import workflow.
+
+`--split-slots 256` writes a schema-3 snapshot index plus hashed files in `snapshot/`. Keys share one namespace across all parts, so forward references resolve without copying IDs. Optional `existing.editFiles` lists relative JSON files containing `schemaVersion: 1`, matching `ownershipKey` and `snapshotSha256`, and any `changes`, `referenceChanges` or `slotChanges`. Duplicate edits fail rather than overriding one another. Parts are literal, are bound to one import and use its single state; they are not independent imports. Keep the entire directory together. See [split bundles and Slot editing](docs/EXISTING-BUNDLES-SLOTS.md) for examples and verification.
+
+Unsupported containers, events and unknown types remain observation-only. Existing imports cannot create, recreate, prune, move or auto-tag content. They require a matching world-session announcement (UDP discovery), fresh instance IDs, parent relationships and types. Changed sessions stop with `IMPORT_SESSION_CHANGED`; missing/ambiguous bindings are reported and edits to affected targets stop. No duplicate-name/ordinal fallback is used. Re-import after a world restart, and review any pending edits before transferring them; keys from different bundles are not interchangeable. P0 and single-file P1 snapshots remain readable. Imported state is dedicated to this workflow and is not a generated-content `--state` file for primitive stable selectors.
+
+See [existing import contract and verification](docs/EXISTING-IMPORT.md) and [ResoniteLink issue drafts](docs/RESONITELINK-IMPORT-ISSUES.md).
+
+## Offline bundle analysis
+
+Imported content can be investigated offline with `resoloop bundle summary|tree|find|inspect|refs`. For example, `resoloop bundle find artifacts/worldroot-split --text EnemySpacing --json` searches saved member names/values, and `resoloop bundle refs artifacts/worldroot-split --key c000123 --direction in --json` traces recorded incoming references (replace the example key). `bundle collect-dependencies` saves bounded external observations without expanding edit ownership; `bundle extract` writes a source-backed analysis excerpt. See [offline analysis and dependency capture](docs/BUNDLE-ANALYSIS.md) for limits, session requirements and examples. These commands are included in version 0.1.0.
+
+## Declaration scaffolding and Canvas framing
+
+New declarations can start from an offline structural scaffold. Inspect only the schema section you need; examples come from the parser DTOs. Provider scaffolds contain no visual settings.
+
+~~~powershell
+resoloop manifest scaffold --key panel --output content/panel.json --json
+resoloop schema describe camera --json
+resoloop manifest scaffold --kind provider --key front-material --type '[FrooxEngine]FrooxEngine.UI_UnlitMaterial' --output content/front.node.json --json
+resoloop validate content/panel.json --json
+# After appending the provider node, designing and applying the panel:
+resoloop capture content/panel.json --frame '$slot:canvas' --view front --output artifacts/front.jpg --json
+resoloop capture content/panel.json --frame '$slot:canvas' --view rear --output artifacts/rear.jpg --json
+~~~
+
+`--frame` requires the exact Slot containing one live planar Canvas, and uses its collider plus ancestor transforms. It preserves content scale; overflowing children, curved geometry, mirrored scales and occlusion require an explicit camera. `validate`/`diff` return conservative identity warnings for same-type Components sharing a Slot; separate named providers avoid this ambiguity for new content. See [authoring assistance](docs/AUTHORING-ASSISTANCE.md) for contracts and verification.
 
 ## Blender modeling
 
@@ -251,6 +324,22 @@ schema 2のexact Slot名保持、同名兄弟・不正assetの事前検証、ラ
 `--report NEW_FILE.json`は省略前の成功/エラーJSONを保存します。既存ファイルを拒否し、接続/変更前に出力先を確保します。brief/report利用時は`--json`なしでもJSON出力になります。通常のJSON形式は変更しません。既存の`--summary`単独では従来どおりchanges配列が残ります。
 
 diff/planはofflineとruntime Reflectionの検証を内部で実行します。通常の変更ループでvalidateの両モードを先に重ねる必要はありません。単独validateはオフライン作業や診断用に維持し、apply直前の再検証も維持します。要約表示によって検証・観測範囲や削除の`--yes`要件は変わりません。
+
+### Direct recipes and batched observation
+
+~~~powershell
+resoloop uix recipe list --json
+resoloop uix recipe describe button --json
+resoloop uix recipe describe text-input --json
+resoloop uix recipe export button --output content/recipes/button.json --json
+resoloop diff content/main.json --brief --report artifacts/plan-01.json --json
+resoloop apply content/main.json --brief --json
+resoloop uix audit '$slot:panel' --state .resoloop/state/panel.json --brief --report artifacts/audit-01.json --json
+~~~
+
+For new content, declare `{"$recipe":"button","$with":{"key":"accept","rect":{}}}` directly in `children`; no include/export is needed. Generated keys use `uix-button--accept` as their prefix. Exported prototypes remain supported for pinned editable wiring; their existing keys do not change. See [Structural recipes](skills/codex/resonite-uix/references/recipes.md) for parameters and ports. Recipe export and reports require new filenames. `--brief` reduces displayed evidence, not validation: diff already performs offline and runtime checks, and apply repeats preflight against the current world. Standalone validate remains useful for offline authoring or diagnosis. Full reports preserve the existing JSON format.
+
+Batch known managed fields with `resoloop observe '$member:state.Value' '$member:toggle.TargetValue' --state STATE --json`. This read-only command accepts up to 64 selectors and returns typed values and reference IDs, failing if any selected field is missing. It uses normal stable re-resolution after reconnect. Cross-Component values are sequential observations, not an atomic snapshot.
 
 ## Flux-SDK
 
@@ -389,6 +478,13 @@ strict validationはadapterの書込み変換を実行し、Nullable enumを含�
 - runtime probeは `safe: true` と `--probe --yes` の二重許可が必要です。public Reflectionに公開されたSyncMethodを呼ぶ `method` probeに加え、fieldを一時変更してafter assertionをpollし、`finally`で元の値へ戻して復元確認する `set-member` probeを利用できます。公開されないinteractionはstructural-onlyで、test結果の`verification`は`partial`になります。`partial`を実機interaction確認済みとして扱わないでください。
 - ResoniteLink 0.13.1はUIXの`SyncDelegate` memberをComponent definition/update modelへ公開せず、Dynamic Impulse helperと`CallInput.Trigger`も呼び出し可能なSyncMethodとして公開しません。resoloopはraw messageやmember名を推測せず、これらのinteractionをstructural-onlyとして報告します。
 - Flux-SDK 1.9.xのinterface型global input（実機で確認した `IButton global` など）はdeploy前に`FLUX_INTERFACE_GLOBAL_UNSUPPORTED`で拒否します。concrete Componentの`element` inputからmodule内でglobal化するか、Dynamic Impulse bridgeを使用してください。`Slot element` inputの配線は正常動作を確認しています。
+
+## Related measurements
+
+- [UIX agent efficiency](docs/AGENT-EFFICIENCY.md) — implementation and measured before/after token usage
+- [Control recipe efficiency](docs/CONTROL-RECIPE-EFFICIENCY.md) — expanded controls and a separate before/after benchmark
+- [Authoring assistance efficiency](docs/AUTHORING-EFFICIENCY.md) — two runs per version measuring declaration, material-reference and capture assistance
+- [Batched observation and direct recipes](docs/OBSERVATION-RECIPE-EFFICIENCY.md) — follow-up implementation, fixed-operation replay and independent authoring comparison
 
 ## License and upstream notes
 

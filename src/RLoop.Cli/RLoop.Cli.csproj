@@ -27,6 +27,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="../../README.md" Pack="true" PackagePath="\" />
+    <None Include="../../README-DETAILS.md" Pack="true" PackagePath="\" />
     <None Include="../../LICENSE" Pack="true" PackagePath="\" />
     <None Include="../../docs/QUICKSTART.md" Pack="true" PackagePath="docs/" />
     <None Include="../../docs/BUNDLE-ANALYSIS.md" Pack="true" PackagePath="docs/" />

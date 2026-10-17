@@ -40,3 +40,5 @@ dotnet test tests/RLoop.IntegrationTests/RLoop.IntegrationTests.csproj --filter 
 Maintain offline tests for argument parsing, configuration precedence, model mapping, serialization, value conversion, and error codes. Any live test must be opt-in and sandboxed.
 
 When CLI behavior changes, update README examples and affected skills/codex/*/SKILL.md. Skills are workflows, not command mirrors: preserve Reflection-first behavior, bounded observation, exact-target destructive safety, and post-change inspection.
+
+Keep README.md and README_JA.md short and aligned for human readers: overview, installation, getting started, and links. Put agent workflows, command details, recovery/error behavior, and validation measurements in README-DETAILS.md or linked docs; do not append technical release notes to the user READMEs.
