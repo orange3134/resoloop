@@ -4,9 +4,9 @@ ResoLoop is distributed as a framework-dependent .NET global tool. Users need th
 
 ## Local validation before publication
 
-Version `0.1.0` removes the preview designation. It is currently under local validation and has not been published to GitHub Releases or NuGet. Test it in actual worlds before deciding to publish.
+Version `0.1.0` is the first stable release and removes the preview designation. Read-only import and offline bundle analysis were validated against Curving Bullets and Sticker Studio before publication; both retained zero-change diffs.
 
-This version adds read-only existing-content import, external and nested member references, references across split bundle files, and explicit Slot attribute edits. See [existing import](EXISTING-IMPORT.md), [reference management](EXISTING-REFERENCES.md), and [split bundles and Slot attributes](EXISTING-BUNDLES-SLOTS.md) for behavior, limits, and validation results.
+This version adds read-only existing-content import, external and nested member references, references across split bundle files, explicit Slot attribute edits, offline bundle queries and extraction, and bounded external dependency capture. See [existing import](EXISTING-IMPORT.md), [reference management](EXISTING-REFERENCES.md), [split bundles and Slot attributes](EXISTING-BUNDLES-SLOTS.md), and [offline bundle analysis](BUNDLE-ANALYSIS.md) for behavior, limits, and validation results.
 
 Build and test from the repository root, commit the validated source, then pack and update the installed tool from the local feed:
 

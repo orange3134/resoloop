@@ -29,6 +29,7 @@
     <None Include="../../README.md" Pack="true" PackagePath="\" />
     <None Include="../../LICENSE" Pack="true" PackagePath="\" />
     <None Include="../../docs/QUICKSTART.md" Pack="true" PackagePath="docs/" />
+    <None Include="../../docs/BUNDLE-ANALYSIS.md" Pack="true" PackagePath="docs/" />
     <None Include="../../docs/RELEASING.md;../../docs/EXISTING-IMPORT.md;../../docs/EXISTING-REFERENCES.md;../../docs/EXISTING-BUNDLES-SLOTS.md;../../docs/RESONITELINK-IMPORT-ISSUES.md;../../docs/RESONITELINK-IMPORT-ISSUES.ja.md" Pack="true" PackagePath="docs/" />
     <None Include="../../src/**/*"
           Exclude="../../src/**/bin/**/*;../../src/**/obj/**/*;../../src/**/__pycache__/**/*"

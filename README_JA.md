@@ -2,6 +2,8 @@
 
 # resoloop
 
+取り込み済みデータは `bundle summary/tree/find/inspect/refs` でオフライン解析できます。例えば `resoloop bundle find artifacts/worldroot-split --text EnemySpacing --json` でメンバー名・保存値を検索し、`bundle refs --key KEY --direction in` で参照元を追跡します。`bundle collect-dependencies` は管理対象を広げずに外部依存の公開データを追加保存し、`bundle extract` は出典付きの部分データを作成します。[使い方と制限](docs/BUNDLE-ANALYSIS.md)を参照してください。これらの機能は0.1.0に含まれます。
+
 ワールド保存・再読込後は、state の `assetFields` に記録した `$asset:` 宣言が一致する場合、import 済みアセットの `resdb:///` URL を保持します。記録のない旧 state で対応関係を確認できない場合は、変更前に `APPLY_ASSET_MIGRATION_UNVERIFIED` で停止します。アセットの実体を確認し、manifest の asset source に検証済みの保存先 URI（例: `"source": "resdb:///…"`）を明示してから `diff` を再実行してください。変更済みの宣言だけで対応を推測したり、state を削除して検査を回避したりしないでください。フィールド書き込みが中断した場合は checkpoint を保持し、同じ manifest で再実行します。
 
 ResoniteLink は list の要素を削除できません。`fields` 直下の `MeshRenderer.Materials` などの list member を実機より短く宣言すると、`diff` は `recreate` を示し、apply は同じ Slot で Component を作り直します。syncObject 内などの入れ子の list は作り直しの対象外であり、短く宣言しても収束は保証されません。宣言した field で新しい Component を作って list を確かめ、管理 Component の参照を張り替えてから、旧 Component を `--prune` なしで削除します。新しい Component では、`initialFields` は宣言の初期値に、宣言していない member は型の既定値に戻ります。apply が読んだ範囲で、旧 Component を管理 Component の宣言済み参照以外が参照している場合は変更前に `APPLY_LIST_SHRINK_REFERENCED`、runtime が置換先の list を宣言より長いまま残す場合は、旧 Component を削除する前に `APPLY_LIST_SHRINK_NOT_CONVERGED` で停止し、安全に取り消せる置換先だけを削除します。既に参照されている置換先や旧 Component が消えている場合は置換先と checkpoint を残します。中断した作り直しを同じセッションで再開できない場合は変更前に `APPLY_RECREATE_INTERRUPTED` で停止します。エラー固有の `recovery` と suggestions に従い、原因を直さない再実行は避けてください。apply 前の `resoloop test` は、`diff` が `recreate` を計画した場合も現在存在する Component を検査します。
@@ -31,11 +33,11 @@ resoloop は、Codex や Claude Code などの AI エージェントから Reson
 resoloop が生成する作業ルートには `FrooxEngine.AI_GeneratedContent` を自動で付与し、`Source` に実行中のツール名とバージョン（例: `[resoloop 0.1.0]`）を記録します。宣言ツリー内の持ち運び・装備用ルートにも同じタグを付与します。
 
 > [!NOTE]
-> 0.1.0からPreview表記を外した通常バージョンになります。現在はローカルで検証中で、GitHub Releases・NuGetにはまだ公開していません。ResoniteLinkは引き続きBetaです。
+> 0.1.0からPreview表記を外した通常バージョンになります。ResoniteLinkは引き続きBetaです。
 
 ## インストール
 
-以下のNuGetコマンドは公開後に使用します。公開前の導入は[ローカル検証手順](docs/RELEASING.md#local-validation-before-publication)を参照してください。
+以下のコマンドでNuGetから導入できます。ローカルビルドの導入は[ローカル検証手順](docs/RELEASING.md#local-validation-before-publication)を参照してください。
 
 必要なもの:
 

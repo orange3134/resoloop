@@ -7,7 +7,7 @@ using RLoop.ResoniteLink;
 
 namespace RLoop.Cli;
 
-public static class Program
+public static partial class Program
 {
     public static async Task<int> Main(string[] args)
     {
@@ -118,6 +118,9 @@ public static class Program
             commandCancellation.CancelAfter(TimeSpan.FromSeconds(resolution.Config.CommandTimeoutSeconds));
             var commandToken = commandCancellation.Token;
             if (parsed.Has("verbose")) Console.Error.WriteLine(JsonSerializer.Serialize(new { configSources = resolution.Sources }));
+
+            if (parsed.Positionals[0] == "bundle")
+                return await RunBundle(parsed, output, resolution.Config, commandToken);
 
             if (parsed.Positionals[0].Equals("discover", StringComparison.OrdinalIgnoreCase))
             {
@@ -1059,6 +1062,24 @@ public static class Program
     {
         var detail = command?.ToLowerInvariant() switch
         {
+            "bundle" => """
+resoloop bundle summary|tree|find|inspect|refs|extract|collect-dependencies BUNDLE [--json]
+
+BUNDLE is an imported directory or manifest.json. All commands except collect-dependencies are offline.
+summary: counts, observation times, dependency coverage; tree: --under SLOT_KEY --depth 3.
+find: --name TEXT --type TYPE_SUBSTRING --text MEMBER_OR_VALUE --under SLOT_KEY.
+inspect: --key KEY [--member LITERAL_NAME | --member-path JSON_ARRAY].
+refs: --key KEY --direction in|out|both --depth 2 [--member NAME | --member-path JSON_ARRAY].
+tree/find/inspect/refs: --offset 0 --limit 50 --max-bytes 65536 (item JSON byte budget).
+Use nextOffset for continuation. Keys are exact; paths are name arrays, not unique selectors.
+--dependencies FILE loads a supplemental capture; default is BUNDLE/dependencies.capture.json if present.
+extract: --under SLOT_KEY --include-dependencies --depth 2 --max-objects 2000
+         --max-bytes 16777216 --output NEW_FILE.json. Analysis excerpt, not an apply manifest.
+collect-dependencies: --depth 3 --max-objects 2000 --max-bytes 16777216 --seconds 120
+                      [--output NEW_FILE.json] [--url URL]. Requires the original world session.
+Captures external Component/Slot fields only; no ownership expansion, Root/child traversal or asset download.
+Read errors, opaque targets and limits stay explicit. Captures are sequential, not atomic.
+""",
             "import" => """
 resoloop import SLOT --output NEW_DIRECTORY [--max-slots 50000] [--split-slots 256] [--json]
 
@@ -1121,6 +1142,7 @@ Project setup:
 
 Connection and observation:
   resoloop import SLOT --output NEW_DIRECTORY [--max-slots 50000] [--split-slots 256] [--json]
+  resoloop bundle summary|tree|find|inspect|refs|extract|collect-dependencies BUNDLE (see help bundle)
   resoloop discover [--discovery-seconds 12] [--json]
   resoloop status|ping [--url ws://localhost:PORT] [--json]
   resoloop hierarchy [--under ID_OR_PATH_OR_STABLE --state FILE] [--depth 2] [--include-components] [--summary] [--json]

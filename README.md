@@ -2,6 +2,8 @@
 
 # resoloop
 
+Imported content can be investigated offline with `resoloop bundle summary|tree|find|inspect|refs`. For example, `resoloop bundle find artifacts/worldroot-split --text EnemySpacing --json` searches saved member names/values, and `resoloop bundle refs artifacts/worldroot-split --key c000123 --direction in --json` traces recorded incoming references (replace the example key). `bundle collect-dependencies` saves bounded external observations without expanding edit ownership; `bundle extract` writes a source-backed analysis excerpt. See [offline analysis and dependency capture](docs/BUNDLE-ANALYSIS.md) for limits, session requirements and examples. These commands are included in version 0.1.0.
+
 ![resoloop_logo](./resource/resoloop_resonite_16_9.png)
 
 resoloop is a CLI for controlling Resonite worlds from AI agents such as Codex and Claude Code.
@@ -11,7 +13,7 @@ Tell the AI what you want to create, and it will inspect the current world, desc
 resoloop automatically adds `FrooxEngine.AI_GeneratedContent` to the root of the content it generates and records the running tool's name and version in `Source` (for example, `[resoloop 0.1.0]`). The same tag is also added to portable and equippable roots within the declaration tree.
 
 > [!NOTE]
-> Version 0.1.0 removes the preview designation. It is currently being validated locally and has not yet been published to GitHub Releases or NuGet. ResoniteLink remains in Beta.
+> Version 0.1.0 is the first stable release and removes the preview designation. ResoniteLink remains in Beta.
 
 After saving and reloading a world, resoloop preserves imported assets' `resdb:///` URLs when the state records the matching `$asset:` declarations. Older state files without `assetFields` stop before mutation with `APPLY_ASSET_MIGRATION_UNVERIFIED` if a saved URL cannot be verified. Inspect the asset, then explicitly set its verified saved URI as the manifest asset source (for example, `"source": "resdb:///…"`) and run `diff` again. Do not infer this mapping from a changed declaration or delete the state to bypass the check. Interrupted field writes invalidate their old asset evidence before the remote mutation; rerun the same manifest to converge.
 
@@ -28,7 +30,7 @@ Requirements:
 - Resonite
 - An AI coding agent such as Codex or Claude Code
 
-The NuGet commands below apply after publication. For local builds before publication, follow the [local validation guide](docs/RELEASING.md#local-validation-before-publication).
+Install from NuGet with the commands below. For local builds, follow the [local validation guide](docs/RELEASING.md#local-validation-before-publication).
 
 Install resoloop in PowerShell:
 

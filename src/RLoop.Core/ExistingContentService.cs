@@ -307,7 +307,7 @@ public sealed partial class ExistingContentService(IResoniteClient client)
         return result;
     }
 
-    private static ExistingSnapshot LoadSnapshot(ApplyDocument document)
+    internal static ExistingSnapshot LoadSnapshot(ApplyDocument document)
     {
         if (document.SchemaVersion != "1" || document.Origin != "existing" || document.Existing is null ||
             string.IsNullOrWhiteSpace(document.Ownership?.Key) || document.SourcePath is null ||
