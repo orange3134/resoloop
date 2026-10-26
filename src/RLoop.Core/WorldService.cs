@@ -1332,7 +1332,18 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             TexturePixels pixels;
             try { pixels = TextureDecoder.Decode(asset.ResolvedSource); }
             catch (RLoopException ex) { throw WithAsset(ex, asset); }
-            return await client.ImportTexturePixelsAsync(pixels, TextureDecoder.RawColorProfile, cancellationToken);
+            try
+            {
+                return await client.ImportTexturePixelsAsync(pixels, TextureDecoder.RawColorProfile, cancellationToken);
+            }
+            // The upload grows with the image (about 12 seconds for 4096² on one computer), so a larger image or a
+            // slower link can outlast the request timeout.
+            catch (RLoopException ex) when (ex.Code == "REQUEST_TIMEOUT")
+            {
+                throw WithAsset(ex, asset,
+                    $"Sending {pixels.Width}x{pixels.Height} pixels ({pixels.Rgba.Length / (1024 * 1024)} MiB) outlasted the request timeout; raise --timeout (RESOLOOP_TIMEOUT_SECONDS) for large images or a slow link.");
+            }
+            catch (RLoopException ex) { throw WithAsset(ex, asset); }
         }
         try
         {

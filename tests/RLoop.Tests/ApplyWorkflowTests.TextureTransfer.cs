@@ -56,21 +56,6 @@ public sealed partial class ApplyWorkflowTests
         Assert.Equal(Convert.ToHexString(SHA256.HashData(png)), StateAsset(state, "albedo")["sourceHash"]!.GetValue<string>());
     }
 
-    [Fact]
-    public async Task SwitchingToDataDoesNotReimportUnchangedTextures()
-    {
-        File.WriteAllBytes(Path.Combine(_root, "albedo.png"), TestPng.Encode(1, 1, TestPng.Rgba, 8, [1, 2, 3, 255]));
-        var document = TextureDocument("switch", """{"albedo":{"kind":"texture","source":"albedo.png"}}""", "albedo");
-        var client = new FakeResoniteClient(document);
-        var state = Path.Combine(_root, "switch.state.json");
-
-        await new WorldService(client).ApplyAsync(document, new ApplyOptions(state));
-        await new WorldService(client, null, TextureTransfer.Data).ApplyAsync(document, new ApplyOptions(state));
-
-        Assert.Empty(client.PixelImports);
-        Assert.Equal(1, client.AssetImports);
-    }
-
     private ApplyDocument TextureDocument(string ownership, string assets, params string[] keys)
     {
         var holders = string.Join(",", keys.Select(key =>

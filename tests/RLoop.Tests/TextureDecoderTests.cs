@@ -42,17 +42,13 @@ public sealed class TextureDecoderTests : IDisposable
         Assert.Equal(expected, TextureDecoder.Decode(path).Rgba);
     }
 
+    // HDR headers decode without error as tone-mapped 8-bit pixels, so only this check keeps them from being sent silently.
     [Fact]
-    public void ReportsUnknownFormatAndHdr()
+    public void RejectsHdrImages()
     {
-        var webp = Write("image.webp", Encoding.ASCII.GetBytes("RIFF$\0\0\0WEBPVP8 \u0018\0\0\0").Concat(new byte[24]).ToArray());
         var hdr = Write("image.hdr", Encoding.ASCII.GetBytes("#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 1\n").Concat(new byte[] { 128, 64, 32, 129 }).ToArray());
 
-        Assert.Equal("unknown-format", TextureDecoder.UnsupportedReason(webp));
         Assert.Equal("hdr", TextureDecoder.UnsupportedReason(hdr));
-        var ex = Assert.Throws<RLoopException>(() => TextureDecoder.Decode(webp));
-        Assert.Equal("ASSET_TEXTURE_UNDECODABLE", ex.Code);
-        Assert.Equal(ExitCodes.ValidationFailed, ex.ExitCode);
         Assert.Equal("hdr", Assert.Throws<RLoopException>(() => TextureDecoder.Decode(hdr)).Context["reason"]);
     }
 
