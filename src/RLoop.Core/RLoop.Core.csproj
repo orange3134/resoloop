@@ -4,6 +4,7 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="RLoop.Tests" />
+    <PackageReference Include="StbImageSharp" />
     <EmbeddedResource Include="../../skills/codex/resonite-uix/SKILL.md" LogicalName="RLoop.Core.Skills.resonite-uix.SKILL.md" />
     <EmbeddedResource Include="../../skills/codex/resonite-uix/references/*.md" LogicalName="RLoop.Core.Skills.resonite-uix.references.%(Filename)%(Extension)" />
     <EmbeddedResource Include="../../skills/codex/resonite-uix/recipes/*.json" LogicalName="RLoop.Core.Skills.resonite-uix.recipes.%(Filename)%(Extension)" />
