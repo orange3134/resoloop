@@ -347,6 +347,23 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         return response.AssetURL?.ToString() ?? throw new RLoopException("ASSET_URL_MISSING", "Asset import succeeded without an AssetURL.", ExitCodes.OperationFailed);
     }
 
+    public async Task<string> ImportTexturePixelsAsync(TexturePixels pixels, string? colorProfile,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConnected();
+        // The payload goes out as one binary WebSocket frame after the message; hand over the buffer without copying it.
+        var request = new Link.ImportTexture2DRawData
+        {
+            Width = pixels.Width, Height = pixels.Height, ColorProfile = colorProfile, RawBinaryPayload = pixels.Rgba
+        };
+        var response = await Wait(_link.ImportTexture(request), "asset.texture.import-raw", cancellationToken);
+        EnsureSuccess(response, "ASSET_IMPORT_FAILED", new Dictionary<string, object?>
+        {
+            ["kind"] = "texture", ["transfer"] = "data", ["width"] = pixels.Width, ["height"] = pixels.Height
+        });
+        return response.AssetURL?.ToString() ?? throw new RLoopException("ASSET_URL_MISSING", "Asset import succeeded without an AssetURL.", ExitCodes.OperationFailed);
+    }
+
     private async Task<Link.AssetData> ImportMeshJson(string path, CancellationToken cancellationToken)
     {
         var request = MeshImportDocument.Parse(await File.ReadAllTextAsync(path, cancellationToken));

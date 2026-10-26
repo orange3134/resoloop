@@ -37,6 +37,9 @@ public interface IResoniteClient : IAsyncDisposable
     Task<string> ImportAssetAsync(ApplyAssetSpec asset, string resolvedSource,
         CancellationToken cancellationToken = default) => Task.FromException<string>(
             new RLoopException("ASSET_IMPORT_UNAVAILABLE", "This Resonite adapter does not expose asset imports.", ExitCodes.OperationFailed));
+    Task<string> ImportTexturePixelsAsync(TexturePixels pixels, string? colorProfile,
+        CancellationToken cancellationToken = default) => Task.FromException<string>(
+            new RLoopException("ASSET_IMPORT_UNAVAILABLE", "This Resonite adapter does not expose raw texture imports.", ExitCodes.OperationFailed));
 }
 
 public interface IResoniteClientDiagnostics
