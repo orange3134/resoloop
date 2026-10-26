@@ -1468,6 +1468,8 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public bool LoseNextSlotCreateResponse { get; set; }
         public bool LoseNextFieldWriteResponse { get; set; }
         public int AssetImports { get; private set; }
+        public List<string> FileImports { get; } = [];
+        public List<(string? ColorProfile, int Width, int Height)> PixelImports { get; } = [];
         public string ImportUrlPrefix { get; set; } = "resdb:///asset-";
         public List<string> DescribedTypes { get; } = [];
         // Members kept as lists: string elements are references, other elements values. ResoniteLink 0.13.1 replaces only
@@ -1623,7 +1625,13 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public Task<string> ImportAssetAsync(ApplyAssetSpec asset, string resolvedSource, CancellationToken cancellationToken = default)
         {
             AssetImports++;
+            FileImports.Add(asset.Kind.ToLowerInvariant());
             return Task.FromResult(ImportUrlPrefix + AssetImports);
+        }
+        public Task<string> ImportTexturePixelsAsync(TexturePixels pixels, string? colorProfile, CancellationToken cancellationToken = default)
+        {
+            PixelImports.Add((colorProfile, pixels.Width, pixels.Height));
+            return Task.FromResult(ImportUrlPrefix + "pixels-" + PixelImports.Count);
         }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         public void ResetMetrics() => _requests = 0;

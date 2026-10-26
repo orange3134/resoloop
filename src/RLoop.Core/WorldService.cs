@@ -7,7 +7,8 @@ using System.Text.Json.Nodes;
 
 namespace RLoop.Core;
 
-public sealed partial class WorldService(IResoniteClient client, string? generatedContentSource = null)
+public sealed partial class WorldService(IResoniteClient client, string? generatedContentSource = null,
+    TextureTransfer textureTransfer = TextureTransfer.File)
 {
     public async Task<string> ResolveSlotIdAsync(string selector, CancellationToken cancellationToken = default)
     {
@@ -399,7 +400,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             prepared.Entries.Count(x => x.Action == "rename"),
             prepared.Entries.Count(x => x.Action == "delete"), false,
             $"Non-atomic preview. State checkpoint: {prepared.StatePath}. Re-run apply to converge; pruning stale targets requires --prune --yes. Replacements for recreate/relocate delete their old Components as part of the lifecycle without --prune.")
-            { Warnings = ComponentIdentityDiagnostics.Analyze(document) };
+            { Warnings = [.. ComponentIdentityDiagnostics.Analyze(document), .. TransferWarnings(prepared)] };
     }
 
     public async Task<ApplyResult> ApplyAsync(ApplyDocument document, ApplyOptions? options = null,
@@ -428,7 +429,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 asset.Url = asset.DirectUrl ?? (asset.Action == "no-op" && prepared.State.Assets.TryGetValue(asset.Key, out var saved)
-                    ? asset.MigratedUrl ?? saved.Url : await client.ImportAssetAsync(asset.Spec, asset.ResolvedSource, cancellationToken));
+                    ? asset.MigratedUrl ?? saved.Url : await ImportAssetAsync(asset, cancellationToken));
                 if (asset.Action == "create")
                 {
                     counts.AssetsImported++;
@@ -1041,7 +1042,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var rootSpec = new ApplyNodeSpec(document.Slot, document.Components, document.Children);
         BuildNode(prepared, rootSpec, null, parent, parentPath, true);
         await PrepareRelocationTransformsAsync(prepared, parentPath, cancellationToken);
-        BuildAssetPlans(prepared);
+        BuildAssetPlans(prepared, textureTransfer);
         ThrowIfRecreateInterruptedAcrossSessions(prepared);
         var unverified = prepared.State.Components.Where(pair => pair.Value.ComponentIndex == -1).ToArray();
         if (!prepared.SameSession && unverified.Length > 0)
@@ -1268,7 +1269,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             "ResoniteLink 0.13.1 applies the list atomically as one member; the preview exposes element additions/removals.");
     }
 
-    private static void BuildAssetPlans(PreparedApply prepared)
+    private static void BuildAssetPlans(PreparedApply prepared, TextureTransfer textureTransfer)
     {
         foreach (var pair in prepared.Document.Assets ?? new Dictionary<string, ApplyAssetSpec>())
         {
@@ -1293,12 +1294,80 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             }
             var unchanged = direct is not null || prepared.State.Assets.TryGetValue(pair.Key, out var state) &&
                 state.SourceHash == hash && state.Kind.Equals(pair.Value.Kind, StringComparison.OrdinalIgnoreCase);
-            var runtime = new AssetRuntime(pair.Key, pair.Value, resolved, hash, direct, unchanged ? "no-op" : "create");
+            var runtime = new AssetRuntime(pair.Key, pair.Value, resolved, hash, direct, unchanged ? "no-op" : "create")
+                { SendsPixels = direct is null && textureTransfer == TextureTransfer.Data && IsTextureKind(pair.Value.Kind) };
+            // Only assets this apply imports are decoded; stop here, before the first world change.
+            if (runtime.SendsPixels && runtime.Action == "create")
+            {
+                try { TextureDecoder.EnsureDecodable(resolved); }
+                catch (RLoopException ex) { throw WithAsset(ex, runtime); }
+            }
             prepared.Assets.Add(runtime);
             prepared.Entries.Insert(0, new ApplyPlanEntry(runtime.Action, "asset", "$assets/" + pair.Key, pair.Key, pair.Value.Kind,
                 Reason: direct is not null ? "asset URI is already addressable" : unchanged ?
                     "source hash and imported URL match state" : "source is new or changed and must be imported"));
         }
+    }
+
+    private static bool IsTextureKind(string kind) => kind.Equals("texture", StringComparison.OrdinalIgnoreCase) ||
+                                                     kind.Equals("texture2d", StringComparison.OrdinalIgnoreCase);
+
+    private IReadOnlyList<ApplyValidationIssue> TransferWarnings(PreparedApply prepared)
+    {
+        if (textureTransfer != TextureTransfer.Data) return [];
+        var audio = prepared.Assets.Where(asset => asset.Action == "create" && asset.DirectUrl is null &&
+            asset.Spec.Kind.ToLowerInvariant() is "audio" or "audioclip").ToArray();
+        return audio.Length == 0 ? [] :
+        [
+            new ApplyValidationIssue("ASSET_AUDIO_FILE_TRANSFER",
+                $"{audio.Length} audio import(s), such as '{audio[0].Key}', still pass a file path that Resonite opens on its own host; textureTransfer data sends only texture pixels.",
+                "$assets", "warning")
+        ];
+    }
+
+    private async Task<string> ImportAssetAsync(AssetRuntime asset, CancellationToken cancellationToken)
+    {
+        if (asset.SendsPixels)
+        {
+            TexturePixels pixels;
+            try { pixels = TextureDecoder.Decode(asset.ResolvedSource); }
+            catch (RLoopException ex) { throw WithAsset(ex, asset); }
+            try
+            {
+                return await client.ImportTexturePixelsAsync(pixels, TextureDecoder.RawColorProfile, cancellationToken);
+            }
+            // The upload grows with the image (about 12 seconds for 4096² on one computer), so a larger image or a
+            // slower link can outlast the request timeout.
+            catch (RLoopException ex) when (ex.Code == "REQUEST_TIMEOUT")
+            {
+                throw WithAsset(ex, asset,
+                    $"Sending {pixels.Width}x{pixels.Height} pixels ({pixels.Rgba.Length / (1024 * 1024)} MiB) outlasted the request timeout; raise --timeout (RESOLOOP_TIMEOUT_SECONDS) for large images or a slow link.");
+            }
+            catch (RLoopException ex) { throw WithAsset(ex, asset); }
+        }
+        try
+        {
+            return await client.ImportAssetAsync(asset.Spec, asset.ResolvedSource, cancellationToken);
+        }
+        // Resonite opens texture paths on its own host: a path it cannot see fails after about 50 seconds,
+        // so the default request timeout usually expires first.
+        catch (RLoopException ex) when (IsTextureKind(asset.Spec.Kind) && (ex.Code == "REQUEST_TIMEOUT" ||
+            ex.Code == "ASSET_IMPORT_FAILED" && (ex.Message.Contains("DirectoryNotFoundException", StringComparison.Ordinal) ||
+                                                ex.Message.Contains("FileNotFoundException", StringComparison.Ordinal))))
+        {
+            throw WithAsset(ex, asset,
+                "If Resonite runs on another computer or outside this container and cannot open this CLI's files, use --texture-transfer data (RESOLOOP_TEXTURE_TRANSFER=data) to send decoded pixels instead of a path.");
+        }
+    }
+
+    private static RLoopException WithAsset(RLoopException ex, AssetRuntime asset, string? suggestion = null)
+    {
+        var context = new Dictionary<string, object?>(ex.Context, StringComparer.Ordinal)
+        {
+            ["asset"] = asset.Key, ["kind"] = asset.Spec.Kind, ["source"] = asset.ResolvedSource
+        };
+        return new RLoopException(ex.Code, ex.Message, ex.ExitCode, context,
+            suggestion is null ? ex.Suggestions : [suggestion, .. ex.Suggestions], ex);
     }
 
     private static Dictionary<string, string> PlanAssetUrls(PreparedApply prepared) =>
@@ -2742,5 +2811,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         public string Action { get; } = action;
         public string? Url { get; set; }
         public string? MigratedUrl { get; set; }
+        // textureTransfer data: decode the source here and send pixels instead of a path.
+        public bool SendsPixels { get; init; }
     }
 }

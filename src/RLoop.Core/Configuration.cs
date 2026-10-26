@@ -11,7 +11,8 @@ public sealed record RLoopConfig(
     string? ResoniteManagedDataPath = null,
     string? ResoniteLogPath = null,
     string? ScreenshotsDirectory = null,
-    string? BlenderExecutable = null);
+    string? BlenderExecutable = null,
+    string? TextureTransfer = null);
 
 public sealed record ConfigResolution(RLoopConfig Config, IReadOnlyDictionary<string, string> Sources);
 
@@ -69,6 +70,15 @@ public static class ConfigResolver
         var logs = Pick("log-path", "RESONITE_LOG_PATH", x => x.ResoniteLogPath, "resoniteLogPath");
         var screenshots = Pick("screenshots-dir", "RESOLOOP_SCREENSHOTS_DIR", x => x.ScreenshotsDirectory, "screenshotsDirectory");
         var blender = Pick("blender-executable", "RESOLOOP_BLENDER_EXECUTABLE", x => x.BlenderExecutable, "blenderExecutable");
+        var configuredTransfer = Pick("texture-transfer", "RESOLOOP_TEXTURE_TRANSFER", x => x.TextureTransfer, "textureTransfer");
+        var textureTransfer = configuredTransfer?.Trim().ToLowerInvariant() ?? "file";
+        if (textureTransfer is not ("file" or "data"))
+        {
+            var source = sources["textureTransfer"];
+            throw new RLoopException("INVALID_TEXTURE_TRANSFER", $"textureTransfer must be 'file' or 'data', got '{configuredTransfer}' from {source}.",
+                source == "cli" ? ExitCodes.InvalidArguments : ExitCodes.ConfigurationError,
+                new Dictionary<string, object?> { ["value"] = configuredTransfer, ["source"] = source });
+        }
 
         var timeout = project.TimeoutSeconds > 0 ? project.TimeoutSeconds : user.TimeoutSeconds > 0 ? user.TimeoutSeconds : 30;
         if (cli.TryGetValue("timeout", out var timeoutText) && !string.IsNullOrWhiteSpace(timeoutText))
@@ -97,8 +107,12 @@ public static class ConfigResolver
             sources["commandTimeoutSeconds"] = "environment:RESOLOOP_COMMAND_TIMEOUT_SECONDS";
         }
 
-        return new ConfigResolution(new RLoopConfig(url, timeout, commandTimeout, flux, helper, managed, logs, screenshots, blender), sources);
+        return new ConfigResolution(new RLoopConfig(url, timeout, commandTimeout, flux, helper, managed, logs, screenshots, blender,
+            textureTransfer), sources);
     }
+
+    public static TextureTransfer TextureTransferOf(RLoopConfig config) =>
+        config.TextureTransfer == "data" ? TextureTransfer.Data : TextureTransfer.File;
 
     public static Uri RequireUrl(RLoopConfig config)
     {

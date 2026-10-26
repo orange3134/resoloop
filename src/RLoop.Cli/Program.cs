@@ -111,7 +111,8 @@ public static partial class Program
                 ["flux-executable"] = parsed.Option("flux-executable"), ["flux-deployer"] = parsed.Option("flux-deployer"),
                 ["library-path"] = parsed.Option("library-path"), ["log-path"] = parsed.Option("log-path"),
                 ["screenshots-dir"] = parsed.Option("screenshots-dir"),
-                ["blender-executable"] = parsed.Option("blender-executable")
+                ["blender-executable"] = parsed.Option("blender-executable"),
+                ["texture-transfer"] = parsed.Option("texture-transfer")
             };
             var resolution = ConfigResolver.Resolve(Environment.CurrentDirectory, cliConfig);
             commandCancellation = CancellationTokenSource.CreateLinkedTokenSource(userCancellation.Token);
@@ -230,7 +231,8 @@ public static partial class Program
             var uri = await ResolveConnectionUrlAsync(parsed, resolution.Config, commandToken);
             await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds), ReflectionCacheFrom(parsed));
             await client.ConnectAsync(uri, TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds), commandToken);
-            var world = new WorldService(client, GeneratedContentMetadata.SourceForVersion(ProductVersion()));
+            var world = new WorldService(client, GeneratedContentMetadata.SourceForVersion(ProductVersion()),
+                ConfigResolver.TextureTransferOf(resolution.Config));
             await RunResonite(parsed, output, client, world, commandToken);
             return ExitCodes.Success;
         }
@@ -1203,6 +1205,8 @@ Diagnostics:
   resoloop logs [--path FILE_OR_DIRECTORY] [--tail 200]
 
 Global options: --url, --timeout SECONDS, --command-timeout SECONDS, --json, --verbose
+  --texture-transfer file|data: file (default) lets Resonite open texture paths itself; data decodes images here and
+    sends their pixels, for a Resonite that cannot open this CLI's files (another host, or outside this container).
   --brief: compact diff/plan, validate, test and UIX audit; apply progress is suppressed unless --ndjson-progress.
   --report NEW_FILE.json: save full success/error JSON before projection; never overwrite existing files.
   Brief/report output is JSON even without --json. Unprojected commands retain their normal result data.
@@ -1210,7 +1214,7 @@ Discovery: --url auto [--session EXACT_SESSION_ID_OR_NAME] [--discovery-seconds 
 List announcements with discover; auto requires exactly one match. Explicit URLs keep their existing precedence.
 Exact Slot path (PowerShell): 'path:["Root","A/B"," Label "]' preserves separators and spaces in names.
 Configuration priority: CLI > environment > .resoloop.json > ~/.resoloop/config.json
-Environment: RESONITE_LINK_URL, RESOLOOP_TIMEOUT_SECONDS, RESOLOOP_COMMAND_TIMEOUT_SECONDS, RESOLOOP_FLUX_EXECUTABLE, RESONITE_MANAGED_DATA_PATH, RESONITE_LOG_PATH, RESOLOOP_BLENDER_EXECUTABLE
+Environment: RESONITE_LINK_URL, RESOLOOP_TIMEOUT_SECONDS, RESOLOOP_COMMAND_TIMEOUT_SECONDS, RESOLOOP_FLUX_EXECUTABLE, RESONITE_MANAGED_DATA_PATH, RESONITE_LOG_PATH, RESOLOOP_BLENDER_EXECUTABLE, RESOLOOP_TEXTURE_TRANSFER
 """);
     }
 }
