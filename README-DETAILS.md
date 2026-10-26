@@ -94,8 +94,8 @@ resoloop status --json
 
 設定優先順位:
 
-1. CLI: --url, --timeout, --command-timeout, --library-path
-2. 環境変数: RESONITE_LINK_URL, RESOLOOP_TIMEOUT_SECONDS, RESOLOOP_COMMAND_TIMEOUT_SECONDS, RESOLOOP_FLUX_EXECUTABLE, RESONITE_MANAGED_DATA_PATH
+1. CLI: --url, --timeout, --command-timeout, --library-path, --texture-transfer
+2. 環境変数: RESONITE_LINK_URL, RESOLOOP_TIMEOUT_SECONDS, RESOLOOP_COMMAND_TIMEOUT_SECONDS, RESOLOOP_FLUX_EXECUTABLE, RESONITE_MANAGED_DATA_PATH, RESOLOOP_TEXTURE_TRANSFER
 3. カレントディレクトリから親方向で最初の .resoloop.json
 4. %USERPROFILE%\.resoloop\config.json
 
@@ -297,6 +297,8 @@ resoloop apply content/prop-v1/model.apply.json --state .resoloop/state/prop.jso
 `modeling/model.py`は自分のprojectの制作script、`VERIFIED_PARENT`は現在のworldで確認した親Slotに置き換えます。`--preserve-hierarchy`は部品の階層とpivotを保持し、`--pack-pbr`は対応する直接接続のPBR data画像をResonite向けにまとめます。検出pathの上書き、texture packing、対応shader、テスト手順と制約は[Blender workflow](docs/BLENDER.md)を参照してください。
 
 UVを持つn-gonと、生成・編集された画像bufferの現在のpixelに対応しています。Blender 5でも接線計算後にUV座標とrender-activeを先頭にしたチャンネル順を保持します。未修正版でUVが破損したbundleは自動修復されないため、元の`.blend`から新しい出力ディレクトリへ再exportしてください。textureのcolor profileは`resoloop type describe FrooxEngine.StaticTexture2D --member PreferredProfile --json`で実行環境のenumを確認します。item auditが返す外部参照候補と未使用allow指定も確認してください。[制作テストの改善と検証](docs/BLENDER-FEEDBACK.md)に記録があります。
+
+ResoniteはtextureとaudioのファイルをResonite自身のホストで開きます（meshはCLIが内容を送ります）。WindowsのResoniteにWSL2上のDev Containerや別PCからapplyすると、CLIのパスをResoniteが開けず、新規textureの取り込みが`REQUEST_TIMEOUT`（Resoniteは約50秒後に失敗を返すため）か`ASSET_IMPORT_FAILED`で止まります。この構成では`--texture-transfer data`（環境変数`RESOLOOP_TEXTURE_TRANSFER`、`.resoloop.json`の`textureTransfer`）を使うと、CLIが画像を復号して画素を送ります。既定は`file`です。読めない形式は`ASSET_TEXTURE_UNDECODABLE`でワールドを変える前に止まり、audioは`data`でもファイルで取り込むため、plan/diffが`ASSET_AUDIO_FILE_TRANSFER`を警告します。対応形式、エラー、実機での比較は[テクスチャの転送方式](docs/TEXTURE-TRANSFER.md)にあります。
 
 新しいexportはproviderを名前付きSlotへ分け、中断したapplyからの復旧に備えます。既存のroot直下provider配置を保つには`--legacy-root-providers`を使用できます。strict validation、nested SyncObjectの差分、Slot fieldの観測、geometry／partial／pivotのbounds区別は後述の観測・検証手順に従います。[時計塔・戦車テストの改善](docs/CLOCKTOWER-FEEDBACK.md)も参照してください。
 

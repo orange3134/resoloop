@@ -53,7 +53,7 @@ resoloop blender export artifacts/prop.blend --output content/prop-v2 --name Pro
 
 ResoniteLink 0.13.1は全シーンのGLB/FBX読み込みAPIではなく、メッシュと画像のasset APIを提供します。meshは保存用ImportMeshJSONを検査し、均一な静的属性のデータをアダプター内で `ImportMeshRawData` に変換して送信します。実機でJSON APIのUV入力が `UV channel 0 is already configured with 0 dimensions` となる問題を回避し、送信サイズも削減します。骨・blendshape等、損失なく変換できないデータには従来のJSON経路を残しています。
 
-画像はResoniteホスト側からファイルを読み取る `ImportTexture2DFile` を使用するため、通常は同じPC上で実行します。別PCへ接続する場合は、CLIのhash計算とResoniteのimportの両方から同じ絶対パスで読める共有先を使うか、CLIもホスト側で実行してください。メッシュのasset URLだけでは表示されず、StaticMesh／StaticTexture2D／material／MeshRendererの接続も必要です。bundleのapplyがこの接続を記述します。Blenderの線形socket色はCLIのcolorX tupleが使用するsRGB値へ変換し、sRGB画像には二重のgamma変換をしません。
+画像は既定ではResoniteホスト側からファイルを読み取る `ImportTexture2DFile` を使用するため、通常は同じPC上で実行します。別PCやコンテナの外のResoniteへ接続する場合は、`--texture-transfer data` でCLIが復号した画素を `ImportTexture2DRawData` で送るか、CLIのhash計算とResoniteのimportの両方から同じ絶対パスで読める共有先を使うか、CLIもホスト側で実行してください。[テクスチャの転送方式](TEXTURE-TRANSFER.md)を参照してください。メッシュのasset URLだけでは表示されず、StaticMesh／StaticTexture2D／material／MeshRendererの接続も必要です。bundleのapplyがこの接続を記述します。Blenderの線形socket色はCLIのcolorX tupleが使用するsRGB値へ変換し、sRGB画像には二重のgamma変換をしません。
 
 ~~~powershell
 resoloop type describe FrooxEngine.StaticMesh --json
