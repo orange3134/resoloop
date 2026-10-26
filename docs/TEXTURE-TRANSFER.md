@@ -56,3 +56,17 @@ Resonite 2026.9.18.82 / ResoniteLink 0.13.1（Windows 11）に、WSL2上のDev C
 | 4096²（画素64 MiB） | 0.77秒 | 12.4秒 | 5.8秒 |
 
 どちらも既定の要求タイムアウト（30秒）に収まり、WebSocketの送信で失敗しませんでした。`data`は画素を1枚ずつ復号して送るため、CLIが一度に持つのは1枚分の画素です。
+
+## 実機での受け入れ（2026-10-26）
+
+WSL2上のDev ContainerのCLIから、WindowsのResonite（同じ版）の新しいワールドへ、Blenderから書き出した実際のbundle（mesh 10、texture 14）をapplyしました。
+
+| 手順 | 結果 |
+| --- | --- |
+| `file`（既定）でapply | 30秒で`REQUEST_TIMEOUT`（終了コード8）。Slot・Componentの作成は0件。`suggestions`の先頭に`--texture-transfer data`の案内 |
+| `--texture-transfer data`でapply | 成功（約20秒）。asset 24件を取り込み、Slot 49・Component 58を作成。textureは正しく表示された |
+| もう一度diff（`data`・`file`のどちらも） | 変更0件（no-op 131件） |
+| ワールドを保存し、保存したワールドを開き直してdiff | 変更0件。asset 24件はすべて「保存でresdbに移ったURL」と判定。textureの`StaticTexture2D.URL`は`local://…/….webp`から`resdb:///….webp`に変わり、表示も同じ |
+| 開き直した後のapply | 書き込み0件で成功し、stateに`resdb:///`のURLを記録。もう一度diffして変更0件 |
+
+開き直した直後のapplyは、`STABLE_COMPONENT_AMBIGUOUS`（`reason: saved-id-not-found`、変更なし）で1回止まりました。stateに記録したconnection ID（開き直す前のワールドの`4`）と、開き直したワールドでの5回目の接続のconnection ID（`4`）がたまたま同じで、同じセッションと判定されたためです。ResoniteLinkのconnection IDはワールドごとに0から数えます。接続を1回はさむとIDがずれ、上のとおり成功しました。転送方式とは関係しない既存の挙動です。
