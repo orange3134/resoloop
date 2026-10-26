@@ -12,8 +12,10 @@ public sealed record TexturePixels(int Width, int Height, byte[] Rgba);
 
 public static class TextureDecoder
 {
-    // colorProfile sent with ImportTexture2DRawData; pinned by the live comparison with ImportTexture2DFile.
-    public const string? RawColorProfile = null;
+    // colorProfile sent with ImportTexture2DRawData. On Resonite 2026.9.18.82 / ResoniteLink 0.13.1, omitting it, sRGB
+    // and Linear all returned the same asset URL, which rendered like ImportTexture2DFile of the same image
+    // (docs/TEXTURE-TRANSFER.md). Declare sRGB, the profile image files carry, rather than rely on the server default.
+    public const string? RawColorProfile = "sRGB";
 
     // Signatures stb_image accepts for Radiance HDR files.
     private static readonly byte[][] HdrSignatures = ["#?RADIANCE\n"u8.ToArray(), "#?RGBE\n"u8.ToArray()];
