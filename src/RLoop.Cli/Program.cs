@@ -231,7 +231,8 @@ public static partial class Program
             var uri = await ResolveConnectionUrlAsync(parsed, resolution.Config, commandToken);
             await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds), ReflectionCacheFrom(parsed));
             await client.ConnectAsync(uri, TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds), commandToken);
-            var world = new WorldService(client, GeneratedContentMetadata.SourceForVersion(ProductVersion()));
+            var world = new WorldService(client, GeneratedContentMetadata.SourceForVersion(ProductVersion()),
+                ConfigResolver.TextureTransferOf(resolution.Config));
             await RunResonite(parsed, output, client, world, commandToken);
             return ExitCodes.Success;
         }

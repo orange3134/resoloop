@@ -29,9 +29,15 @@ public static class TextureDecoder
         return StbImageSharp.ImageInfo.FromStream(stream) is null ? "unknown-format" : null;
     }
 
-    public static TexturePixels Decode(string path)
+    /// <summary>Header check that throws ASSET_TEXTURE_UNDECODABLE before any world change.</summary>
+    public static void EnsureDecodable(string path)
     {
         if (UnsupportedReason(path) is { } reason) throw Undecodable(path, reason, null);
+    }
+
+    public static TexturePixels Decode(string path)
+    {
+        EnsureDecodable(path);
         try
         {
             using var stream = File.OpenRead(path);
