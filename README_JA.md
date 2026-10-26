@@ -25,14 +25,14 @@ resoloop は、Codex や Claude Code などの AI エージェントから Reson
 PowerShell で resoloop をインストールします。
 
 ~~~powershell
-dotnet tool install --global ResoLoop --version 0.1.0
+dotnet tool install --global ResoLoop --version 0.2.0
 resoloop --version
 ~~~
 
 すでにインストール済みの場合は、次のコマンドで更新できます。
 
 ~~~powershell
-dotnet tool update --global ResoLoop --version 0.1.0
+dotnet tool update --global ResoLoop --version 0.2.0
 ~~~
 
 ## 使い方

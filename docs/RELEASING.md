@@ -4,9 +4,9 @@ ResoLoop is distributed as a framework-dependent .NET global tool. Users need th
 
 ## Local validation before publication
 
-Version `0.1.0` is the first stable release and removes the preview designation. Read-only import and offline bundle analysis were validated against Curving Bullets and Sticker Studio before publication; both retained zero-change diffs.
+Version `0.2.0` adds optional texture pixel transfer for CLI and Resonite instances that do not share a filesystem. Use `--texture-transfer data`, `RESOLOOP_TEXTURE_TRANSFER=data`, or `"textureTransfer": "data"` in configuration. The default remains `file`; existing source-hash reuse is unchanged.
 
-This version adds read-only existing-content import, external and nested member references, references across split bundle files, explicit Slot attribute edits, offline bundle queries and extraction, and bounded external dependency capture. See [existing import](EXISTING-IMPORT.md), [reference management](EXISTING-REFERENCES.md), [split bundles and Slot attributes](EXISTING-BUNDLES-SLOTS.md), and [offline bundle analysis](BUNDLE-ANALYSIS.md) for behavior, limits, and validation results.
+The merged implementation passed a Release build with no warnings or errors and all 530 unit tests. Live validation against ResoniteLink 0.13.1 on 2026-10-27 confirmed both transfer modes, no-op reapplication, and no-op diffs after switching modes; the exact temporary test Slot was removed and its absence verified. See [texture transfer](TEXTURE-TRANSFER.md) for supported formats, 8-bit conversion, audio limitations, and earlier visual comparisons.
 
 Build and test from the repository root, commit the validated source, then pack and update the installed tool from the local feed:
 
@@ -16,7 +16,7 @@ dotnet test ResoLoop.slnx -c Release --no-build
 # Commit the validated source before packaging so package metadata identifies it.
 dotnet build ResoLoop.slnx -c Release --no-restore
 dotnet pack src/RLoop.Cli/RLoop.Cli.csproj -c Release --no-build -o artifacts/local-feed
-dotnet tool update --global ResoLoop --source ./artifacts/local-feed --version 0.1.0
+dotnet tool update --global ResoLoop --source ./artifacts/local-feed --version 0.2.0
 resoloop --version
 ~~~
 
@@ -47,10 +47,10 @@ In the GitHub repository, create an Actions variable named `NUGET_USER` containi
 
 ## Publish an immutable release
 
-Only after local world validation and an explicit decision to publish, push the release commit and confirm CI succeeds on that exact commit. Then dispatch `.github/workflows/release.yml` with a new stable SemVer version such as `0.1.0`. The workflow rebuilds and tests the commit, performs an installed-tool smoke test, verifies the bundled corresponding source, publishes the immutable package to nuget.org, and creates a regular GitHub Release.
+Only after local world validation and an explicit decision to publish, push the release commit and confirm CI succeeds on that exact commit. Then dispatch `.github/workflows/release.yml` with a new stable SemVer version such as `0.2.0`. The workflow rebuilds and tests the commit, performs an installed-tool smoke test, verifies the bundled corresponding source, publishes the immutable package to nuget.org, and creates a regular GitHub Release.
 
 ~~~powershell
-gh workflow run release.yml --repo orange3134/resoloop -f version=0.1.0
+gh workflow run release.yml --repo orange3134/resoloop -f version=0.2.0
 ~~~
 
 Never reuse a version that reached nuget.org. Use a new version for changed package contents. If package publication succeeded but GitHub Release creation failed, repair the GitHub Release separately without republishing the package.
@@ -60,7 +60,7 @@ Never reuse a version that reached nuget.org. Use a new version for changed pack
 After publication:
 
 ~~~powershell
-dotnet tool install --global ResoLoop --version 0.1.0
+dotnet tool install --global ResoLoop --version 0.2.0
 resoloop --version
 resoloop init MyResoniteProject
 ~~~
