@@ -2437,8 +2437,16 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
 
     private static bool VectorEquals(Vector3Value? current, float[] desired) => current is not null &&
         NearlyEqual(current.X, desired[0]) && NearlyEqual(current.Y, desired[1]) && NearlyEqual(current.Z, desired[2]);
-    private static bool QuaternionEquals(QuaternionValue? current, float[] desired) => current is not null &&
-        NearlyEqual(current.X, desired[0]) && NearlyEqual(current.Y, desired[1]) && NearlyEqual(current.Z, desired[2]) && NearlyEqual(current.W, desired[3]);
+    // q and -q are the same rotation, and the engine stores rotations normalised, so compare the rotations themselves:
+    // |dot| of the normalised quaternions is 1 for equal rotations (1 - 1e-8 tolerates about 0.016 degrees).
+    private static bool QuaternionEquals(QuaternionValue? current, float[] desired)
+    {
+        if (current is null) return false;
+        double cx = current.X, cy = current.Y, cz = current.Z, cw = current.W;
+        double dx = desired[0], dy = desired[1], dz = desired[2], dw = desired[3];
+        var lengths = Math.Sqrt((cx * cx + cy * cy + cz * cz + cw * cw) * (dx * dx + dy * dy + dz * dz + dw * dw));
+        return lengths > 0 && Math.Abs(cx * dx + cy * dy + cz * dz + cw * dw) / lengths >= 1 - 1e-8;
+    }
     private static bool NearlyEqual(float left, float right) => Math.Abs(left - right) <= 0.00001f * Math.Max(1, Math.Max(Math.Abs(left), Math.Abs(right)));
 
     // A replacement cannot become a target for managed fields until all replacement lists have been written and read back.
