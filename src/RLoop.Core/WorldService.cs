@@ -2006,6 +2006,9 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         return true;
     }
 
+    private static bool IsReferenceList(MemberValue member) =>
+        member.Kind == "list" && member.Elements is { Count: > 0 } && member.Elements.All(element => element.Kind == "reference");
+
     private static bool MemberMatchesRaw(MemberValue member, string raw)
     {
         if (member.Kind == "reference") return string.Equals(member.TargetId ?? "null", raw, StringComparison.Ordinal);
@@ -2223,7 +2226,9 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             candidates = candidates.Where(component => memberNames.All(name => component.Members?.ContainsKey(name) == true)).ToArray();
         if (identityValues is not null)
             candidates = candidates.Where(component => identityValues.All(identity =>
-                component.Members?.TryGetValue(identity.Key, out var value) == true && MemberMatchesRaw(value, identity.Value))).ToArray();
+                component.Members?.TryGetValue(identity.Key, out var value) == true &&
+                // Older checkpoints recorded reference lists as target IDs, which change on every world load.
+                (IsReferenceList(value) || MemberMatchesRaw(value, identity.Value)))).ToArray();
         if (referenceTargets is not null)
             candidates = candidates.Where(component => referenceTargets.All(reference =>
                 component.Members?.TryGetValue(reference.Key, out var value) == true &&
@@ -2248,7 +2253,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             identityValues = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var name in component.Spec.IdentityFields)
             {
-                if (TryGetReferenceSelector(component.Spec, name, out _)) continue;
+                // Reference evidence is recorded as selectors, not as this session's target IDs.
+                if (TryGetReferenceSelector(component.Spec, name, out _) || DeclaresReferenceList(component.Spec, name)) continue;
                 if (resolvedFields?.TryGetValue(name, out var resolved) == true) identityValues[name] = resolved;
                 else if (component.AppliedOnCreate?.TryGetValue(name, out var initial) == true) identityValues[name] = initial;
                 else if (component.Existing?.Members?.TryGetValue(name, out var current) == true) identityValues[name] = MemberRaw(current);
@@ -2271,13 +2277,20 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             referenceSelectors.Count == 0 ? null : referenceSelectors, assetFields, component.SupersededId);
     }
 
+    private static bool TryGetDeclaredField(ApplyComponentSpec component, string memberName, out JsonElement value)
+    {
+        value = default;
+        return component.Fields?.TryGetValue(memberName, out value) == true ||
+               component.InitialFields?.TryGetValue(memberName, out value) == true;
+    }
+
+    private static bool DeclaresReferenceList(ApplyComponentSpec component, string memberName) =>
+        TryGetDeclaredField(component, memberName, out var value) && value.ValueKind == JsonValueKind.Array && ContainsWorldReference(value);
+
     private static bool TryGetReferenceSelector(ApplyComponentSpec component, string memberName, out string selector)
     {
         selector = string.Empty;
-        JsonElement value;
-        if (component.Fields?.TryGetValue(memberName, out value) != true &&
-            component.InitialFields?.TryGetValue(memberName, out value) != true) return false;
-        if (value.ValueKind != JsonValueKind.String) return false;
+        if (!TryGetDeclaredField(component, memberName, out var value) || value.ValueKind != JsonValueKind.String) return false;
         var raw = value.GetString() ?? string.Empty;
         if (!StableSelectorSyntax.TryParse(raw, out var parsed) || parsed!.Kind == "member" && parsed.MemberName is null) return false;
         selector = raw;

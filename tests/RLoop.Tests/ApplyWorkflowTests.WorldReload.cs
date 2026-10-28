@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.Json.Nodes;
 using RLoop.Core;
 
 namespace RLoop.Tests;
@@ -140,6 +141,61 @@ public sealed partial class ApplyWorkflowTests
         Assert.Equal(0, applied.SlotsCreated);
         Assert.Equal(0, applied.ComponentsAdded);
         Assert.Equal(0, applied.ComponentsUpdated);
+        Assert.Equal(0, client.Writes);
+    }
+
+    private static string ReferenceListIdentityWorld(string materials = """["$ref:m1","$ref:m2"]""") => $$$"""
+        {"schemaVersion":"1","ownership":{"key":"reference-list-identity"},"slot":{"key":"root","name":"Party","parent":"Root"},
+         "children":[
+           {"slot":{"key":"materials","name":"Materials"},"components":[
+             {"key":"m1","type":"Test.Material","fields":{"Enabled":true}},
+             {"key":"m2","type":"Test.Material","fields":{"Enabled":true}}]},
+           {"slot":{"key":"state","name":"State"},"components":[
+             {"key":"renderer","type":"Test.Renderer","fields":{"Materials":{{{materials}}}},"identityFields":["Materials"]}]}]}
+        """;
+
+    [Theory]
+    [InlineData("all-set", """["$ref:m1","$ref:m2"]""")]
+    [InlineData("with-null", """["$ref:m1",null]""")]
+    public async Task AReferenceListIdentityFieldIsNotRecordedAsSessionIds(string name, string materials)
+    {
+        var document = ReloadDocument("reference-list-identity-" + name, ReferenceListIdentityWorld(materials));
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "reference-list-identity-" + name + ".state.json");
+        await service.ApplyAsync(document, new ApplyOptions(state));
+
+        var identity = JsonNode.Parse(File.ReadAllText(state))!["components"]!["renderer"]!["identityValues"];
+        Assert.True(identity is null || identity.AsObject()["Materials"] is null);
+
+        client.ReloadWorld("session-reloaded");
+        client.ResetWriteCounts();
+        var plan = await service.PlanApplyAsync(document, new ApplyOptions(state));
+
+        Assert.Equal(0, plan.Creates);
+        Assert.Empty(plan.Changes);
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Fact]
+    public async Task AnOlderCheckpointWithReferenceListIdsStillBindsAfterAWorldReload()
+    {
+        var document = ReloadDocument("reference-list-legacy", ReferenceListIdentityWorld());
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "reference-list-legacy.state.json");
+        await service.ApplyAsync(document, new ApplyOptions(state));
+        // Earlier versions saved the list's target IDs as identity evidence.
+        var checkpoint = JsonNode.Parse(File.ReadAllText(state))!;
+        checkpoint["components"]!["renderer"]!["identityValues"] = new JsonObject { ["Materials"] = "[\"Reso_old1\",\"Reso_old2\"]" };
+        File.WriteAllText(state, checkpoint.ToJsonString());
+        client.ReloadWorld("session-reloaded");
+        client.ResetWriteCounts();
+
+        var plan = await service.PlanApplyAsync(document, new ApplyOptions(state));
+
+        Assert.Equal(0, plan.Creates);
+        Assert.Empty(plan.Changes);
         Assert.Equal(0, client.Writes);
     }
 
