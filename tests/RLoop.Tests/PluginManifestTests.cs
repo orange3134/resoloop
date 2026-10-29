@@ -160,6 +160,36 @@ public sealed class PluginManifestTests : IDisposable
         Assert.Throws<RLoopException>(() => PluginPathPolicy.EnumerateFiles(package, "PLUGIN_SOURCE_INVALID"));
     }
 
+    // S: refusing a FIFO during deletion can leave an installed plugin only partly removed.
+    [Fact]
+    public void PortablePathsDeleteSpecialEntriesWithoutLeavingPartialTree()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var ordinary = Path.Combine(_root, "ordinary");
+        Directory.CreateDirectory(ordinary);
+        File.WriteAllText(Path.Combine(ordinary, "state"), "ordinary control");
+        PluginPathPolicy.DeleteTree(ordinary, "PLUGIN_REMOVE_REFUSED");
+        Assert.False(Directory.Exists(ordinary));
+
+        var plugin = Path.Combine(_root, "installed-plugin");
+        var data = Path.Combine(plugin, "data");
+        Directory.CreateDirectory(data);
+        File.WriteAllText(Path.Combine(plugin, "install.json"), "installation record");
+        File.WriteAllText(Path.Combine(data, "state"), "plugin data");
+        using var process = Process.Start(new ProcessStartInfo("mkfifo")
+        {
+            UseShellExecute = false,
+            ArgumentList = { Path.Combine(data, "pipe") }
+        })!;
+        process.WaitForExit();
+        Assert.Equal(0, process.ExitCode);
+
+        var error = Record.Exception(() => PluginPathPolicy.DeleteTree(plugin, "PLUGIN_REMOVE_REFUSED"));
+
+        Assert.Null(error);
+        Assert.False(Directory.Exists(plugin));
+    }
+
     // S: cleanup must never follow a child link or accept a substituted management root.
     [Fact]
     public void PortablePathsDeleteOnlyTheSelectedTree()

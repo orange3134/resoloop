@@ -119,7 +119,9 @@ internal static class PluginPathPolicy
                 else File.Delete(item.Path);
                 continue;
             }
-            var attributes = EnsureOrdinary(item.Path, code);
+            // Copy restrictions do not apply to cleanup: unlink FIFO/socket/device entries
+            // without opening them, while traversing only actual directories.
+            var attributes = File.GetAttributes(item.Path);
             if ((attributes & FileAttributes.Directory) == 0) { File.Delete(item.Path); continue; }
             if (item.Visited) { Directory.Delete(item.Path); continue; }
             stack.Push((item.Path, true));
