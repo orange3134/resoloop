@@ -679,7 +679,9 @@ public sealed class PluginInstallerTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
-        Directory.Delete(_external, recursive: true);
+        // Git objects/packs are read-only on Windows; retain the same non-following
+        // boundary as installer cleanup rather than traversing fixture aliases.
+        if (Directory.Exists(_root)) PluginPathPolicy.DeleteTree(_root, "PLUGIN_REMOVE_REFUSED");
+        if (Directory.Exists(_external)) PluginPathPolicy.DeleteTree(_external, "PLUGIN_REMOVE_REFUSED");
     }
 }

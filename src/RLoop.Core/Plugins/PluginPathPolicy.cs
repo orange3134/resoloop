@@ -122,6 +122,10 @@ internal static class PluginPathPolicy
             // Copy restrictions do not apply to cleanup: unlink FIFO/socket/device entries
             // without opening them, while traversing only actual directories.
             var attributes = File.GetAttributes(item.Path);
+            // Git objects/packs can be read-only on Windows. Normalize only owned,
+            // non-link entries: SetAttributes on a link could change its external target.
+            if ((attributes & FileAttributes.ReadOnly) != 0)
+                File.SetAttributes(item.Path, attributes & ~FileAttributes.ReadOnly);
             if ((attributes & FileAttributes.Directory) == 0) { File.Delete(item.Path); continue; }
             if (item.Visited) { Directory.Delete(item.Path); continue; }
             stack.Push((item.Path, true));

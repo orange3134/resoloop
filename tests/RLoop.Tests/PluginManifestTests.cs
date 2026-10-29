@@ -192,7 +192,7 @@ public sealed class PluginManifestTests : IDisposable
         Assert.False(Directory.Exists(plugin));
     }
 
-    // S: cleanup must never follow a child link or accept a substituted management root.
+    // S: read-only cleanup must not mutate external link targets or accept a substituted management root.
     [Fact]
     public void PortablePathsDeleteOnlyTheSelectedTree()
     {
@@ -212,10 +212,29 @@ public sealed class PluginManifestTests : IDisposable
         Directory.CreateDirectory(tree);
         Directory.CreateSymbolicLink(Path.Combine(tree, "child"), outside);
         File.CreateSymbolicLink(Path.Combine(tree, "dangling"), Path.Combine(outside, "missing"));
-        PluginPathPolicy.DeleteTree(tree, "PLUGIN_REMOVE_REFUSED");
-        Assert.False(Directory.Exists(tree));
-        Assert.Equal("keep", File.ReadAllText(sentinel));
-        Assert.True(Directory.Exists(nested));
+        File.CreateSymbolicLink(Path.Combine(tree, "external-file"), sentinel);
+        var owned = Path.Combine(tree, "read-only-object");
+        File.WriteAllText(owned, "owned Git object control");
+        File.SetAttributes(owned, File.GetAttributes(owned) | FileAttributes.ReadOnly);
+        File.SetAttributes(tree, File.GetAttributes(tree) | FileAttributes.ReadOnly);
+        var original = File.GetAttributes(sentinel);
+        File.SetAttributes(sentinel, original | FileAttributes.ReadOnly);
+        var protectedAttributes = File.GetAttributes(sentinel);
+        try
+        {
+            PluginPathPolicy.DeleteTree(tree, "PLUGIN_REMOVE_REFUSED");
+            Assert.False(Directory.Exists(tree));
+            Assert.Equal("keep", File.ReadAllText(sentinel));
+            Assert.Equal(protectedAttributes, File.GetAttributes(sentinel));
+            Assert.True(Directory.Exists(nested));
+        }
+        finally
+        {
+            if (File.Exists(sentinel)) File.SetAttributes(sentinel, original);
+            // Keep teardown independent when a deletion assertion fails.
+            if (Directory.Exists(tree)) File.SetAttributes(tree, File.GetAttributes(tree) & ~FileAttributes.ReadOnly);
+            if (File.Exists(owned)) File.SetAttributes(owned, File.GetAttributes(owned) & ~FileAttributes.ReadOnly);
+        }
     }
 
     private string CreatePackage()
