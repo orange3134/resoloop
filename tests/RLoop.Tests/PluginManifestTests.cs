@@ -1,4 +1,6 @@
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using RLoop.Core;
 using RLoop.Core.Plugins;
@@ -216,26 +218,52 @@ public sealed class PluginManifestTests : IDisposable
         var owned = Path.Combine(tree, "read-only-object");
         File.WriteAllText(owned, "owned Git object control");
         File.SetAttributes(owned, File.GetAttributes(owned) | FileAttributes.ReadOnly);
+        // A hardlink shares the external inode (e.g. a locally cloned Git object), so it is not owned.
+        var shared = Path.Combine(outside, "shared-object");
+        File.WriteAllText(shared, "external Git object");
+        CreateHardLink(Path.Combine(tree, "hardlinked-object"), shared);
         File.SetAttributes(tree, File.GetAttributes(tree) | FileAttributes.ReadOnly);
         var original = File.GetAttributes(sentinel);
         File.SetAttributes(sentinel, original | FileAttributes.ReadOnly);
         var protectedAttributes = File.GetAttributes(sentinel);
+        var sharedOriginal = File.GetAttributes(shared);
+        File.SetAttributes(shared, sharedOriginal | FileAttributes.ReadOnly);
+        var sharedBytes = File.ReadAllBytes(shared);
+        var sharedAttributes = File.GetAttributes(shared);
+        UnixFileMode? sharedMode = OperatingSystem.IsWindows() ? null : File.GetUnixFileMode(shared);
         try
         {
             PluginPathPolicy.DeleteTree(tree, "PLUGIN_REMOVE_REFUSED");
             Assert.False(Directory.Exists(tree));
             Assert.Equal("keep", File.ReadAllText(sentinel));
             Assert.Equal(protectedAttributes, File.GetAttributes(sentinel));
+            Assert.Equal(sharedBytes, File.ReadAllBytes(shared));
+            Assert.Equal(sharedAttributes, File.GetAttributes(shared));
+            if (!OperatingSystem.IsWindows()) Assert.Equal(sharedMode, File.GetUnixFileMode(shared));
             Assert.True(Directory.Exists(nested));
         }
         finally
         {
             if (File.Exists(sentinel)) File.SetAttributes(sentinel, original);
+            if (File.Exists(shared)) File.SetAttributes(shared, sharedOriginal);
             // Keep teardown independent when a deletion assertion fails.
             if (Directory.Exists(tree)) File.SetAttributes(tree, File.GetAttributes(tree) & ~FileAttributes.ReadOnly);
             if (File.Exists(owned)) File.SetAttributes(owned, File.GetAttributes(owned) & ~FileAttributes.ReadOnly);
         }
     }
+
+    private static void CreateHardLink(string path, string existing)
+    {
+        var created = OperatingSystem.IsWindows() ? CreateHardLinkW(path, existing, IntPtr.Zero) : Link(existing, path) == 0;
+        if (!created) throw new Win32Exception(Marshal.GetLastPInvokeError());
+    }
+
+    [DllImport("libc", EntryPoint = "link", SetLastError = true)]
+    private static extern int Link([MarshalAs(UnmanagedType.LPUTF8Str)] string existing, [MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateHardLinkW(string path, string existing, IntPtr securityAttributes);
 
     private string CreatePackage()
     {

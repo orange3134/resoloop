@@ -1,4 +1,6 @@
+using System.ComponentModel;
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 
 namespace RLoop.Core.Plugins;
 
@@ -122,11 +124,18 @@ internal static class PluginPathPolicy
             // Copy restrictions do not apply to cleanup: unlink FIFO/socket/device entries
             // without opening them, while traversing only actual directories.
             var attributes = File.GetAttributes(item.Path);
-            // Git objects/packs can be read-only on Windows. Normalize only owned,
-            // non-link entries: SetAttributes on a link could change its external target.
+            if ((attributes & FileAttributes.Directory) == 0)
+            {
+                // A file may be a hardlink sharing its inode with names outside this tree, so its
+                // attributes stay unchanged. Unix unlink needs only the parent directory's write permission.
+                if (OperatingSystem.IsWindows() && (attributes & FileAttributes.ReadOnly) != 0)
+                    WindowsNative.DeleteReadOnlyFile(item.Path, attributes);
+                else File.Delete(item.Path);
+                continue;
+            }
+            // Directories cannot be hardlinked, so a non-link directory belongs only to this tree.
             if ((attributes & FileAttributes.ReadOnly) != 0)
                 File.SetAttributes(item.Path, attributes & ~FileAttributes.ReadOnly);
-            if ((attributes & FileAttributes.Directory) == 0) { File.Delete(item.Path); continue; }
             if (item.Visited) { Directory.Delete(item.Path); continue; }
             stack.Push((item.Path, true));
             foreach (var child in Directory.EnumerateFileSystemEntries(item.Path)) stack.Push((child, false));
@@ -165,6 +174,56 @@ internal static class PluginPathPolicy
 
     [DllImport("libc", EntryPoint = "statx", SetLastError = true)]
     private static extern int Statx(int directoryFd, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, int flags, uint mask, out LinuxStatx stat);
+
+    private static class WindowsNative
+    {
+        private const uint Delete = 0x10000, ReadAttributes = 0x80, ShareAll = 7, OpenExisting = 3;
+        private const uint OpenReparsePoint = 0x200000, BackupSemantics = 0x2000000;
+        private const int FileDispositionInfoEx = 21;
+        private const uint DispositionDelete = 0x1, PosixSemantics = 0x2, IgnoreReadOnlyAttribute = 0x10;
+
+        // Git objects/packs can be read-only. A sole name may be normalized and deleted; a
+        // hardlinked name is removed without touching the attributes shared with other names.
+        public static void DeleteReadOnlyFile(string path, FileAttributes attributes)
+        {
+            using (var handle = CreateFileW(path, Delete | ReadAttributes, ShareAll, IntPtr.Zero, OpenExisting, OpenReparsePoint | BackupSemantics, IntPtr.Zero))
+            {
+                if (handle.IsInvalid) throw Failure("Could not open a read-only file for deletion.");
+                if (!GetFileInformationByHandle(handle, out var information)) throw Failure("Could not determine the file link count.");
+                if (information.NumberOfLinks > 1)
+                {
+                    var disposition = new DispositionInfoEx { Flags = DispositionDelete | PosixSemantics | IgnoreReadOnlyAttribute };
+                    if (!SetFileInformationByHandle(handle, FileDispositionInfoEx, ref disposition, (uint)Marshal.SizeOf<DispositionInfoEx>()))
+                        throw Failure("Could not delete a hardlinked read-only file without changing its attributes.");
+                    return;
+                }
+            }
+            File.SetAttributes(path, attributes & ~FileAttributes.ReadOnly);
+            File.Delete(path);
+        }
+
+        private static IOException Failure(string message) => new(message, new Win32Exception(Marshal.GetLastPInvokeError()));
+
+        [StructLayout(LayoutKind.Explicit, Size = 52)]
+        private struct ByHandleFileInformation
+        {
+            [FieldOffset(40)] public uint NumberOfLinks;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct DispositionInfoEx { public uint Flags; }
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetFileInformationByHandle(SafeFileHandle file, out ByHandleFileInformation information);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetFileInformationByHandle(SafeFileHandle file, int informationClass, ref DispositionInfoEx information, uint size);
+    }
 
     private static RLoopException Unsafe(string code, string message) => PluginErrors.Create(code, message);
     private static T Guard<T>(string code, Func<T> action)
