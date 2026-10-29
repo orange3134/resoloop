@@ -175,7 +175,7 @@ public sealed class PluginInstallerTests : IDisposable
         Assert.Empty(Directory.GetFiles(boundedPackage, "*", SearchOption.AllDirectories));
     }
 
-    // S: command failure is not evidence of a Git-external directory, and timeout must kill descendants, not succeed.
+    // S: command failure is not evidence of a Git-external directory; timeout must stop children even after their parent exits.
     [Fact]
     public void GitFailuresAndTimeoutNeverBecomeSuccessfulCopies()
     {
@@ -200,27 +200,80 @@ public sealed class PluginInstallerTests : IDisposable
         Assert.Contains("PLUGIN_GIT_FAILED", failed.Output);
         var secret = FakeSecret();
         var pid = Path.Combine(_root, "child-pid");
-        // The fake executable is only a transport/process-failure boundary. No network or installed Git is modified.
-        File.WriteAllText(executable, "#!/bin/sh\nprintf '%s' '" + secret + "' >&2\nsleep 240 &\necho $! > '" + pid + "'\nwait\n");
+        // The fake Git exits immediately, leaving a child holding both redirected pipes.
+        // It exercises the real deadline/cleanup path without a network connection.
+        File.WriteAllText(executable, "#!/bin/sh\nprintf '%s' '" + secret + "' >&2\nsleep 240 &\necho $! > '" + pid + "'\nexit 0\n");
+        var package = DirectoryAt("timeout-package");
         var watch = Stopwatch.StartNew();
-        var result = Probe(probe, ["export", "file:///unused", "main", DirectoryAt("timeout-clone"), DirectoryAt("timeout-package")],
-            new() { ["PATH"] = tools + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH") });
-        Assert.Equal(7, result.Exit);
-        Assert.Contains("PLUGIN_GIT_FAILED", result.Output);
-        Assert.DoesNotContain(secret, result.Output);
-        Assert.InRange(watch.Elapsed.TotalSeconds, 110, 150);
-        var childId = int.Parse(File.ReadAllText(pid));
-        var stillRunning = false;
         try
         {
-            using var child = Process.GetProcessById(childId);
-            // Linux can briefly retain a killed adopted descendant as a zombie; it cannot execute or hold pipes.
-            stillRunning = !child.HasExited && !File.ReadAllText("/proc/" + childId + "/stat").Contains(") Z ", StringComparison.Ordinal);
+            var result = Probe(probe, ["export", "file:///unused", "main", DirectoryAt("timeout-clone"), package],
+                new() { ["PATH"] = tools + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH") });
+            Assert.Equal(7, result.Exit);
+            Assert.Contains("PLUGIN_GIT_FAILED", result.Output);
+            Assert.DoesNotContain(secret, result.Output);
+            Assert.InRange(watch.Elapsed.TotalSeconds, 110, 150);
+            Assert.False(IsExecuting(int.Parse(File.ReadAllText(pid))), "Timed-out Git left an orphan child executing.");
+            Assert.Empty(Directory.GetFiles(package));
         }
-        catch (ArgumentException) { }
-        catch (FileNotFoundException) { }
-        Assert.False(stillRunning);
-        Assert.Empty(Directory.GetFiles(Path.Combine(_root, "timeout-package")));
+        finally
+        {
+            // Also clean up the RED case and assertion failures. Never signal an unverified PID:
+            // its executable arguments AND unique owned cwd must still identify this fixture.
+            if (File.Exists(pid))
+            {
+                var childId = int.Parse(File.ReadAllText(pid));
+                if (IsExecuting(childId))
+                {
+                    Assert.Equal("sleep\0240\0", File.ReadAllText("/proc/" + childId + "/cmdline"));
+                    Assert.Equal(package, new DirectoryInfo("/proc/" + childId + "/cwd").ResolveLinkTarget(true)?.FullName);
+                    using var child = Process.GetProcessById(childId);
+                    child.Kill();
+                    Assert.True(SpinWait.SpinUntil(() => !IsExecuting(childId), TimeSpan.FromSeconds(10)), "Owned test child termination was not confirmed.");
+                }
+            }
+        }
+
+        static bool IsExecuting(int childId)
+        {
+            try
+            {
+                // Adopted Linux children may remain as zombies until PID 1 reaps them; they cannot execute.
+                return !File.ReadAllText("/proc/" + childId + "/stat").Contains(") Z ", StringComparison.Ordinal);
+            }
+            catch (FileNotFoundException) { return false; }
+            catch (DirectoryNotFoundException) { return false; }
+        }
+    }
+
+    // S: native child chdir must not turn a relative PATH entry into execution of package-provided code.
+    [Fact]
+    public void ContainedLaunchDoesNotExecuteAGitFromThePackage()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var probe = BuildProbe();
+        var launcher = DirectoryAt("launcher");
+        var trustedTools = Path.Combine(launcher, "tools");
+        Directory.CreateDirectory(trustedTools);
+        var realGit = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator)
+            .Select(directory => Path.GetFullPath(Path.Combine(directory, "git"))).First(File.Exists);
+        var wrapper = Path.Combine(trustedTools, "git");
+        File.WriteAllText(wrapper, "#!/bin/sh\nexec '" + realGit + "' \"$@\"\n");
+        File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var source = Path.Combine(_external, "path-source");
+        Directory.CreateDirectory(Path.Combine(source, "tools"));
+        File.WriteAllText(Path.Combine(source, "content"), "safe");
+        var sentinel = Path.Combine(_root, "PACKAGE_EXECUTED");
+        var packagedGit = Path.Combine(source, "tools", "git");
+        File.WriteAllText(packagedGit, "#!/bin/sh\nprintf unsafe > '" + sentinel + "'\nexit 42\n");
+        File.SetUnixFileMode(packagedGit, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var normal = Probe(probe, ["local", source]);
+        Assert.Equal(0, normal.Exit);
+        Assert.Equal(["content", "tools/git"], JsonSerializer.Deserialize<string[]>(normal.Output)!);
+        var relative = Probe(probe, ["local", source], new() { ["PATH"] = "tools" }, launcher);
+        Assert.False(File.Exists(sentinel), "Native launch executed Git from inside the untrusted package.");
+        Assert.Equal(0, relative.Exit);
+        Assert.Equal(normal.Output, relative.Output);
     }
 
     // S: an unchecked Git list can expand installation beyond the promised package boundary without an error.
@@ -305,10 +358,11 @@ public sealed class PluginInstallerTests : IDisposable
         return Path.Combine(artifacts, "bin", "GitProbe", "debug", "GitProbe.dll");
     }
 
-    private static (int Exit, string Output) Probe(string probe, string[] arguments, Dictionary<string, string>? environment = null)
+    private static (int Exit, string Output) Probe(string probe, string[] arguments, Dictionary<string, string>? environment = null, string? workingDirectory = null)
     {
         using var process = new Process { StartInfo = new("dotnet") { UseShellExecute = false,
             RedirectStandardOutput = true, RedirectStandardError = true } };
+        if (workingDirectory is not null) process.StartInfo.WorkingDirectory = workingDirectory;
         process.StartInfo.ArgumentList.Add(probe);
         foreach (var arg in arguments) process.StartInfo.ArgumentList.Add(arg);
         if (environment is not null) foreach (var (key, value) in environment) process.StartInfo.Environment[key] = value;
