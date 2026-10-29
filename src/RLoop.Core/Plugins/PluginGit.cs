@@ -489,9 +489,12 @@ internal static class PluginGit
                 // ESRCH: the process was reaped while its stat entry was being read.
                 catch (IOException error) when ((error.HResult & 0xffff) == UnixNative.NoSuchProcess) { continue; }
                 var fields = stat[(stat.LastIndexOf(')') + 2)..].Split(' ');
-                if (fields.Length < 3 || !int.TryParse(fields[2], NumberStyles.None, CultureInfo.InvariantCulture, out var group))
+                if (fields.Length < 3) throw Error(Failed, "Could not verify Git process group termination.");
+                // Dead entries are not executing; a reaping (X) entry reports its pgrp as -1.
+                if (fields[0] is "Z" or "X") continue;
+                if (!int.TryParse(fields[2], NumberStyles.None, CultureInfo.InvariantCulture, out var group))
                     throw Error(Failed, "Could not verify Git process group termination.");
-                if (group == _pid && fields[0] is not ("Z" or "X")) return true;
+                if (group == _pid) return true;
             }
             return false;
         }
