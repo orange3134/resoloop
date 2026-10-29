@@ -309,6 +309,307 @@ public sealed class PluginInstallerTests : IDisposable
         Assert.Equal("first", File.ReadAllText(Path.Combine(explicitPackage, "content")));
     }
 
+    // S: installing from an alias must not publish ignored secrets; removal must not erase other data.
+    [Fact]
+    public void InstallVerifyRemovePreservesUnrelatedData()
+    {
+        var registry = Project("作業 ワールド");
+        var source = Repository("install-source");
+        WritePackage(source, "alpha-plugin");
+        File.WriteAllText(Path.Combine(source, ".gitignore"), "private\n");
+        Git(source, "add", ".");
+        var secret = FakeSecret();
+        File.WriteAllText(Path.Combine(source, "private"), secret);
+        File.WriteAllText(Path.Combine(source, "追加.txt"), "untracked 日本語\nsecond line\n");
+        var alias = Path.Combine(_root, "source-alias");
+        Directory.CreateSymbolicLink(alias, source);
+        var installer = new PluginInstaller(registry);
+        var installed = installer.Install(alias);
+        Assert.NotNull(installed);
+        Assert.Equal(source, installed.Record.Source.Location);
+        Assert.Equal("directory", installed.Record.Source.Kind);
+        Assert.Null(installed.Record.Commit);
+        Assert.Null(installed.Record.Source.Ref);
+        Assert.Equal("untracked 日本語\nsecond line\n", File.ReadAllText(Path.Combine(installed.PackageDirectory, "追加.txt")));
+        Assert.False(File.Exists(Path.Combine(installed.PackageDirectory, "private")));
+        Assert.False(Directory.Exists(Path.Combine(installed.PackageDirectory, ".git")));
+        Assert.DoesNotContain(secret, File.ReadAllText(Path.Combine(installed.InstallDirectory, "install.json")));
+        AssertRecordedBytes(installed);
+        if (!OperatingSystem.IsWindows()) Assert.True(File.GetUnixFileMode(Path.Combine(installed.PackageDirectory, "run.sh")).HasFlag(UnixFileMode.UserExecute));
+        var other = installer.Install(Package("other", "other-plugin"));
+        File.WriteAllText(Path.Combine(installed.DataDirectory, "user-data"), "preserve until confirmed");
+        var sentinel = Path.Combine(_external, "sentinel");
+        File.WriteAllText(sentinel, "external bytes");
+        Directory.CreateSymbolicLink(Path.Combine(installed.DataDirectory, "outside"), _external);
+        var distributed = Path.Combine(registry.ProjectRoot, "distributed-skill");
+        File.WriteAllText(distributed, "owned by user");
+        var otherBytes = Snapshot(other.InstallDirectory);
+        using (var lease = registry.OpenVerified())
+        {
+            var leased = Assert.Single(lease.Plugins, p => p.Name == "alpha-plugin");
+            Assert.Equal("#!/bin/sh\nprintf '日本語\\n'\n", File.ReadAllText(Path.Combine(leased.PackageDirectory, "run.sh")));
+        }
+        var record = Path.Combine(installed.InstallDirectory, "install.json");
+        File.WriteAllText(record, "broken record");
+        Assert.Equal("PLUGIN_RECORD_INVALID", Assert.Single(registry.List(), p => p.Name == "alpha-plugin").Problem!.Code);
+        var before = Snapshot(installed.InstallDirectory, skipLinks: true);
+        Assert.Equal("CONFIRMATION_REQUIRED", Assert.Throws<RLoopException>(() => installer.Remove("alpha-plugin", false)).Code);
+        Assert.Equal(before, Snapshot(installed.InstallDirectory, skipLinks: true));
+        installer.Remove("alpha-plugin", true);
+        Assert.False(Directory.Exists(installed.InstallDirectory));
+        Assert.Equal("external bytes", File.ReadAllText(sentinel));
+        Assert.Equal("owned by user", File.ReadAllText(distributed));
+        Assert.Equal(otherBytes, Snapshot(other.InstallDirectory));
+        Assert.Equal("other-plugin", Assert.Single(registry.LoadAll()).Name);
+    }
+
+    // S: stage failures must neither replace a working plugin nor clean up another operation's staging/data.
+    [Fact]
+    public void FailedInstallKeepsExistingInstallation()
+    {
+        var project = Project("failure-project");
+        var registry = new PluginRegistry(project.ProjectRoot, "0.2.0", new PluginNameReservations(["reserved-command"], [], []));
+        var installer = new PluginInstaller(registry);
+        var good = installer.Install(Package("good", "alpha-plugin", "shared-command"));
+        Assert.NotNull(good);
+        File.WriteAllText(Path.Combine(good.DataDirectory, "user-data"), "user bytes");
+        var before = Snapshot(good.InstallDirectory);
+        var stale = Path.Combine(registry.PluginsDirectory, ".staging-not-ours");
+        Directory.CreateDirectory(stale);
+        File.WriteAllText(Path.Combine(stale, "keep"), "old staging");
+        var invalid = Package("invalid", "invalid-plugin");
+        File.WriteAllText(Path.Combine(invalid, "resoloop-plugin.json"), "{}");
+        var incompatible = Package("incompatible", "future-plugin", minVersion: "9.0.0");
+        var conflict = Package("conflict", "conflict-plugin", "shared-command");
+        var duplicate = Package("duplicate", "alpha-plugin");
+        var reserved = Package("reserved", "reserved-plugin", "reserved-command");
+        var oversized = Package("oversized", "large-plugin");
+        using (var stream = File.Create(Path.Combine(oversized, "large"))) stream.SetLength(200L * 1024 * 1024 + 1);
+        foreach (var (source, code) in new[] { (invalid, "PLUGIN_MANIFEST_INVALID"), (incompatible, "PLUGIN_INCOMPATIBLE_VERSION"),
+            (conflict, "PLUGIN_NAME_CONFLICT"), (reserved, "PLUGIN_NAME_CONFLICT"), (duplicate, "PLUGIN_ALREADY_INSTALLED"), (oversized, "PLUGIN_SOURCE_INVALID") })
+        {
+            Assert.Equal(code, Assert.Throws<RLoopException>(() => installer.Install(source)).Code);
+            Assert.Equal(before, Snapshot(good.InstallDirectory));
+            Assert.Equal([stale], Directory.GetDirectories(registry.PluginsDirectory, ".staging-*"));
+            Assert.Equal("old staging", File.ReadAllText(Path.Combine(stale, "keep")));
+            Assert.Single(registry.LoadAll());
+        }
+        // A pre-existing public destination is never overwritten, even when it cannot be loaded.
+        var occupied = Path.Combine(registry.PluginsDirectory, "occupied-plugin");
+        Directory.CreateDirectory(occupied);
+        File.WriteAllText(Path.Combine(occupied, "user"), "do not overwrite");
+        Assert.Throws<RLoopException>(() => installer.Install(Package("occupied", "occupied-plugin")));
+        Assert.Equal("do not overwrite", File.ReadAllText(Path.Combine(occupied, "user")));
+        Assert.Equal(before, Snapshot(good.InstallDirectory));
+    }
+
+    // S: an ignore conflict can expose payload/data/records to Git; installer must not replace user rules.
+    [Fact]
+    public void ManagementIgnoreProtectsAllArtifactsWithoutOverwritingUserRules()
+    {
+        var registry = Project("ignore-project", git: true);
+        var management = Path.Combine(registry.ProjectRoot, ".resoloop");
+        Directory.CreateDirectory(management);
+        var outerIgnore = Path.Combine(management, ".gitignore");
+        File.WriteAllText(outerIgnore, "user-rule\n");
+        Directory.CreateDirectory(registry.PluginsDirectory);
+        var ignore = Path.Combine(registry.PluginsDirectory, ".gitignore");
+        File.WriteAllText(ignore, "different user rules\n");
+        var installer = new PluginInstaller(registry);
+        var source = Package("ignore-source", "ignore-plugin");
+        Assert.Equal("PLUGIN_IGNORE_CONFLICT", Assert.Throws<RLoopException>(() => installer.Install(source)).Code);
+        Assert.Equal("different user rules\n", File.ReadAllText(ignore));
+        Assert.Empty(Directory.GetDirectories(registry.PluginsDirectory));
+        File.Delete(ignore); // fixture owner removes its conflicting rules, not the installer
+        var installed = installer.Install(source);
+        Assert.NotNull(installed);
+        File.WriteAllText(Path.Combine(installed.DataDirectory, "private"), FakeSecret());
+        var stage = Path.Combine(registry.PluginsDirectory, ".staging-old");
+        Directory.CreateDirectory(stage);
+        File.WriteAllText(Path.Combine(stage, "private"), FakeSecret());
+        var targets = new[] { ".resoloop/plugins/ignore-plugin/package/resoloop-plugin.json", ".resoloop/plugins/ignore-plugin/install.json",
+            ".resoloop/plugins/ignore-plugin/data/private", ".resoloop/plugins/.staging-old/private", ".resoloop/plugins/.gitignore" };
+        var ignored = Git(registry.ProjectRoot, new[] { "check-ignore", "--no-index", "--" }.Concat(targets).ToArray()).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(targets, ignored);
+        Assert.Equal("user-rule\n", File.ReadAllText(outerIgnore));
+    }
+
+    // S (#111): removing through a linked management parent must never delete the external installation.
+    [Fact]
+    public void UnsafeParentsNeverDeleteTargets()
+    {
+        var registry = Project("unsafe-project");
+        var installer = new PluginInstaller(registry);
+        var source = Package("unsafe-source", "alpha-plugin");
+        var installed = installer.Install(source);
+        Assert.NotNull(installed);
+        File.WriteAllText(Path.Combine(installed.DataDirectory, "sentinel"), "outside installation");
+        var management = Path.Combine(registry.ProjectRoot, ".resoloop");
+        var outside = Path.Combine(_root, "moved-management");
+        Directory.Move(management, outside);
+        Directory.CreateSymbolicLink(management, outside);
+        var before = Snapshot(outside);
+        Assert.Equal("PLUGIN_PATH_UNSAFE", Assert.Throws<RLoopException>(() => installer.Remove("alpha-plugin", true)).Code);
+        Assert.Equal("PLUGIN_PATH_UNSAFE", Assert.Throws<RLoopException>(() => installer.Install(source)).Code);
+        Assert.Equal(before, Snapshot(outside));
+        Directory.Delete(management);
+        Directory.Move(outside, management);
+        installer.Remove("alpha-plugin", true);
+        Assert.False(Directory.Exists(installed.InstallDirectory));
+        Assert.Equal("alpha-plugin", installer.Install(source).Name);
+    }
+
+    // S: cached source identity/hashes must not be used after copying; only verified staged bytes are published.
+    [Fact]
+    public void CommitUsesStagedIdentity()
+    {
+        var registry = Project("staged-project");
+        var source = Package("stage-source", "original-plugin");
+        var installer = new PluginInstaller(registry, stagedPackage =>
+        {
+            WritePackage(stagedPackage, "staged-plugin", version: "2.3.4");
+            File.WriteAllText(Path.Combine(stagedPackage, "run.sh"), "actual staged bytes\n");
+        });
+        var installed = installer.Install(source);
+        Assert.NotNull(installed);
+        Assert.Equal("staged-plugin", installed.Name);
+        Assert.Equal("2.3.4", installed.Record.Version);
+        Assert.Equal("staged-plugin", Path.GetFileName(installed.InstallDirectory));
+        Assert.False(Directory.Exists(Path.Combine(registry.PluginsDirectory, "original-plugin")));
+        Assert.Equal("original-plugin", PluginManifest.Read(source).Name);
+        AssertRecordedBytes(installed);
+        Assert.Equal("actual staged bytes\n", File.ReadAllText(Path.Combine(registry.Load("staged-plugin").PackageDirectory, "run.sh")));
+    }
+
+    // S: a source overlapping the project can recursively copy staging or leak project-owned content.
+    [Fact]
+    public void OverlappingSourcesNeverCaptureTheProject()
+    {
+        var registry = Project("overlap-project");
+        var installer = new PluginInstaller(registry);
+        var good = installer.Install(Package("overlap-good", "good-plugin"));
+        Assert.NotNull(good);
+        var before = Snapshot(good.InstallDirectory);
+        var child = Path.Combine(registry.ProjectRoot, "source");
+        Directory.CreateDirectory(child);
+        WritePackage(child, "overlap-plugin");
+        Assert.Equal("PLUGIN_SOURCE_INVALID", Assert.Throws<RLoopException>(() => installer.Install(child)).Code);
+        Assert.Equal(before, Snapshot(good.InstallDirectory));
+        Assert.Empty(Directory.GetDirectories(registry.PluginsDirectory, ".staging-*"));
+    }
+
+    // S: a file:// URL is still a local source; bypassing overlap checks can capture project-owned files.
+    [Fact]
+    public void FileUrlCannotCaptureItsOwnProject()
+    {
+        var registry = Project("file-url-overlap", git: true);
+        WritePackage(registry.ProjectRoot, "overlap-plugin");
+        File.WriteAllText(Path.Combine(registry.ProjectRoot, "user-content"), "project-owned bytes");
+        Git(registry.ProjectRoot, "add", "."); Git(registry.ProjectRoot, "commit", "-m", "project source");
+        var before = Snapshot(registry.ProjectRoot);
+        Assert.Equal("PLUGIN_SOURCE_INVALID", Assert.Throws<RLoopException>(() => new PluginInstaller(registry)
+            .Install(new Uri(registry.ProjectRoot + "/").AbsoluteUri, "main")).Code);
+        Assert.Equal(before, Snapshot(registry.ProjectRoot));
+        Assert.False(Directory.Exists(registry.PluginsDirectory));
+        var remote = Repository("separate-file-url");
+        WritePackage(remote, "accepted-plugin");
+        Git(remote, "add", "."); Git(remote, "commit", "-m", "separate package");
+        Assert.Equal("accepted-plugin", new PluginInstaller(registry).Install(new Uri(remote + "/").AbsoluteUri, "main").Name);
+    }
+
+    // S: publishing clone metadata can leak Git credentials/config and mutable repository state.
+    [Fact]
+    public void GitInstallPublishesOnlyVerifiedPackageAndPinnedRecord()
+    {
+        var registry = Project("git-install-project");
+        var source = Repository("git-install-source");
+        WritePackage(source, "remote-plugin");
+        Git(source, "add", "."); Git(source, "commit", "-m", "package");
+        var commit = Git(source, "rev-parse", "HEAD").Trim();
+        var installed = new PluginInstaller(registry).Install(new Uri(source + "/").AbsoluteUri, "main");
+        Assert.NotNull(installed);
+        Assert.Equal(commit, installed.Record.Commit);
+        Assert.Equal("main", installed.Record.Source.Ref);
+        Assert.Equal("git", installed.Record.Source.Kind);
+        Assert.Equal(["resoloop-plugin.json", "run.sh"], installed.Record.Files.Keys);
+        AssertRecordedBytes(installed);
+        Assert.Equal(["data", "package"], Directory.GetDirectories(installed.InstallDirectory).Select(path => Path.GetFileName(path)!).Order().ToArray());
+        Assert.Equal(["install.json"], Directory.GetFiles(installed.InstallDirectory).Select(path => Path.GetFileName(path)!).ToArray());
+        Assert.Empty(Directory.GetDirectories(registry.PluginsDirectory, ".staging-*"));
+        using var lease = registry.OpenVerified();
+        Assert.Equal("remote-plugin", Assert.Single(lease.Plugins).Name);
+    }
+
+    // S: the public Installer (not only the lock primitive) must serialize cross-process mutation with real use.
+    [Fact]
+    public void LeaseAndMutationSerialize()
+    {
+        var registry = Project("lease-project");
+        var installer = new PluginInstaller(registry);
+        var installed = installer.Install(Package("lease-source", "alpha-plugin"));
+        Assert.NotNull(installed);
+        var next = Package("lease-next", "next-plugin");
+        var probe = BuildProbe();
+        var before = Snapshot(installed.InstallDirectory);
+        using (var lease = registry.OpenVerified())
+        {
+            foreach (var args in new[] { new[] { "install", registry.ProjectRoot, next }, new[] { "remove", registry.ProjectRoot, "alpha-plugin" } })
+            {
+                var blocked = Probe(probe, args);
+                Assert.Equal(7, blocked.Exit);
+                Assert.Contains("PLUGIN_PROJECT_BUSY", blocked.Output);
+                Assert.Equal(before, Snapshot(installed.InstallDirectory));
+                Assert.Equal("#!/bin/sh\nprintf '日本語\\n'\n", File.ReadAllText(Path.Combine(Assert.Single(lease.Plugins).PackageDirectory, "run.sh")));
+                Assert.False(Directory.Exists(Path.Combine(registry.PluginsDirectory, "next-plugin")));
+            }
+        }
+        Assert.Equal(0, Probe(probe, ["install", registry.ProjectRoot, next]).Exit);
+        Assert.Equal(0, Probe(probe, ["remove", registry.ProjectRoot, "alpha-plugin"]).Exit);
+        Assert.False(Directory.Exists(installed.InstallDirectory));
+        using var finalLease = registry.OpenVerified();
+        Assert.Equal("next-plugin", Assert.Single(finalLease.Plugins).Name);
+    }
+
+    private PluginRegistry Project(string name, bool git = false)
+    {
+        var path = git ? Repository(name) : DirectoryAt(name);
+        File.WriteAllText(Path.Combine(path, ".resoloop.json"), "{}");
+        return new(path, "0.2.0", new PluginNameReservations([], [], []));
+    }
+
+    private string Package(string directory, string name, string? command = null, string minVersion = "0.2.0")
+    {
+        var path = Path.Combine(_external, directory);
+        Directory.CreateDirectory(path);
+        WritePackage(path, name, command, minVersion);
+        return path;
+    }
+
+    private static void WritePackage(string path, string name, string? command = null, string minVersion = "0.2.0", string version = "1.0.0")
+    {
+        File.WriteAllText(Path.Combine(path, "resoloop-plugin.json"), JsonSerializer.Serialize(new
+        {
+            schemaVersion = 1, name, version, resoloop = new { minVersion },
+            commands = new[] { new { name = command ?? name + "-run", description = "offline 日本語 command", program = "./run.sh" } }
+        }));
+        File.WriteAllText(Path.Combine(path, "run.sh"), "#!/bin/sh\nprintf '日本語\\n'\n");
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(Path.Combine(path, "run.sh"), UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+    }
+
+    private static string[] Snapshot(string directory, bool skipLinks = false) => Directory.EnumerateFiles(directory, "*", new EnumerationOptions
+        { RecurseSubdirectories = true, AttributesToSkip = skipLinks ? FileAttributes.ReparsePoint : 0 })
+        .Order(StringComparer.Ordinal).Select(path => Path.GetRelativePath(directory, path) + ":" + Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)))).ToArray();
+
+    private static void AssertRecordedBytes(InstalledPlugin installed)
+    {
+        var actual = Directory.GetFiles(installed.PackageDirectory, "*", SearchOption.AllDirectories)
+            .Select(path => Path.GetRelativePath(installed.PackageDirectory, path).Replace(Path.DirectorySeparatorChar, '/')).Order(StringComparer.Ordinal).ToArray();
+        Assert.Equal(actual, installed.Record.Files.Keys);
+        foreach (var relative in actual)
+            Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(Path.Combine(installed.PackageDirectory, relative)))), installed.Record.Files[relative]);
+        Assert.Equal(installed.Record.Files, PluginInstallRecord.Read(Path.Combine(installed.InstallDirectory, "install.json")).Files);
+    }
+
     private string DirectoryAt(string name)
     {
         var path = Path.Combine(_root, name);
