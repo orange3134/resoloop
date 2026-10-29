@@ -127,6 +127,8 @@ public sealed class PluginManifestTests : IDisposable
         var package = CreatePackage();
         Assert.NotEmpty(PluginPathPolicy.EnumerateFiles(package, "PLUGIN_PATH_UNSAFE"));
         File.WriteAllText(Path.Combine(package, "README"), "one");
+        // Probe the actual filesystem, not the OS: some volumes fold case on Linux too.
+        if (File.Exists(Path.Combine(package, "readme"))) return;
         File.WriteAllText(Path.Combine(package, "readme"), "two");
         Assert.Throws<RLoopException>(() => PluginPathPolicy.EnumerateFiles(package, "PLUGIN_PATH_UNSAFE"));
     }

@@ -133,7 +133,6 @@ internal static class PluginGit
             if (!match.Success) throw Error(Invalid, "Invalid Git source URL.");
             location = match.Groups["host"].Value + ":" + match.Groups["path"].Value;
         }
-        if (location.Contains('@')) throw Error(Invalid, "Invalid Git source location.");
         return new PluginSource("git", location, gitRef);
     });
 

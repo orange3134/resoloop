@@ -128,7 +128,8 @@ public sealed class PluginRegistryTests : IDisposable
         var invalid = record with { Files = new Dictionary<string, string> { ["../outside"] = Hash("outside") } };
         Assert.Equal("PLUGIN_RECORD_INVALID", Assert.Throws<RLoopException>(() => invalid.Write(output)).Code);
         Assert.Equal(safeOutput, File.ReadAllBytes(output));
-        using (var stream = new FileStream(path, FileMode.Open, FileAccess.Write)) stream.SetLength(8 * 1024 * 1024 + 1);
+        // Valid oversized JSON: without the byte limit, parsing and record validation would succeed.
+        File.WriteAllText(path, System.Text.Encoding.UTF8.GetString(safeOutput) + new string(' ', 8 * 1024 * 1024));
         Assert.Equal("PLUGIN_RECORD_INVALID", Assert.Throws<RLoopException>(() => PluginInstallRecord.Read(path)).Code);
         var json = JsonNode.Parse(System.Text.Encoding.UTF8.GetString(safeOutput))!;
         var files = (JsonObject)json["files"]!;
@@ -138,8 +139,14 @@ public sealed class PluginRegistryTests : IDisposable
         File.WriteAllBytes(path, safeOutput);
         var registry = new PluginRegistry(project, "0.2.0", EmptyReservations());
         Assert.Single(registry.LoadAll());
-        using (var stream = new FileStream(Path.Combine(install, "package", "内容.txt"), FileMode.Open, FileAccess.Write))
+        var oversizedFile = Path.Combine(install, "package", "内容.txt");
+        using (var stream = new FileStream(oversizedFile, FileMode.Open, FileAccess.Write))
             stream.SetLength(200L * 1024 * 1024 + 1);
+        // Match the actual bytes so only the size guard, not hash mismatch, rejects the package.
+        var oversizedRecord = JsonNode.Parse(System.Text.Encoding.UTF8.GetString(safeOutput))!;
+        using (var stream = File.OpenRead(oversizedFile))
+            oversizedRecord["files"]!["内容.txt"] = Convert.ToHexStringLower(SHA256.HashData(stream));
+        File.WriteAllText(path, oversizedRecord.ToJsonString());
         Assert.Equal("PLUGIN_MODIFIED", Assert.Single(registry.List()).Problem?.Code);
     }
 
@@ -221,10 +228,14 @@ public sealed class PluginRegistryTests : IDisposable
         var registry = new PluginRegistry(project, "0.2.0", EmptyReservations());
         Assert.Single(registry.LoadAll());
         var alias = Path.Combine(registry.PluginsDirectory, "SAMPLE-PLUGIN");
-        Directory.CreateDirectory(alias);
-        Assert.Equal(2, registry.List().Count);
-        Assert.Throws<RLoopException>(() => registry.LoadAll());
-        Directory.Delete(alias);
+        // A case-insensitive filesystem cannot represent two distinct case aliases.
+        if (!Directory.Exists(alias))
+        {
+            Directory.CreateDirectory(alias);
+            Assert.Equal(2, registry.List().Count);
+            Assert.Throws<RLoopException>(() => registry.LoadAll());
+            Directory.Delete(alias);
+        }
         Directory.Move(install, Path.Combine(registry.PluginsDirectory, "invalid_name"));
         Assert.False(Assert.Single(registry.List()).Ok);
         Assert.Throws<RLoopException>(() => registry.LoadAll());

@@ -164,10 +164,14 @@ public sealed class PluginInstallerTests : IDisposable
         Git(repo, "add", "."); Git(repo, "commit", "-m", "link");
         Assert.Throws<RLoopException>(() => PluginGit.Export(url, "HEAD", DirectoryAt("link-clone"), DirectoryAt("link-package")));
         File.Delete(Path.Combine(repo, "link"));
-        File.WriteAllText(Path.Combine(repo, "NORMAL"), "collision");
-        Git(repo, "add", "-A"); Git(repo, "commit", "-m", "collision");
-        Assert.Throws<RLoopException>(() => PluginGit.Export(url, "HEAD", DirectoryAt("case-clone"), DirectoryAt("case-package")));
-        File.Delete(Path.Combine(repo, "NORMAL"));
+        // Only create the case-collision tree when this filesystem can keep both entries.
+        if (!File.Exists(Path.Combine(repo, "NORMAL")))
+        {
+            File.WriteAllText(Path.Combine(repo, "NORMAL"), "collision");
+            Git(repo, "add", "-A"); Git(repo, "commit", "-m", "collision");
+            Assert.Throws<RLoopException>(() => PluginGit.Export(url, "HEAD", DirectoryAt("case-clone"), DirectoryAt("case-package")));
+            File.Delete(Path.Combine(repo, "NORMAL"));
+        }
         using (var oversized = File.Create(Path.Combine(repo, "large"))) oversized.SetLength(200L * 1024 * 1024 + 1);
         Git(repo, "add", "-A"); Git(repo, "commit", "-m", "oversized");
         var boundedPackage = DirectoryAt("bounded-package");
@@ -522,7 +526,7 @@ public sealed class PluginInstallerTests : IDisposable
     public void GitInstallPublishesOnlyVerifiedPackageAndPinnedRecord()
     {
         var registry = Project("git-install-project");
-        var source = Repository("git-install-source");
+        var source = Repository("git-install-source@version");
         WritePackage(source, "remote-plugin");
         Git(source, "add", "."); Git(source, "commit", "-m", "package");
         var commit = Git(source, "rev-parse", "HEAD").Trim();

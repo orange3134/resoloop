@@ -112,7 +112,7 @@ public sealed record PluginInstallRecord(int SchemaVersion, string Name, string 
             throw InvalidRecord("Invalid Git source metadata.");
         // Saved locations may not contain authentication/userinfo, query strings or fragments.
         var location = Source.Location;
-        if (location.Contains('?') || location.Contains('#') || location.Contains('@'))
+        if (location.Contains('?') || location.Contains('#'))
             throw InvalidRecord("Git source location is not sanitized.");
         if (Uri.TryCreate(location, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" or "ssh" or "git" or "file")
         {
@@ -122,7 +122,7 @@ public sealed record PluginInstallRecord(int SchemaVersion, string Name, string 
         }
         // Sanitized scp-style host:path (the public SSH login was removed).
         var colon = location.IndexOf(':');
-        if (colon < 1 || colon == location.Length - 1 || location[..colon].Any(c => char.IsWhiteSpace(c) || c is '/' or '\\')
+        if (colon < 1 || colon == location.Length - 1 || location[..colon].Any(c => char.IsWhiteSpace(c) || c is '/' or '\\' or '@')
             || location.Contains("://", StringComparison.Ordinal)) throw InvalidRecord("Invalid Git source location.");
     }
 
