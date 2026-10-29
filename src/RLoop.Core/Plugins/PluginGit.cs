@@ -72,7 +72,7 @@ internal static class PluginGit
         var clone = git.Read(package, ["clone", "--bare", "--no-local", "--template=" + git.EmptyHooksDirectory, "--", url, checkout], 32768);
         if (clone.ExitCode != 0) throw Error(Failed, "Could not clone the plugin repository.");
         var commit = ResolveCommit(git, checkout, gitRef);
-        var listing = git.Read(checkout, ["ls-tree", "-r", "-z", "-l", "--full-tree", commit], MaximumListingBytes);
+        var listing = git.ReadBare(checkout, ["ls-tree", "-r", "-z", "-l", "--full-tree", commit], MaximumListingBytes);
         if (listing.ExitCode != 0) throw Error(Failed, "Could not read the plugin tree.");
         var blobs = ParseTree(listing.Text);
         ValidatePaths(blobs.Select(b => b.Path));
@@ -90,7 +90,7 @@ internal static class PluginGit
             PluginPathPolicy.EnsureNoLinks(destination, Invalid, allowMissing: true);
             using (var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {
-                var result = git.Stream(checkout, ["cat-file", "blob", blob.Id], output, blob.Size);
+                var result = git.StreamBare(checkout, ["cat-file", "blob", blob.Id], output, blob.Size);
                 if (result.ExitCode != 0 || output.Length != blob.Size) throw Error(Failed, "Could not export the plugin blob.");
             }
             if (!OperatingSystem.IsWindows())
@@ -144,7 +144,7 @@ internal static class PluginGit
         var commits = new HashSet<string>(StringComparer.Ordinal);
         foreach (var candidate in candidates)
         {
-            var result = git.Read(checkout, ["rev-parse", "--verify", "--end-of-options", candidate + "^{commit}"], 256);
+            var result = git.ReadBare(checkout, ["rev-parse", "--verify", "--end-of-options", candidate + "^{commit}"], 256);
             if (result.ExitCode != 0) continue;
             var id = result.Text.TrimEnd('\r', '\n');
             if (!ObjectId.IsMatch(id)) throw Error(Failed, "Git returned an invalid commit ID.");
@@ -284,6 +284,13 @@ internal static class PluginGit
 
         public GitResult Stream(string directory, string[] arguments, Stream output, long maximumBytes) =>
             RunAsync(directory, arguments, output, maximumBytes).GetAwaiter().GetResult();
+
+        // Name a bare clone explicitly: cwd discovery is subject to the user's safe.bareRepository.
+        public GitResult ReadBare(string repository, string[] arguments, int maximumBytes) =>
+            Read(repository, ["--git-dir=" + repository, .. arguments], maximumBytes);
+
+        public GitResult StreamBare(string repository, string[] arguments, Stream output, long maximumBytes) =>
+            Stream(repository, ["--git-dir=" + repository, .. arguments], output, maximumBytes);
 
         private async Task<GitResult> RunAsync(string directory, string[] arguments, Stream output, long maximumBytes)
         {
@@ -479,6 +486,8 @@ internal static class PluginGit
                 try { stat = File.ReadAllText(Path.Combine(directory, "stat")); }
                 catch (FileNotFoundException) { continue; }
                 catch (DirectoryNotFoundException) { continue; }
+                // ESRCH: the process was reaped while its stat entry was being read.
+                catch (IOException error) when ((error.HResult & 0xffff) == UnixNative.NoSuchProcess) { continue; }
                 var fields = stat[(stat.LastIndexOf(')') + 2)..].Split(' ');
                 if (fields.Length < 3 || !int.TryParse(fields[2], NumberStyles.None, CultureInfo.InvariantCulture, out var group))
                     throw Error(Failed, "Could not verify Git process group termination.");
