@@ -136,7 +136,7 @@ internal abstract class PluginProcess : IDisposable
 {
     private static readonly TimeSpan StopConfirmation = TimeSpan.FromSeconds(5);
     private Task<int>? _completion;
-    protected IReadOnlyDictionary<string, object?> Context { get; private set; } = new Dictionary<string, object?>();
+    protected IReadOnlyDictionary<string, object?> Context { get; set; } = new Dictionary<string, object?>();
 
     public AnonymousPipeServerStream? Output { get; private set; }
     public AnonymousPipeServerStream? ErrorOutput { get; private set; }
@@ -221,8 +221,17 @@ internal abstract class PluginProcess : IDisposable
                 UnixNative.Check(UnixNative.posix_spawnattr_init(ref attributes));
                 try
                 {
-                    UnixNative.Check(UnixNative.posix_spawnattr_setflags(ref attributes, UnixNative.SpawnSetProcessGroup));
+                    UnixNative.Check(UnixNative.posix_spawnattr_setflags(ref attributes,
+                        UnixNative.SpawnSetProcessGroup | UnixNative.SpawnSetSignalDefault | UnixNative.SpawnSetSignalMask));
                     UnixNative.Check(UnixNative.posix_spawnattr_setpgroup(ref attributes, 0));
+                    // The .NET host ignores SIGPIPE and an ignored disposition survives exec: a shell pipeline in the
+                    // plugin would then loop on EPIPE until the deadline. Restore it and start with no blocked signals.
+                    var signals = default(UnixNative.SignalSet);
+                    UnixNative.CheckErrno(UnixNative.sigemptyset(ref signals));
+                    UnixNative.CheckErrno(UnixNative.sigaddset(ref signals, UnixNative.BrokenPipeSignal));
+                    UnixNative.Check(UnixNative.posix_spawnattr_setsigdefault(ref attributes, ref signals));
+                    UnixNative.CheckErrno(UnixNative.sigemptyset(ref signals));
+                    UnixNative.Check(UnixNative.posix_spawnattr_setsigmask(ref attributes, ref signals));
                     UnixNative.Check(UnixNative.posix_spawn_file_actions_addchdir_np(ref actions, workingDirectory));
                     if (Output is not null && ErrorOutput is not null)
                     {
@@ -241,9 +250,12 @@ internal abstract class PluginProcess : IDisposable
                     // Never hand the plugin lock or other host descriptors to the plugin.
                     UnixNative.Check(UnixNative.posix_spawn_file_actions_addclosefrom_np(ref actions, 3));
                     using var argv = new Utf8Vector(arguments.Prepend(executable));
-                    using var envp = new Utf8Vector(environment.Select(item => item.Key + "=" + item.Value));
+                    // PWD must name the child's actual cwd: tools such as make read $(PWD), not getcwd().
+                    using var envp = new Utf8Vector(environment.Where(item => item.Key != "PWD")
+                        .Select(item => item.Key + "=" + item.Value).Append("PWD=" + workingDirectory));
                     UnixNative.Check(UnixNative.posix_spawn(out var pid, executable, ref actions, ref attributes, argv.Pointer, envp.Pointer));
                     _pid = pid;
+                    Context = new Dictionary<string, object?>(Context) { ["processGroup"] = pid };
                     // WNOWAIT deliberately pins the leader PID/PGID until group cleanup is confirmed.
                     Exited = Task.Run(() =>
                     {
@@ -526,8 +538,9 @@ internal abstract class PluginProcess : IDisposable
 
     internal static class UnixNative
     {
-        public const short SpawnSetProcessGroup = 0x02;
+        public const short SpawnSetProcessGroup = 0x02, SpawnSetSignalDefault = 0x04, SpawnSetSignalMask = 0x08;
         public const int WaitExited = 4, WaitNoReap = 0x01000000, Interrupted = 4, NoSuchProcess = 3, BadDescriptor = 9, KillSignal = 9;
+        public const int BrokenPipeSignal = 13;
         // glibc spawn.h ABI (same layout as PluginGit). Attribute fields are accessed only through libc setters;
         // GNU chdir/closefrom actions fail closed if unavailable.
         [StructLayout(LayoutKind.Explicit, Size = 336)]
@@ -538,11 +551,19 @@ internal abstract class PluginProcess : IDisposable
         public struct Padding { public int Alignment; }
         [StructLayout(LayoutKind.Explicit, Size = 128)]
         public struct SignalInfo { [FieldOffset(0)] public long Alignment; }
+        // glibc sigset_t (1024 bits).
+        [StructLayout(LayoutKind.Explicit, Size = 128)]
+        public struct SignalSet { [FieldOffset(0)] public long Alignment; }
         public static void Check(int error) { if (error != 0) throw new Win32Exception(error); }
+        public static void CheckErrno(int result) { if (result != 0) throw new Win32Exception(Marshal.GetLastPInvokeError()); }
         [DllImport("libc")] public static extern int posix_spawnattr_init(ref SpawnAttributes attributes);
         [DllImport("libc")] public static extern int posix_spawnattr_destroy(ref SpawnAttributes attributes);
         [DllImport("libc")] public static extern int posix_spawnattr_setflags(ref SpawnAttributes attributes, short flags);
         [DllImport("libc")] public static extern int posix_spawnattr_setpgroup(ref SpawnAttributes attributes, int group);
+        [DllImport("libc")] public static extern int posix_spawnattr_setsigdefault(ref SpawnAttributes attributes, ref SignalSet signals);
+        [DllImport("libc")] public static extern int posix_spawnattr_setsigmask(ref SpawnAttributes attributes, ref SignalSet signals);
+        [DllImport("libc", SetLastError = true)] public static extern int sigemptyset(ref SignalSet signals);
+        [DllImport("libc", SetLastError = true)] public static extern int sigaddset(ref SignalSet signals, int signal);
         [DllImport("libc")] public static extern int posix_spawn_file_actions_init(ref SpawnActions actions);
         [DllImport("libc")] public static extern int posix_spawn_file_actions_destroy(ref SpawnActions actions);
         [DllImport("libc")] public static extern int posix_spawn_file_actions_adddup2(ref SpawnActions actions, int source, int destination);

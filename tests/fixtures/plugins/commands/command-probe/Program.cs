@@ -9,7 +9,7 @@ switch (args[0])
     case "record":
     {
         var environment = Environment.GetEnvironmentVariables().Keys.Cast<string>()
-            .Where(key => key.StartsWith("RESOLOOP_PLUGIN_", StringComparison.OrdinalIgnoreCase))
+            .Where(key => key.StartsWith("RESOLOOP_PLUGIN_", StringComparison.OrdinalIgnoreCase) || key == "PWD")
             .ToDictionary(key => key, key => Environment.GetEnvironmentVariable(key));
         File.WriteAllText(Path.Combine(data!, "received.json"), JsonSerializer.Serialize(new
         {
