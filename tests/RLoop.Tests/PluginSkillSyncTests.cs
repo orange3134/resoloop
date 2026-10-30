@@ -180,6 +180,33 @@ public sealed class PluginSkillSyncTests : IDisposable
         Assert.Equal("user edit", ReadSkill("alpha-guide/SKILL.md"));
     }
 
+    // S: a sync must never report success after saving a record that the next read rejects for its size.
+    [Fact]
+    public void OversizedRecordsAreRefusedBeforeAnyWrite()
+    {
+        ProjectInitializer.Initialize(_project);
+        Install("alpha-plugin", "alpha-guide", new() { ["SKILL.md"] = "v1 skill" });
+        // A valid record of a removed plugin that is within the read limit only while it stays compact.
+        var hash = new string('a', 64);
+        var compact = new StringBuilder("{\"schemaVersion\":1,\"files\":{");
+        for (var i = 1; i <= 62_000; i++)
+            compact.Append(i == 1 ? "" : ",").Append($"\"old-guide/f{i:D6}.md\":{{\"plugin\":\"old-plugin\",\"sha256\":\"{hash}\"}}");
+        File.WriteAllText(RecordPath, compact.Append("}}").ToString(), new UTF8Encoding(false));
+        var record = File.ReadAllBytes(RecordPath);
+        Assert.True(record.Length < 8 * 1024 * 1024);
+        File.Delete(Skill("resonite-flux/SKILL.md"));
+
+        Assert.Equal("PLUGIN_SKILL_RECORD_TOO_LARGE", Assert.Throws<RLoopException>(() => Sync(update: true)).Code);
+        Assert.False(File.Exists(Skill("alpha-guide/SKILL.md")));
+        Assert.False(File.Exists(Skill("resonite-flux/SKILL.md")));
+        Assert.Equal(record, File.ReadAllBytes(RecordPath));
+
+        new PluginInstaller(Registry()).Remove("alpha-plugin", confirmed: true);
+        Sync(update: true);
+        Assert.True(File.Exists(Skill("resonite-flux/SKILL.md")));
+        Assert.Equal(record, File.ReadAllBytes(RecordPath)); // unchanged entries are not rewritten
+    }
+
     private string RecordPath => Skill(".resoloop-plugins.json");
     private string Skill(string relative) => Path.Combine(_project, ".agents", "skills", relative.Replace('/', Path.DirectorySeparatorChar));
     private string ReadSkill(string relative) => File.ReadAllText(Skill(relative));

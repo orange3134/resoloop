@@ -59,6 +59,8 @@ internal sealed class PluginSkillPlan : IDisposable
     private readonly bool _recordExists;
     private readonly Dictionary<string, (string Path, RecordEntry Entry)> _record;
     private readonly List<Planned> _planned = [];
+    // The serialized record Apply writes; null when its entries do not change, so the record is not rewritten.
+    private readonly byte[]? _nextRecord;
 
     internal PluginSkillPlan(string projectRoot, PluginReadLease lease)
     {
@@ -86,6 +88,8 @@ internal sealed class PluginSkillPlan : IDisposable
             }
         Retained = _record.Values.Where(item => !declared.Contains(item.Path)).OrderBy(item => item.Path, StringComparer.Ordinal)
             .Select(item => new PluginSkillRetainedFile(item.Entry.Plugin, SkillsPrefix + item.Path, item.Entry.Sha256)).ToArray();
+        // Checked while planning, before sync or init writes any bundled or plugin file, so check reports it too.
+        _nextRecord = NextRecord();
     }
 
     public IReadOnlyList<PluginSkillRetainedFile> Retained { get; }
@@ -104,30 +108,28 @@ internal sealed class PluginSkillPlan : IDisposable
     {
         if (Conflicts(init).Count != 0) throw new InvalidOperationException("Conflicts must be checked before applying.");
         var updated = new List<string>();
-        var record = _record.Values.ToDictionary(item => item.Path, item => item.Entry, StringComparer.OrdinalIgnoreCase);
         foreach (var (status, target, packageDirectory, packageRelative) in _planned)
         {
-            if (status.Status is "missing" or "update-available")
+            if (status.Status is not ("missing" or "update-available")) continue;
+            var package = PluginPathPolicy.Combine(packageDirectory, packageRelative, "PLUGIN_MODIFIED");
+            var bytes = File.ReadAllBytes(package);
+            if (Hash(bytes) != status.PackageHash)
+                throw PluginErrors.Create("PLUGIN_MODIFIED", "Plugin package content changed after verification.");
+            try { Replace(Destination(target), bytes, package); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                var package = PluginPathPolicy.Combine(packageDirectory, packageRelative, "PLUGIN_MODIFIED");
-                var bytes = File.ReadAllBytes(package);
-                if (Hash(bytes) != status.PackageHash)
-                    throw PluginErrors.Create("PLUGIN_MODIFIED", "Plugin package content changed after verification.");
-                try { Replace(Destination(target), bytes, package); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                {
-                    throw new RLoopException("PLUGIN_SKILL_WRITE_FAILED",
-                        "Could not write a plugin skill file. It was not recorded as distributed.", ExitCodes.OperationFailed,
-                        new Dictionary<string, object?> { ["path"] = status.Path, ["updated"] = updated.ToArray() },
-                        ["Fix the file or directory permission, then run resoloop skills sync --update again."], ex);
-                }
-                updated.Add(status.Path);
+                throw new RLoopException("PLUGIN_SKILL_WRITE_FAILED",
+                    "Could not write a plugin skill file. It was not recorded as distributed.", ExitCodes.OperationFailed,
+                    new Dictionary<string, object?> { ["path"] = status.Path, ["updated"] = updated.ToArray() },
+                    ["Fix the file or directory permission, then run resoloop skills sync --update again."], ex);
             }
-            else if (status.Status != "record-update-required") continue;
-            record.Remove(target);
-            record[target] = new RecordEntry(status.Plugin, status.PackageHash);
+            updated.Add(status.Path);
         }
-        if (WriteRecord(record)) updated.Add(PluginSkillManager.RecordRelativePath);
+        if (_nextRecord is not null)
+        {
+            WriteRecord(_nextRecord);
+            updated.Add(PluginSkillManager.RecordRelativePath);
+        }
         return updated;
     }
 
@@ -201,20 +203,50 @@ internal sealed class PluginSkillPlan : IDisposable
         return true;
     }
 
-    private bool WriteRecord(Dictionary<string, RecordEntry> record)
+    // Applies the planned entries like Apply does (a key takes the declared spelling) and serializes the record only
+    // when an entry is added or changes its plugin, hash or key spelling. Entries are never removed.
+    private byte[]? NextRecord()
     {
-        if (record.Count == 0) return false;
+        var record = _record.Values.ToDictionary(item => item.Path, item => item.Entry, StringComparer.OrdinalIgnoreCase);
+        var changed = false;
+        foreach (var (status, target, _, _) in _planned)
+        {
+            if (status.Status is not ("missing" or "update-available" or "record-update-required")) continue;
+            var entry = new RecordEntry(status.Plugin, status.PackageHash);
+            changed |= !_record.TryGetValue(target, out var recorded) || recorded.Path != target || recorded.Entry != entry;
+            record.Remove(target);
+            record[target] = entry;
+        }
+        if (!changed) return null;
         var document = new RecordDocument(1, new SortedDictionary<string, RecordEntry>(record, StringComparer.Ordinal));
         var bytes = JsonSerializer.SerializeToUtf8Bytes(document, RecordJson).Concat("\n"u8.ToArray()).ToArray();
+        EnsureReadable(bytes);
+        return bytes;
+    }
+
+    private void WriteRecord(byte[] bytes)
+    {
+        EnsureReadable(bytes);
         PluginPathPolicy.EnsureNoLinks(_recordPath, Unsafe, allowMissing: true);
-        if (_recordExists && File.ReadAllBytes(_recordPath).AsSpan().SequenceEqual(bytes)) return false;
         try { Replace(_recordPath, bytes, modeSource: null); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             throw new RLoopException("PLUGIN_SKILL_WRITE_FAILED", "Could not write the plugin skill record.", ExitCodes.OperationFailed,
                 new Dictionary<string, object?> { ["path"] = PluginSkillManager.RecordRelativePath }, innerException: ex);
         }
-        return true;
+    }
+
+    // A record over the read limit would stop every later check, update and init, so it is never written.
+    private static void EnsureReadable(byte[] record)
+    {
+        if (record.Length <= MaximumRecordBytes) return;
+        throw new RLoopException("PLUGIN_SKILL_RECORD_TOO_LARGE",
+            "The plugin skill record would exceed the size that resoloop can read back, so nothing was written.",
+            ExitCodes.ValidationFailed, new Dictionary<string, object?>
+            {
+                ["path"] = PluginSkillManager.RecordRelativePath, ["bytes"] = record.Length, ["limit"] = MaximumRecordBytes
+            },
+            ["Remove the plugin whose skills add the new record entries, or install a version with fewer skill files."]);
     }
 
     private static (Dictionary<string, (string Path, RecordEntry Entry)> Entries, bool Exists) ReadRecord(string path)
