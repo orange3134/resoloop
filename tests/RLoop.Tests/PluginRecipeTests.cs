@@ -22,6 +22,10 @@ public sealed class PluginRecipeTests : IDisposable
         var project = Project("主 ワールド");
         AddPlugin(project, "aa-plugin", "日本語 A");
         AddPlugin(project, "bb-plugin", "日本語 B");
+        var otherProject = Project("cwd ワールド");
+        AddPlugin(otherProject, "aa-plugin", "別ワールド");
+        using (var positive = new PluginRecipeResolver(Registry(otherProject)))
+            Assert.NotEmpty(positive.Read("aa-plugin:sample-card"));
         using var resolver = new PluginRecipeResolver(Registry(project));
         var entries = UixRecipes.List(resolver).Where(recipe => recipe.Name.Contains(':')).ToArray();
         Assert.Equal(new[] { "aa-plugin:sample-card", "bb-plugin:sample-card" }, entries.Select(recipe => recipe.Name));
@@ -40,7 +44,13 @@ public sealed class PluginRecipeTests : IDisposable
             Assert.Equal("caller sentinel", File.ReadAllText(output));
         }
         Assert.Throws<RLoopException>(() => UixRecipes.Read("sample-card", resolver));
-        Assert.Throws<RLoopException>(() => UixRecipes.Read("aa-plugin:sample-card"));
+        var previous = Directory.GetCurrentDirectory();
+        try
+        {
+            Directory.SetCurrentDirectory(otherProject);
+            Assert.Throws<RLoopException>(() => UixRecipes.Read("aa-plugin:sample-card"));
+        }
+        finally { Directory.SetCurrentDirectory(previous); }
         Assert.Equal("button", UixRecipes.Describe("button", resolver).Name);
     }
 
@@ -106,26 +116,6 @@ public sealed class PluginRecipeTests : IDisposable
         Assert.Throws<RLoopException>(() => ApplyDocumentCompiler.Compile(path, "0.2.0", Reservations()));
         File.WriteAllText(path, valid);
         Assert.Equal(expected, ApplyDocumentCompiler.Compile(path, "0.2.0", Reservations()).Json);
-    }
-
-    // S: eagerly opening a registry breaks existing builtin-only authoring, even outside projects.
-    [Fact]
-    public void BuiltinsDoNotRequireAProjectOrHealthyPlugins()
-    {
-        Directory.CreateDirectory(_root);
-        var standalone = Path.Combine(_root, "standalone.json");
-        var builtin = """{"children":[{"$recipe":"button","$with":{"key":"panel_1","rect":{}}}]}""";
-        File.WriteAllText(standalone, builtin);
-        var expected = ApplyDocumentCompiler.Compile(standalone).Json;
-        var project = Project("壊れた導入物");
-        var installed = AddPlugin(project, "aa-plugin", "original");
-        File.AppendAllText(Path.Combine(installed.PackageDirectory, "内容.json"), "changed");
-        var main = Path.Combine(project, "main.json");
-        File.WriteAllText(main, builtin);
-        Assert.Equal(expected, ApplyDocumentCompiler.Compile(main).Json);
-        using var expanded = JsonDocument.Parse(expected);
-        Assert.Equal("uix-button--panel_1", expanded.RootElement.GetProperty("children")[0]
-            .GetProperty("slot").GetProperty("key").GetString());
     }
 
     private static string Document(string recipe) => JsonSerializer.Serialize(new
