@@ -124,6 +124,29 @@ public sealed class PluginSkillSyncTests : IDisposable
         Assert.True(Sync(update: false).Synchronized);
     }
 
+    // S: init must not overwrite a user's edit, and a project whose plugins declare no skills gets no record file.
+    [Fact]
+    public void InitDistributesPluginSkillsButNeverOverwritesEdits()
+    {
+        ProjectInitializer.Initialize(_project);
+        Install("tool-plugin", null, []);
+        var synced = Sync(update: true);
+        Assert.Null(synced.Plugins);
+        Assert.False(File.Exists(RecordPath));
+
+        Install("alpha-plugin", "alpha-guide", new() { ["SKILL.md"] = "v1 skill", ["references/手順.md"] = "v1 手順" });
+        var init = ProjectInitializer.Initialize(_project, Version, Reservations);
+        Assert.Equal("v1 skill", ReadSkill("alpha-guide/SKILL.md"));
+        Assert.Equal("v1 手順", ReadSkill("alpha-guide/references/手順.md"));
+        Assert.Contains(".agents/skills/alpha-guide/SKILL.md", init.Plugins!.Updated);
+        Assert.Empty(init.Created);
+
+        File.WriteAllText(Skill("alpha-guide/SKILL.md"), "user edit");
+        Assert.Equal("INIT_FILE_EXISTS",
+            Assert.Throws<RLoopException>(() => ProjectInitializer.Initialize(_project, Version, Reservations)).Code);
+        Assert.Equal("user edit", ReadSkill("alpha-guide/SKILL.md"));
+    }
+
     private string RecordPath => Skill(".resoloop-plugins.json");
     private string Skill(string relative) => Path.Combine(_project, ".agents", "skills", relative.Replace('/', Path.DirectorySeparatorChar));
     private string ReadSkill(string relative) => File.ReadAllText(Skill(relative));
