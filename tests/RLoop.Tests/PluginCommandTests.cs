@@ -93,6 +93,50 @@ public sealed class PluginCommandTests(CommandProbeFixture probe) : IDisposable,
         Assert.Equal(0, await PluginCommandRunner.RunAsync(Request(plugin, "probe-local", [], TimeSpan.FromSeconds(60), environment), CancellationToken.None));
     }
 
+    // S: the child must receive exactly the user's tokens (no parsing, no shell), the selected project as cwd,
+    // and fresh plugin variables even if the parent environment carries stale ones.
+    [Fact]
+    public async Task RawArgumentsReachTheChildUnchanged()
+    {
+        var project = CreateProject("作業 ワールド");
+        var plugin = InstallPlugin(project, "probe-plugin",
+            """[{"name":"probe-record","description":"record","program":"dotnet","args":["${pluginRoot}/probe/CommandProbe.dll","record","3","${pluginData}"]}]""", withProbe: true);
+        string[] user = ["", "日本語 引数", "a\nb", "--help", "--version", "--json", "--", ";", "$(echo injected)", "\"quoted\" \\back\\", "end\\"];
+        var environment = CopyEnvironment();
+        environment[PluginRuntimeEnvironment.ProjectRootVariable] = "/elsewhere";
+        var context = new PluginDispatchContext("0.2.0", _root, environment, ["/host/resoloop"]);
+        var invocation = PluginCommandDispatch.Parse(["--project", project, "probe-record", .. user])!;
+        Assert.Equal(3, await PluginCommandDispatch.RunAsync(invocation, context, CancellationToken.None));
+        var received = ReadReceived(plugin);
+        Assert.Equal(["record", "3", plugin.DataDirectory, .. user], received.Argv);
+        Assert.Equal(project, received.Cwd);
+        Assert.Equal(project, received.Env[PluginRuntimeEnvironment.ProjectRootVariable]);
+        Assert.Equal(plugin.PackageDirectory, received.Env[PluginRuntimeEnvironment.RootVariable]);
+        Assert.Equal("""["/host/resoloop"]""", received.Env[PluginRuntimeEnvironment.HostArgvVariable]);
+    }
+
+    // S: a running command keeps the plugin lease (no concurrent remove) and cancellation never reports success.
+    [Fact]
+    public async Task CommandsHoldTheLeaseAndCancellationNeverSucceeds()
+    {
+        var project = CreateProject();
+        var plugin = InstallPlugin(project, "probe-plugin",
+            """[{"name":"probe-hang","description":"hang","program":"dotnet","args":["${pluginRoot}/probe/CommandProbe.dll","spawn","hang"]}]""", withProbe: true);
+        using var cancel = new CancellationTokenSource();
+        var context = new PluginDispatchContext("0.2.0", project, CopyEnvironment(), ["/host/resoloop"]);
+        var run = PluginCommandDispatch.RunAsync(PluginCommandDispatch.Parse(["probe-hang"])!, context, cancel.Token);
+        var pids = await WaitForPids(plugin, TimeSpan.FromSeconds(60));
+        var installer = new PluginInstaller(new PluginRegistry(project, "0.2.0", BuiltinCommandCatalog.Reservations));
+        Assert.Equal("PLUGIN_PROJECT_BUSY", Assert.Throws<RLoopException>(() => installer.Remove("probe-plugin", true)).Code);
+        cancel.Cancel();
+        var error = await Assert.ThrowsAsync<RLoopException>(() => run);
+        Assert.Equal("PLUGIN_COMMAND_CANCELLED", error.Code);
+        Assert.False(IsRunning(pids.Child));
+        Assert.False(IsRunning(pids.Grandchild));
+        installer.Remove("probe-plugin", true);
+        Assert.False(Directory.Exists(plugin.InstallDirectory));
+    }
+
     private string CreateProject(string name = "作業 ワールド")
     {
         var project = Path.Combine(_root, name);
@@ -133,6 +177,25 @@ public sealed class PluginCommandTests(CommandProbeFixture probe) : IDisposable,
         var pids = (json.RootElement.GetProperty("child").GetInt32(), json.RootElement.GetProperty("grandchild").GetInt32());
         _spawned.AddRange([pids.Item1, pids.Item2]);
         return pids;
+    }
+
+    private async Task<(int Child, int Grandchild)> WaitForPids(InstalledPlugin plugin, TimeSpan timeout)
+    {
+        var watch = Stopwatch.StartNew();
+        while (!File.Exists(Path.Combine(plugin.DataDirectory, "pids.json")))
+        {
+            Assert.True(watch.Elapsed < timeout, "The probe did not record its process IDs.");
+            await Task.Delay(50);
+        }
+        return ReadPids(plugin);
+    }
+
+    private static (string[] Argv, string Cwd, Dictionary<string, string> Env) ReadReceived(InstalledPlugin plugin)
+    {
+        using var json = JsonDocument.Parse(File.ReadAllText(Path.Combine(plugin.DataDirectory, "received.json")));
+        var root = json.RootElement;
+        return (root.GetProperty("argv").EnumerateArray().Select(item => item.GetString()!).ToArray(), root.GetProperty("cwd").GetString()!,
+            root.GetProperty("env").EnumerateObject().ToDictionary(item => item.Name, item => item.Value.GetString()!));
     }
 
     private static bool IsRunning(int pid)
