@@ -15,6 +15,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     private readonly Dictionary<string, TypeInfo> _typeDefinitions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, MutableMetric> _metrics = new(StringComparer.Ordinal);
     private IReadOnlyList<string>? _allComponentTypes;
+    private bool _allComponentTypesLive;
     private int _cacheHits;
     private Uri? _uri;
     private ReflectionCacheOptions _cacheOptions;
@@ -400,32 +401,56 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
 
     private async Task<string> ResolveComponentTypeAsync(string query, CancellationToken cancellationToken)
     {
-        var types = await GetAllComponentTypeNames(cancellationToken);
-        var exact = types.FirstOrDefault(x => x.Equals(query, StringComparison.Ordinal) || StripAssembly(x).Equals(query, StringComparison.Ordinal));
-        if (exact is not null) return exact;
-        var matches = types.Where(x => StripAssembly(x).EndsWith('.' + query, StringComparison.Ordinal) ||
-                                       StripAssembly(x).Equals(query, StringComparison.OrdinalIgnoreCase)).Take(20).ToArray();
+        var matches = MatchComponentTypes(await GetAllComponentTypeNames(cancellationToken), query);
+        // A list read from disk can predate a type added since (by a MOD, for example), so look live before giving up.
+        if (matches.Length == 0 && !_allComponentTypesLive)
+            matches = MatchComponentTypes(await GetAllComponentTypeNames(cancellationToken, refresh: true), query);
         if (matches.Length == 1) return matches[0];
         throw new RLoopException("COMPONENT_TYPE_NOT_FOUND",
             matches.Length == 0 ? $"Component type '{query}' was not found." : $"Component type '{query}' is ambiguous.",
             ExitCodes.NotFound, new Dictionary<string, object?> { ["query"] = query }, matches.Take(10).ToArray());
     }
 
-    private async Task<IReadOnlyList<string>> GetAllComponentTypeNames(CancellationToken cancellationToken)
+    private static string[] MatchComponentTypes(IReadOnlyList<string> types, string query)
     {
-        if (_allComponentTypes is not null)
+        var exact = types.FirstOrDefault(x => x.Equals(query, StringComparison.Ordinal) || StripAssembly(x).Equals(query, StringComparison.Ordinal));
+        if (exact is not null) return [exact];
+        return types.Where(x => StripAssembly(x).EndsWith('.' + query, StringComparison.Ordinal) ||
+                                StripAssembly(x).Equals(query, StringComparison.OrdinalIgnoreCase)).Take(20).ToArray();
+    }
+
+    // Collecting the list can take one request per category (hundreds), so it is kept in the reflection disk cache
+    // under the same version scope as the rest of the SDK metadata.
+    private async Task<IReadOnlyList<string>> GetAllComponentTypeNames(CancellationToken cancellationToken, bool refresh = false)
+    {
+        refresh |= _forceLiveMetadata;
+        if (_allComponentTypes is not null && (!refresh || _allComponentTypesLive))
         {
             Interlocked.Increment(ref _cacheHits);
             return _allComponentTypes;
         }
+        var disk = await GetReflectionCacheAsync(cancellationToken);
+        if (refresh) disk.Invalidate("component-types", "all");
+        else if (disk.Read<string[]>("component-types", "all", types => types.Length > 0) is { } stored)
+        {
+            _allComponentTypesLive = false;
+            return _allComponentTypes = stored.Value;
+        }
         var response = await Wait(_link.GetAllComponentTypes(), "component-types.get-all", cancellationToken);
         EnsureSuccess(response, "TYPE_SEARCH_FAILED");
-        if (response.ComponentTypes is { Count: > 0 }) return _allComponentTypes = response.ComponentTypes;
+        if (response.ComponentTypes is { Count: > 0 }) return RememberComponentTypes(disk, response.ComponentTypes.ToArray());
 
         var results = new HashSet<string>(StringComparer.Ordinal);
         var visited = new HashSet<string>(StringComparer.Ordinal);
         await CollectCategory(string.Empty, results, visited, cancellationToken);
-        return _allComponentTypes = results.ToArray();
+        return RememberComponentTypes(disk, results.ToArray());
+    }
+
+    private IReadOnlyList<string> RememberComponentTypes(ReflectionMetadataCache disk, string[] types)
+    {
+        disk.Write("component-types", "all", types, DateTimeOffset.UtcNow);
+        _allComponentTypesLive = true;
+        return _allComponentTypes = types;
     }
 
     private async Task CollectCategory(string category, HashSet<string> results, HashSet<string> visited,
@@ -508,7 +533,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
 
     private void ClearReflectionMemory()
     {
-        _componentDefinitions.Clear(); _typeDefinitions.Clear(); _allComponentTypes = null;
+        _componentDefinitions.Clear(); _typeDefinitions.Clear(); _allComponentTypes = null; _allComponentTypesLive = false;
         _componentEvidence.Clear(); _typeEvidence.Clear();
     }
 
