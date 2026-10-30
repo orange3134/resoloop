@@ -41,6 +41,10 @@ internal sealed class PluginSkillPlan : IDisposable
     private const string RecordInvalid = "PLUGIN_SKILL_RECORD_INVALID";
     private const string Unsafe = "PLUGIN_PATH_UNSAFE";
     private const int MaximumRecordBytes = 8 * 1024 * 1024;
+    private const string SkillsPrefix = ".agents/skills/";
+    private const UnixFileMode PermissionBits = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+        | UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
+        | UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute;
     private static readonly Regex HashPattern = new(@"\A[0-9a-f]{64}\z", RegexOptions.CultureInvariant);
     private static readonly JsonSerializerOptions RecordJson = new()
     {
@@ -77,11 +81,11 @@ internal sealed class PluginSkillPlan : IDisposable
                     if (!packageRelative.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
                     var target = skill.Name + "/" + packageRelative[prefix.Length..];
                     declared.Add(target);
-                    _planned.Add(new(Plan(plugin.Name, skill.Name, target, hash), plugin.PackageDirectory, packageRelative));
+                    _planned.Add(new(Plan(plugin.Name, skill.Name, target, hash), target, plugin.PackageDirectory, packageRelative));
                 }
             }
         Retained = _record.Values.Where(item => !declared.Contains(item.Path)).OrderBy(item => item.Path, StringComparer.Ordinal)
-            .Select(item => new PluginSkillRetainedFile(item.Entry.Plugin, item.Path, item.Entry.Sha256)).ToArray();
+            .Select(item => new PluginSkillRetainedFile(item.Entry.Plugin, SkillsPrefix + item.Path, item.Entry.Sha256)).ToArray();
     }
 
     public IReadOnlyList<PluginSkillRetainedFile> Retained { get; }
@@ -101,31 +105,27 @@ internal sealed class PluginSkillPlan : IDisposable
         if (Conflicts(init).Count != 0) throw new InvalidOperationException("Conflicts must be checked before applying.");
         var updated = new List<string>();
         var record = _record.Values.ToDictionary(item => item.Path, item => item.Entry, StringComparer.OrdinalIgnoreCase);
-        foreach (var (status, packageDirectory, packageRelative) in _planned)
+        foreach (var (status, target, packageDirectory, packageRelative) in _planned)
         {
             if (status.Status is "missing" or "update-available")
             {
-                var bytes = File.ReadAllBytes(PluginPathPolicy.Combine(packageDirectory, packageRelative, "PLUGIN_MODIFIED"));
+                var package = PluginPathPolicy.Combine(packageDirectory, packageRelative, "PLUGIN_MODIFIED");
+                var bytes = File.ReadAllBytes(package);
                 if (Hash(bytes) != status.PackageHash)
                     throw PluginErrors.Create("PLUGIN_MODIFIED", "Plugin package content changed after verification.");
-                var path = Destination(status.Path);
-                try
-                {
-                    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                    File.WriteAllBytes(path, bytes);
-                }
+                try { Replace(Destination(target), bytes, package); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
                     throw new RLoopException("PLUGIN_SKILL_WRITE_FAILED",
                         "Could not write a plugin skill file. It was not recorded as distributed.", ExitCodes.OperationFailed,
-                        new Dictionary<string, object?> { ["path"] = ".agents/skills/" + status.Path, ["updated"] = updated.ToArray() },
+                        new Dictionary<string, object?> { ["path"] = status.Path, ["updated"] = updated.ToArray() },
                         ["Fix the file or directory permission, then run resoloop skills sync --update again."], ex);
                 }
-                updated.Add(".agents/skills/" + status.Path);
+                updated.Add(status.Path);
             }
             else if (status.Status != "record-update-required") continue;
-            record.Remove(status.Path);
-            record[status.Path] = new RecordEntry(status.Plugin, status.PackageHash);
+            record.Remove(target);
+            record[target] = new RecordEntry(status.Plugin, status.PackageHash);
         }
         if (WriteRecord(record)) updated.Add(PluginSkillManager.RecordRelativePath);
         return updated;
@@ -148,7 +148,8 @@ internal sealed class PluginSkillPlan : IDisposable
     private PluginSkillFileStatus Plan(string plugin, string skill, string target, string packageHash)
     {
         _record.TryGetValue(target, out var recorded);
-        var status = new PluginSkillFileStatus(plugin, skill, target, "", packageHash, null, recorded.Entry?.Sha256, recorded.Entry?.Plugin);
+        var status = new PluginSkillFileStatus(plugin, skill, SkillsPrefix + target, "", packageHash, null,
+            recorded.Entry?.Sha256, recorded.Entry?.Plugin);
         var path = Destination(target);
         if (!IsSafeDestination(path)) return status with { Status = "unsafe-path-conflict" };
         if (!File.Exists(path)) return status with { Status = "missing" };
@@ -165,6 +166,28 @@ internal sealed class PluginSkillPlan : IDisposable
     }
 
     private string Destination(string target) => Path.Combine(_skillsRoot, target.Replace('/', Path.DirectorySeparatorChar));
+
+    // Writing a new file and renaming it over the name never changes the content of another hardlinked name,
+    // and a reader never sees a partially written file.
+    private static void Replace(string path, byte[] bytes, string? modeSource)
+    {
+        var directory = Path.GetDirectoryName(path)!;
+        Directory.CreateDirectory(directory);
+        var temporary = Path.Combine(directory, ".resoloop-" + Guid.NewGuid().ToString("N") + ".tmp");
+        try
+        {
+            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                stream.Write(bytes);
+            if (modeSource is not null && !OperatingSystem.IsWindows())
+                File.SetUnixFileMode(temporary, File.GetUnixFileMode(modeSource) & PermissionBits);
+            File.Move(temporary, path, overwrite: true);
+        }
+        catch
+        {
+            try { File.Delete(temporary); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            throw;
+        }
+    }
 
     // No link or special file from the project root down, no file where a directory is needed, no directory at the file.
     private bool IsSafeDestination(string path)
@@ -185,11 +208,7 @@ internal sealed class PluginSkillPlan : IDisposable
         var bytes = JsonSerializer.SerializeToUtf8Bytes(document, RecordJson).Concat("\n"u8.ToArray()).ToArray();
         PluginPathPolicy.EnsureNoLinks(_recordPath, Unsafe, allowMissing: true);
         if (_recordExists && File.ReadAllBytes(_recordPath).AsSpan().SequenceEqual(bytes)) return false;
-        try
-        {
-            Directory.CreateDirectory(_skillsRoot);
-            File.WriteAllBytes(_recordPath, bytes);
-        }
+        try { Replace(_recordPath, bytes, modeSource: null); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             throw new RLoopException("PLUGIN_SKILL_WRITE_FAILED", "Could not write the plugin skill record.", ExitCodes.OperationFailed,
@@ -252,5 +271,6 @@ internal sealed class PluginSkillPlan : IDisposable
 
     private sealed record RecordEntry(string Plugin, string Sha256);
     private sealed record RecordDocument(int SchemaVersion, IReadOnlyDictionary<string, RecordEntry> Files);
-    private sealed record Planned(PluginSkillFileStatus Status, string PackageDirectory, string PackageRelative);
+    // Target is relative to .agents/skills/ (the record key); Status.Path is relative to the project like SkillSyncEntry.Path.
+    private sealed record Planned(PluginSkillFileStatus Status, string Target, string PackageDirectory, string PackageRelative);
 }

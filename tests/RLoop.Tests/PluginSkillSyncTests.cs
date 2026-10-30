@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using RLoop.Core;
@@ -84,8 +86,8 @@ public sealed class PluginSkillSyncTests : IDisposable
         var conflicts = Assert.IsAssignableFrom<IEnumerable<PluginSkillFileStatus>>(error.Context["pluginConflicts"]);
         Assert.Equal(new Dictionary<string, string>
         {
-            ["beta-guide/SKILL.md"] = "untracked-conflict",
-            ["gamma-guide/SKILL.md"] = "unsafe-path-conflict"
+            [".agents/skills/beta-guide/SKILL.md"] = "untracked-conflict",
+            [".agents/skills/gamma-guide/SKILL.md"] = "unsafe-path-conflict"
         }, conflicts.ToDictionary(file => file.Path, file => file.Status));
         Assert.Equal("user's own skill", ReadSkill("beta-guide/SKILL.md"));
         Assert.Empty(Directory.EnumerateFileSystemEntries(outside));
@@ -98,11 +100,31 @@ public sealed class PluginSkillSyncTests : IDisposable
         Assert.Empty(Directory.EnumerateFileSystemEntries(outside));
     }
 
+    // S: an update replaces a hardlinked distributed file instead of writing through it, so the content of the
+    // other name outside the project (for example a world copied with cp -al) never changes.
+    [Fact]
+    public void UpdatesNeverWriteThroughHardlinks()
+    {
+        ProjectInitializer.Initialize(_project);
+        Install("alpha-plugin", "alpha-guide", new() { ["SKILL.md"] = "v1 skill" });
+        Sync(update: true);
+        var outside = Path.Combine(_sources, "copied-world-SKILL.md");
+        File.Move(Skill("alpha-guide/SKILL.md"), outside);
+        CreateHardLink(Skill("alpha-guide/SKILL.md"), outside);
+        new PluginInstaller(Registry()).Remove("alpha-plugin", confirmed: true);
+        Install("alpha-plugin", "alpha-guide", new() { ["SKILL.md"] = "v2 skill" }, "2.0.0");
+
+        Sync(update: true);
+
+        Assert.Equal("v2 skill", ReadSkill("alpha-guide/SKILL.md"));
+        Assert.Equal("v1 skill", File.ReadAllText(outside));
+    }
+
     // S: a file that could not be written must not be recorded as distributed, and the failure is not a success.
     [Fact]
     public void FailedWritesAreNotRecordedAsDistributed()
     {
-        // Linux root ignores the read-only mode that injects the failure.
+        // Linux root ignores the permissions that inject the failure.
         if (!OperatingSystem.IsWindows() && Environment.UserName == "root") return;
         ProjectInitializer.Initialize(_project);
         Install("alpha-plugin", "alpha-guide", new() { ["SKILL.md"] = "v1 skill", ["references/手順.md"] = "v1 手順" });
@@ -111,13 +133,24 @@ public sealed class PluginSkillSyncTests : IDisposable
         new PluginInstaller(Registry()).Remove("alpha-plugin", confirmed: true);
         Install("alpha-plugin", "alpha-guide", new() { ["SKILL.md"] = "v2 skill", ["references/手順.md"] = "v2 手順" }, "2.0.0");
         var blocked = Skill("alpha-guide/references/手順.md");
+        var directory = Path.GetDirectoryName(blocked)!;
+        // Windows cannot replace a read-only file; Unix cannot create a new name in a read-only directory.
         File.SetAttributes(blocked, FileAttributes.ReadOnly);
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            Assert.Equal("PLUGIN_SKILL_WRITE_FAILED", Assert.Throws<RLoopException>(() => Sync(update: true)).Code);
+            Assert.Equal(recordV1, File.ReadAllBytes(RecordPath));
+            Assert.Equal("v1 手順", ReadSkill("alpha-guide/references/手順.md"));
+            Assert.Equal(["手順.md"], Directory.GetFiles(directory).Select(Path.GetFileName));
+        }
+        finally
+        {
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            File.SetAttributes(blocked, FileAttributes.Normal);
+        }
 
-        Assert.Equal("PLUGIN_SKILL_WRITE_FAILED", Assert.Throws<RLoopException>(() => Sync(update: true)).Code);
-        Assert.Equal(recordV1, File.ReadAllBytes(RecordPath));
-        Assert.Equal("v1 手順", ReadSkill("alpha-guide/references/手順.md"));
-
-        File.SetAttributes(blocked, FileAttributes.Normal);
         Sync(update: true);
         Assert.Equal("v2 skill", ReadSkill("alpha-guide/SKILL.md"));
         Assert.Equal("v2 手順", ReadSkill("alpha-guide/references/手順.md"));
@@ -170,6 +203,19 @@ public sealed class PluginSkillSyncTests : IDisposable
         }
         new PluginInstaller(Registry()).Install(source);
     }
+
+    private static void CreateHardLink(string path, string existing)
+    {
+        var created = OperatingSystem.IsWindows() ? CreateHardLinkW(path, existing, IntPtr.Zero) : Link(existing, path) == 0;
+        if (!created) throw new Win32Exception(Marshal.GetLastPInvokeError());
+    }
+
+    [DllImport("libc", EntryPoint = "link", SetLastError = true)]
+    private static extern int Link([MarshalAs(UnmanagedType.LPUTF8Str)] string existing, [MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateHardLinkW(string path, string existing, IntPtr securityAttributes);
 
     public void Dispose()
     {

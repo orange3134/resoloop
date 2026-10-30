@@ -147,7 +147,7 @@ public static class ProjectInitializer
         }
 
         var pluginConflicts = plugins?.Conflicts(init: true) ?? [];
-        conflicts.AddRange(pluginConflicts.Select(conflict => ".agents/skills/" + conflict.Path));
+        conflicts.AddRange(pluginConflicts.Select(conflict => conflict.Path));
         if (conflicts.Count > 0)
         {
             var context = new Dictionary<string, object?> { ["rootDirectory"] = root, ["conflicts"] = conflicts };
