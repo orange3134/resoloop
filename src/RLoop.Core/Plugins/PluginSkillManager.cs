@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 
 namespace RLoop.Core.Plugins;
 
-/// <summary>One distributed file. Path is relative to .agents/skills/ and uses '/'.</summary>
+/// <summary>One distributed file. Path is relative to the project root like SkillSyncEntry.Path (".agents/skills/...") and uses '/'.</summary>
 public sealed record PluginSkillFileStatus(string Plugin, string Skill, string Path, string Status,
     string PackageHash, string? InstalledHash, string? RecordedHash, string? RecordedPlugin);
 /// <summary>A recorded file no installed plugin declares any more. It is kept with its protection record.</summary>
