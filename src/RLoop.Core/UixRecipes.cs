@@ -1,3 +1,5 @@
+using RLoop.Core.Plugins;
+
 namespace RLoop.Core;
 
 public sealed record UixRecipe(string Name, string Prototype, string Purpose,
@@ -59,6 +61,15 @@ public static class UixRecipes
              "Check minimum/midpoint/maximum and value preservation; real dragging is a separate manual check."])
     ];
 
+    public static IReadOnlyList<UixRecipe> List(PluginRecipeResolver? resolver = null) => resolver is null
+        ? Catalog : Array.AsReadOnly(Catalog.Concat(resolver.Catalog).ToArray());
+
+    public static UixRecipe Describe(string name, PluginRecipeResolver? resolver) => name.Contains(':') && resolver is not null
+        ? resolver.Describe(name) : Describe(name);
+
+    public static string Read(string name, PluginRecipeResolver? resolver) => name.Contains(':') && resolver is not null
+        ? resolver.Read(name) : Read(name);
+
     public static UixRecipe Describe(string name) => Catalog.FirstOrDefault(recipe => recipe.Name == name)
         ?? throw new RLoopException("UIX_RECIPE_NOT_FOUND", $"Unknown UIX recipe '{name}'.", ExitCodes.NotFound,
             suggestions: ["Run resoloop uix recipe list --json."]);
@@ -69,9 +80,13 @@ public static class UixRecipes
         return BundledSkillManager.LoadBundledFile($"resonite-uix/recipes/{name}.json");
     }
 
-    public static string Export(string name, string output)
+    public static string Export(string name, string output) => ExportContents(Read(name), output);
+
+    public static string Export(string name, string output, PluginRecipeResolver? resolver) =>
+        ExportContents(Read(name, resolver), output);
+
+    private static string ExportContents(string contents, string output)
     {
-        var contents = Read(name);
         var path = Path.GetFullPath(output);
         try
         {
