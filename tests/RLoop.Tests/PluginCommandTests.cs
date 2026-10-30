@@ -56,7 +56,11 @@ public sealed class PluginCommandTests(CommandProbeFixture probe) : IDisposable,
         var tools = Path.Combine(project, "tools");
         CopyDirectory(probe.OutputDirectory, tools);
         File.Copy(Path.Combine(tools, ApphostName()), Path.Combine(tools, OperatingSystem.IsWindows() ? "evil.exe" : "evil"));
-        var entries = new List<string> { "tools", Path.GetRelativePath(Environment.CurrentDirectory, tools) };
+        var entries = new List<string> { "tools" };
+        // Across Windows drives no relative path exists (GetRelativePath returns the absolute path, which is a
+        // legitimate entry); the child-cwd entry still covers that host.
+        var hostRelative = Path.GetRelativePath(Environment.CurrentDirectory, tools);
+        if (!Path.IsPathFullyQualified(hostRelative)) entries.Add(hostRelative);
         if (OperatingSystem.IsWindows())
         {
             // An absolute entry that only offers a batch file, which CreateProcess would run through cmd.exe.
