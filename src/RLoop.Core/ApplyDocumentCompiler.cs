@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Reflection;
+using RLoop.Core.Plugins;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -13,10 +15,17 @@ public static class ApplyDocumentCompiler
 
     public sealed record Result(string Json, ApplyCompilationSummary Summary);
 
-    public static Result Compile(string path)
+    public static Result Compile(string path) => CompileCore(path, mainPath =>
+        PluginRecipeResolver.ForDocument(mainPath, HostVersion(), new PluginNameReservations([], [], [])));
+
+    public static Result Compile(string path, string resoloopVersion, PluginNameReservations reservations) =>
+        CompileCore(path, mainPath => PluginRecipeResolver.ForDocument(mainPath, resoloopVersion, reservations));
+
+    private static Result CompileCore(string path, Func<string, PluginRecipeResolver> resolverFactory)
     {
-        var context = new Context();
-        var root = LoadMerged(Path.GetFullPath(path), context, []);
+        var mainPath = Path.GetFullPath(path);
+        using var context = new Context(() => resolverFactory(mainPath));
+        var root = LoadMerged(mainPath, context, []);
         if (root.Remove("limits", out var limits))
         {
             if (limits is not JsonObject settings || settings.Any(pair => pair.Key != "expandedNodes") ||
@@ -202,7 +211,9 @@ public static class ApplyDocumentCompiler
                 Fail("APPLY_RECIPE_INVALID", path + " cannot combine $recipe with $prototype/$instance.");
             if (source["$recipe"] is not JsonValue recipeValue || !recipeValue.TryGetValue<string>(out var recipeName))
                 Fail("APPLY_RECIPE_INVALID", path + ".$recipe must be a recipe name.");
-            var recipe = UixRecipes.Describe(source["$recipe"]!.GetValue<string>());
+            var requestedName = source["$recipe"]!.GetValue<string>();
+            var resolver = requestedName.Contains(':') ? context.RecipeResolver : null;
+            var recipe = UixRecipes.Describe(requestedName, resolver);
             if (source["$with"] is not JsonObject suppliedRecipe)
                 Fail("APPLY_RECIPE_INVALID", path + " requires $with containing the recipe parameters.");
             var parameters = (JsonObject)source["$with"]!.DeepClone();
@@ -214,10 +225,12 @@ public static class ApplyDocumentCompiler
             if (parameters["key"] is not JsonValue keyValue || !keyValue.TryGetValue<string>(out var localKey) ||
                 string.IsNullOrWhiteSpace(localKey) || localKey.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '-' and not '_'))
                 Fail("APPLY_RECIPE_KEY_INVALID", path + ".$with.key must use ASCII letters, digits, '-' or '_'.");
-            parameters["key"] = $"uix-{recipe.Name}--{parameters["key"]!.GetValue<string>()}";
+            var prefix = resolver is null ? $"uix-{recipe.Name}--"
+                : $"uix-plugin--{recipe.Name.Replace(":", "--", StringComparison.Ordinal)}--";
+            parameters["key"] = prefix + parameters["key"]!.GetValue<string>();
             var recipeScope = new Dictionary<string, JsonNode?>(variables, StringComparer.Ordinal);
             foreach (var pair in parameters) recipeScope[pair.Key] = pair.Value?.DeepClone();
-            var builtIn = (JsonObject)JsonNode.Parse(UixRecipes.Read(recipe.Name))!["prototypes"]![recipe.Prototype]!.DeepClone();
+            var builtIn = (JsonObject)JsonNode.Parse(UixRecipes.Read(recipe.Name, resolver))!["prototypes"]![recipe.Prototype]!.DeepClone();
             SubstituteTree(builtIn, recipeScope, path);
             var recipeOverrides = (JsonObject)source.DeepClone();
             recipeOverrides.Remove("$recipe"); recipeOverrides.Remove("$with");
@@ -317,8 +330,24 @@ public static class ApplyDocumentCompiler
     [System.Diagnostics.CodeAnalysis.DoesNotReturn]
     private static void Fail(string code, string message) => throw new RLoopException(code, message, ExitCodes.ValidationFailed);
 
-    private sealed class Context
+    private static string HostVersion()
     {
+        var assembly = Assembly.GetEntryAssembly();
+        if (assembly?.GetName().Name != "resoloop")
+            throw PluginErrors.Create("PLUGIN_INCOMPATIBLE_VERSION",
+                "Non-CLI hosts must compile plugin recipes with an explicit ResoLoop version and name reservations.");
+        var informational = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        return string.IsNullOrWhiteSpace(informational)
+            ? assembly.GetName().Version?.ToString(3) ?? throw PluginErrors.Create("PLUGIN_INCOMPATIBLE_VERSION", "ResoLoop host version is unavailable.")
+            : informational.Split('+')[0];
+    }
+
+    private sealed class Context(Func<PluginRecipeResolver> resolverFactory) : IDisposable
+    {
+        private PluginRecipeResolver? _resolver;
+        public PluginRecipeResolver RecipeResolver => _resolver ??= resolverFactory();
+        public void Dispose() => _resolver?.Dispose();
+
         public HashSet<string> Files { get; } = new(StringComparer.OrdinalIgnoreCase);
         public int Prototypes { get; set; }
         public int Instances { get; set; }

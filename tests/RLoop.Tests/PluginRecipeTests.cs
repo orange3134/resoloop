@@ -62,6 +62,77 @@ public sealed class PluginRecipeTests : IDisposable
         Assert.Equal(original, restored.Read("aa-plugin:sample-card"));
     }
 
+    // S: selecting the include directory or cwd silently reads another world's same-named plugin.
+    [Fact]
+    public void MainInputWinsOverIncludeAndWorkingDirectory()
+    {
+        var mainProject = Project("主 ワールド");
+        var otherProject = Project("別 ワールド");
+        AddPlugin(mainProject, "aa-plugin", "正しい主入力");
+        AddPlugin(otherProject, "aa-plugin", "間違った別入力");
+        var include = Path.Combine(otherProject, "include.json");
+        File.WriteAllText(include, Document("aa-plugin:sample-card"));
+        var main = Path.Combine(mainProject, "main.json");
+        File.WriteAllText(main, JsonSerializer.Serialize(new { include }));
+        var previous = Directory.GetCurrentDirectory();
+        try
+        {
+            Directory.SetCurrentDirectory(otherProject);
+            var first = ApplyDocumentCompiler.Compile(main, "0.2.0", Reservations());
+            var second = ApplyDocumentCompiler.Compile(main, "0.2.0", Reservations());
+            Assert.Equal(first.Json, second.Json);
+            using var expanded = JsonDocument.Parse(first.Json);
+            var slot = expanded.RootElement.GetProperty("children")[0].GetProperty("slot");
+            Assert.Equal("正しい主入力", slot.GetProperty("name").GetString());
+            Assert.Equal("uix-plugin--aa-plugin--sample-card--panel_1", slot.GetProperty("key").GetString());
+        }
+        finally { Directory.SetCurrentDirectory(previous); }
+    }
+
+    // S: missing plugins must not look successful; failed expansion must not strand the project lease.
+    [Fact]
+    public void MissingPluginAndFailedExpansionReleaseLease()
+    {
+        var project = Project("失敗と復旧");
+        AddPlugin(project, "aa-plugin", "正常");
+        var path = Path.Combine(project, "main.json");
+        var valid = Document("aa-plugin:sample-card");
+        File.WriteAllText(path, valid);
+        var expected = ApplyDocumentCompiler.Compile(path, "0.2.0", Reservations()).Json;
+        File.WriteAllText(path, Document("zz-plugin:sample-card"));
+        Assert.Equal("PLUGIN_NOT_INSTALLED", Assert.Throws<RLoopException>(() =>
+            ApplyDocumentCompiler.Compile(path, "0.2.0", Reservations())).Code);
+        File.WriteAllText(path, valid.Replace("\"key\"", "\"wrong\"", StringComparison.Ordinal));
+        Assert.Throws<RLoopException>(() => ApplyDocumentCompiler.Compile(path, "0.2.0", Reservations()));
+        File.WriteAllText(path, valid);
+        Assert.Equal(expected, ApplyDocumentCompiler.Compile(path, "0.2.0", Reservations()).Json);
+    }
+
+    // S: eagerly opening a registry breaks existing builtin-only authoring, even outside projects.
+    [Fact]
+    public void BuiltinsDoNotRequireAProjectOrHealthyPlugins()
+    {
+        Directory.CreateDirectory(_root);
+        var standalone = Path.Combine(_root, "standalone.json");
+        var builtin = """{"children":[{"$recipe":"button","$with":{"key":"panel_1","rect":{}}}]}""";
+        File.WriteAllText(standalone, builtin);
+        var expected = ApplyDocumentCompiler.Compile(standalone).Json;
+        var project = Project("壊れた導入物");
+        var installed = AddPlugin(project, "aa-plugin", "original");
+        File.AppendAllText(Path.Combine(installed.PackageDirectory, "内容.json"), "changed");
+        var main = Path.Combine(project, "main.json");
+        File.WriteAllText(main, builtin);
+        Assert.Equal(expected, ApplyDocumentCompiler.Compile(main).Json);
+        using var expanded = JsonDocument.Parse(expected);
+        Assert.Equal("uix-button--panel_1", expanded.RootElement.GetProperty("children")[0]
+            .GetProperty("slot").GetProperty("key").GetString());
+    }
+
+    private static string Document(string recipe) => JsonSerializer.Serialize(new
+    {
+        children = new[] { new Dictionary<string, object> { ["$recipe"] = recipe, ["$with"] = new { key = "panel_1" } } }
+    });
+
     private string Project(string name)
     {
         var path = Path.Combine(_root, "worlds", name);
