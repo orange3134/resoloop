@@ -922,11 +922,8 @@ public static partial class Program
             async Task<string?> ResolveModuleSlot(FluxModuleSpec module, CancellationToken cancellationToken)
             {
                 var parent = await client.GetSlotAsync(parentId, 1, false, cancellationToken);
-                var names = new[]
-                {
-                    module.Module,
-                    module.Module.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault()
-                }.Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.Ordinal).ToArray();
+                var names = new[] { module.Module, FluxManifestOrchestrator.ModuleChildName(module) }
+                    .Distinct(StringComparer.Ordinal).ToArray();
                 var matches = parent.Children.Where(child => names.Contains(child.Name, StringComparer.Ordinal)).ToArray();
                 if (matches.Length > 1)
                     throw new RLoopException("FLUX_MODULE_SLOT_AMBIGUOUS",

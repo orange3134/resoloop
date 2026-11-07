@@ -223,6 +223,31 @@ public sealed class P1WorkflowTests : IDisposable
             FluxManifestOrchestrator.ResolveWorldStatePath(manifest, null, "../manifest-state.json", commandDirectory));
     }
 
+    [Theory]
+    [InlineData("Note", "Note")]
+    [InlineData("Lab/Note", "World/Note")]
+    public async Task FluxManifestRejectsModulesThatWouldDeployAsTheSameChild(string first, string second)
+    {
+        File.WriteAllText(Path.Combine(_root, "note.pg"), "module Note where { 1->display }");
+        var manifest = Path.Combine(_root, "collide-flux.json");
+        File.WriteAllText(manifest, $$"""
+            { "schemaVersion":"1", "modules":[
+              {"name":"note-1","source":"note.pg","module":"{{first}}"},
+              {"name":"note-2","source":"note.pg","module":"{{second}}"}
+            ] }
+            """);
+        var fake = new FakeFluxTool();
+
+        var validation = Assert.Throws<RLoopException>(() => FluxManifestOrchestrator.ValidateManifest(manifest));
+        var deploy = await Assert.ThrowsAsync<RLoopException>(() => new FluxManifestOrchestrator(fake)
+            .DeployAsync(manifest, "Reso_Parent", new Uri("ws://localhost:12449"), null, null));
+
+        Assert.Equal("FLUX_MODULE_CHILD_COLLISION", validation.Code);
+        Assert.Equal("FLUX_MODULE_CHILD_COLLISION", deploy.Code);
+        Assert.Contains("'note-1', 'note-2'", validation.Message, StringComparison.Ordinal);
+        Assert.Empty(fake.Requests);
+    }
+
     [Fact]
     public void FluxManifestArrayBindingsExplainTheObjectShape()
     {
