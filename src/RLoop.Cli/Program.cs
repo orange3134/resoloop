@@ -40,6 +40,16 @@ public static partial class Program
                 return ExitCodes.Success;
             }
 
+            // A plugin command allows only --project before its name, so any other name that reaches the built-in
+            // parser is unknown; reject it before ResoniteLink discovery or connection.
+            if (!BuiltinCommandCatalog.IsBuiltin(parsed.Positionals[0]))
+                throw new RLoopException("UNKNOWN_COMMAND", $"Unknown command '{parsed.Positionals[0]}'.", ExitCodes.InvalidArguments,
+                    suggestions:
+                    [
+                        "Run resoloop help to list commands.",
+                        "A plugin command takes only --project DIR before its name: resoloop [--project DIR] PLUGIN_COMMAND [ARGUMENTS...]."
+                    ]);
+
             if (parsed.Positionals[0].Equals("init", StringComparison.OrdinalIgnoreCase))
             {
                 if (parsed.Positionals.Count > 2)

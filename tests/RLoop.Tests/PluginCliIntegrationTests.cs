@@ -70,7 +70,8 @@ public sealed class PluginCliIntegrationTests(CommandProbeFixture probe) : IDisp
         Assert.Equal(new[] { "record", "7", "a" }, ReadReceived(chosen));
     }
 
-    // S: an unknown name must stop before any ResoniteLink connection attempt.
+    // S: an unknown name must stop before any ResoniteLink connection attempt, also when an option comes first;
+    // otherwise a missing Resonite turns a mistyped name into CONNECTION_FAILED.
     [Fact]
     public async Task UnknownCommandStopsBeforeConnecting()
     {
@@ -87,6 +88,15 @@ public sealed class PluginCliIntegrationTests(CommandProbeFixture probe) : IDisp
         var result = await RunWithArguments(project, ["no-such-plugin-command"], ("RESONITE_LINK_URL", url));
         Assert.Equal(ExitCodes.InvalidArguments, result.ExitCode);
         Assert.Equal("UNKNOWN_COMMAND", ErrorCode(result.Stderr));
+
+        // An option before the name hands the call to the built-in parser, which must reject the name as well.
+        var optionFirst = await RunWithArguments(project, ["--json", "no-such-plugin-command"], ("RESONITE_LINK_URL", url));
+        Assert.Equal(ExitCodes.InvalidArguments, optionFirst.ExitCode);
+        using (var error = JsonDocument.Parse(optionFirst.Stderr))
+            Assert.Equal("UNKNOWN_COMMAND", error.RootElement.GetProperty("error").GetProperty("code").GetString());
+
+        // A built-in name after the same option still runs.
+        Assert.Equal(0, (await RunWithArguments(project, ["--json", "schema", "list"], ("RESONITE_LINK_URL", url))).ExitCode);
         await Task.Delay(300);
         listener.Stop();
         await accepting;
