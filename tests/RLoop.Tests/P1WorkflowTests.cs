@@ -268,6 +268,78 @@ public sealed class P1WorkflowTests : IDisposable
         Assert.Single(fake.Requests);
     }
 
+    [Theory]
+    [InlineData("unchanged", "no-op")]
+    [InlineData("target-not-referenced", "update")]
+    [InlineData("source-changed", "update")]
+    [InlineData("module-child-missing", "update")]
+    [InlineData("no-reference-reader", "update")]
+    public async Task FluxManifestKeepsModulesThatAreStillWiredAfterAWorldReload(string change, string expected)
+    {
+        var name = "Reload" + change.Replace("-", "");
+        File.WriteAllText(Path.Combine(_root, name + ".pg"),
+            $"module {name}\nin Source: Slot element\nout Result: bool\nwhere {{ Result = true; Source->display }}");
+        var manifest = Path.Combine(_root, name + "-flux.json");
+        File.WriteAllText(manifest, $$"""
+            { "schemaVersion":"1", "modules":[{ "name":"{{name}}", "source":"{{name}}.pg", "module":"{{name}}", "bindings":{
+              "Source":{"target":"$slot:root","mode":"source"}, "Result":{"target":"$member:target.Enabled","mode":"drive"} } }] }
+            """);
+        Dictionary<string, FluxResolvedModuleBindings> Bindings(string slotId, string memberId) => new()
+        {
+            [name] = new([new("Source", "source", "$slot:root", slotId, "slot", "Slot"),
+                new("Result", "drive", "$member:target.Enabled", memberId, "member", "bool")])
+        };
+        var fake = new FakeFluxTool();
+        var orchestrator = new FluxManifestOrchestrator(fake);
+        var uri = new Uri("ws://localhost:12449");
+        await orchestrator.DeployAsync(manifest, "Reso_OldParent", uri, null, null, "session-1", Bindings("Reso_OldSlot", "Reso_OldMember"),
+            (_, _) => Task.FromResult<string?>("Reso_OldModule"));
+        if (change == "source-changed") File.AppendAllText(Path.Combine(_root, name + ".pg"), "\n");
+        IReadOnlySet<string> references = new HashSet<string>
+            { "Reso_NewSlot", change == "target-not-referenced" ? "Reso_OldMember" : "Reso_NewMember", "Reso_Other" };
+
+        // After a reload the parent and every target have new IDs.
+        var reloaded = await orchestrator.DeployAsync(manifest, "Reso_NewParent", uri, null, null, "session-2",
+            Bindings("Reso_NewSlot", "Reso_NewMember"),
+            (_, _) => Task.FromResult<string?>(change == "module-child-missing" ? null : "Reso_NewModule"),
+            readModuleReferences: change == "no-reference-reader" ? null : (_, _) => Task.FromResult(references));
+
+        var deployment = Assert.Single(reloaded.Modules);
+        Assert.Equal(expected, deployment.Action);
+        if (expected == "update")
+        {
+            Assert.Equal("Reso_NewMember", fake.Requests[^1].OutputMap!["Result"]);
+            if (change != "module-child-missing")
+                Assert.StartsWith(change == "source-changed" ? "source" : "binding target IDs changed", deployment.Reason);
+            return;
+        }
+        Assert.Single(fake.Requests);
+        // The new IDs are recorded, so the next run is an ordinary no-op that reads nothing.
+        var again = await orchestrator.DeployAsync(manifest, "Reso_NewParent", uri, null, null, "session-3",
+            Bindings("Reso_NewSlot", "Reso_NewMember"), (_, _) => Task.FromResult<string?>("Reso_NewModule"),
+            readModuleReferences: (_, _) => throw new InvalidOperationException("no read expected"));
+        Assert.Equal("no-op", Assert.Single(again.Modules).Action);
+    }
+
+    [Fact]
+    public async Task FluxManifestKeepsUnboundModulesAfterAWorldReload()
+    {
+        File.WriteAllText(Path.Combine(_root, "unbound.pg"), "module Unbound where { 1->display }");
+        var manifest = Path.Combine(_root, "unbound-flux.json");
+        File.WriteAllText(manifest, """{ "schemaVersion":"1", "modules":[{"name":"unbound","source":"unbound.pg","module":"Unbound"}] }""");
+        var fake = new FakeFluxTool();
+        var orchestrator = new FluxManifestOrchestrator(fake);
+        var uri = new Uri("ws://localhost:12449");
+        await orchestrator.DeployAsync(manifest, "Reso_OldParent", uri, null, null, "session-1",
+            resolveModuleSlot: (_, _) => Task.FromResult<string?>("Reso_OldModule"));
+
+        var reloaded = await orchestrator.DeployAsync(manifest, "Reso_NewParent", uri, null, null, "session-2",
+            resolveModuleSlot: (_, _) => Task.FromResult<string?>("Reso_NewModule"));
+
+        Assert.Equal("no-op", Assert.Single(reloaded.Modules).Action);
+        Assert.Single(fake.Requests);
+    }
+
     [Fact]
     public async Task FluxManifestRejectsDeclaredBindingsThatWereNotResolved()
     {

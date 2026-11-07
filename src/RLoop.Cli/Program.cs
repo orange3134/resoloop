@@ -935,12 +935,34 @@ public static partial class Program
                         new Dictionary<string, object?> { ["module"] = module.Name, ["ids"] = matches.Select(match => match.Id).ToArray() });
                 return matches.SingleOrDefault()?.Id;
             }
+            async Task<IReadOnlySet<string>> ReadModuleReferences(string moduleSlotId, CancellationToken cancellationToken)
+            {
+                // Full depth below one module child only; Flux-SDK keeps each binding as a reference inside it.
+                var module = await client.GetSlotAsync(moduleSlotId, -1, true, cancellationToken);
+                var targets = new HashSet<string>(StringComparer.Ordinal);
+                void Member(MemberValue member)
+                {
+                    if (member.Kind == "reference" && !string.IsNullOrEmpty(member.TargetId)) targets.Add(member.TargetId);
+                    foreach (var child in member.Members?.Values ?? []) Member(child);
+                    foreach (var element in member.Elements ?? []) Member(element);
+                }
+                void Slot(SlotInfo slot)
+                {
+                    foreach (var component in slot.Components)
+                        foreach (var member in component.Members?.Values ?? []) Member(member);
+                    foreach (var child in slot.Children) Slot(child);
+                }
+                Slot(module);
+                return targets;
+            }
             var report = sub == "watch"
                 ? await orchestrator.WatchAsync(manifestPath, parentId, uri, args.Option("library-path") ?? config.ResoniteManagedDataPath,
                     config.FluxDeployerPath, currentSession.UniqueSessionId,
-                    TimeSpan.FromMilliseconds(args.IntOption("poll-ms", 500, 100, 10000)), resolvedBindings, ResolveModuleSlot, ct)
+                    TimeSpan.FromMilliseconds(args.IntOption("poll-ms", 500, 100, 10000)), resolvedBindings, ResolveModuleSlot, ct,
+                    ReadModuleReferences)
                 : await orchestrator.DeployAsync(manifestPath, parentId, uri, args.Option("library-path") ?? config.ResoniteManagedDataPath,
-                    config.FluxDeployerPath, currentSession.UniqueSessionId, resolvedBindings, ResolveModuleSlot, ct);
+                    config.FluxDeployerPath, currentSession.UniqueSessionId, resolvedBindings, ResolveModuleSlot, ct,
+                    ReadModuleReferences);
             if (!report.Success)
                 throw new RLoopException("FLUX_MANIFEST_DEPLOY_FAILED", "One or more Flux modules failed; successful modules were checkpointed.", ExitCodes.ExternalToolFailed,
                     new Dictionary<string, object?> { ["report"] = report }, [report.Recovery]);
