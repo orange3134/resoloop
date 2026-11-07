@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using RLoop.Core;
+using RLoop.Core.Plugins;
 using RLoop.Flux;
 using RLoop.Flux.Deployer;
 using RLoop.ResoniteLink;
@@ -11,6 +12,12 @@ public static partial class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        // A plugin call is separated from the raw argv before the built-in parser can consume or reject any token.
+        PluginInvocation? plugin;
+        try { plugin = PluginCommandDispatch.Parse(args); }
+        catch (RLoopException ex) { return ReportPluginHostError(ex); }
+        if (plugin is not null) return await RunPluginCommand(plugin);
+
         var parsed = ParsedArguments.Parse(args);
         using var output = new OutputWriter(parsed.Has("json"), parsed.Has("brief"));
         using var userCancellation = new CancellationTokenSource();
@@ -38,7 +45,7 @@ public static partial class Program
                 if (parsed.Positionals.Count > 2)
                     throw new RLoopException("UNEXPECTED_ARGUMENT", "resoloop init accepts at most one target directory.", ExitCodes.InvalidArguments);
                 var target = parsed.Positionals.Count > 1 ? parsed.Positionals[1] : Environment.CurrentDirectory;
-                var result = ProjectInitializer.Initialize(target);
+                var result = ProjectInitializer.Initialize(target, ProductVersion(), BuiltinCommandCatalog.Reservations);
                 output.Success(result, writer =>
                 {
                     writer.WriteLine($"initialized {result.RootDirectory}");
@@ -60,7 +67,7 @@ public static partial class Program
                 if (parsed.Positionals.Count > 3)
                     throw new RLoopException("UNEXPECTED_ARGUMENT", "skills sync accepts at most one target directory.", ExitCodes.InvalidArguments);
                 var target = parsed.Positionals.Count > 2 ? parsed.Positionals[2] : Environment.CurrentDirectory;
-                var result = BundledSkillManager.Sync(target, parsed.Has("update"));
+                var result = BundledSkillManager.Sync(target, parsed.Has("update"), ProductVersion(), BuiltinCommandCatalog.Reservations);
                 if (!result.Synchronized)
                     throw new RLoopException("SKILL_SYNC_REQUIRED", "Bundled skills or their lock need synchronization.",
                         ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["report"] = result },
@@ -70,6 +77,12 @@ public static partial class Program
                     writer.WriteLine($"skills {result.Mode}: synchronized={result.Synchronized}");
                     foreach (var skill in result.Skills) writer.WriteLine($"  {skill.Status,-20} {skill.Path}");
                 });
+                return ExitCodes.Success;
+            }
+
+            if (parsed.Positionals[0].Equals("plugin", StringComparison.OrdinalIgnoreCase))
+            {
+                PluginManagementCommands.Run(parsed, output, ProductVersion());
                 return ExitCodes.Success;
             }
 
@@ -283,15 +296,64 @@ public static partial class Program
     {
         var operation = args.Positional(2, "recipe operation (list, describe, export)");
         if (operation == "list" && args.Positionals.Count == 3)
-            output.Success(UixRecipes.Catalog.Select(recipe => new { recipe.Name, recipe.Prototype, recipe.Purpose }));
+        {
+            using var resolver = OpenRecipeResolver(args);
+            output.Success(UixRecipes.List(resolver).Select(recipe => new { recipe.Name, recipe.Prototype, recipe.Purpose }));
+        }
         else if (operation == "describe" && args.Positionals.Count == 4)
-            output.Success(UixRecipes.Describe(args.Positional(3, "recipe name")));
+        {
+            var name = args.Positional(3, "recipe name");
+            using var resolver = name.Contains(':') ? OpenRecipeResolver(args) : null;
+            output.Success(UixRecipes.Describe(name, resolver));
+        }
         else if (operation == "export" && args.Positionals.Count == 4)
         {
             var name = args.Positional(3, "recipe name");
-            output.Success(new { name, output = UixRecipes.Export(name, args.RequireOption("output")), prototype = UixRecipes.Describe(name).Prototype });
+            using var resolver = name.Contains(':') ? OpenRecipeResolver(args) : null;
+            output.Success(new { name, output = UixRecipes.Export(name, args.RequireOption("output"), resolver), prototype = UixRecipes.Describe(name, resolver).Prototype });
         }
         else throw UnknownCommand("uix recipe: use list, describe NAME, or export NAME --output NEW_FILE.json");
+    }
+
+    // The plugin recipes of the selected project; null when no project is found and none was named explicitly.
+    private static PluginRecipeResolver? OpenRecipeResolver(ParsedArguments args)
+    {
+        var explicitProject = args.Option("project");
+        try
+        {
+            var root = PluginRegistry.FindProjectRoot(explicitProject, Environment.CurrentDirectory);
+            return new PluginRecipeResolver(new PluginRegistry(root, ProductVersion(), BuiltinCommandCatalog.Reservations));
+        }
+        catch (RLoopException ex) when (ex.Code == "PLUGIN_PROJECT_NOT_FOUND" && explicitProject is null)
+        {
+            return null;
+        }
+    }
+
+    private static async Task<int> RunPluginCommand(PluginInvocation invocation)
+    {
+        try
+        {
+            return await PluginCommandDispatch.RunAsync(invocation, PluginDispatchContext.Current(ProductVersion()), CancellationToken.None);
+        }
+        catch (RLoopException ex) { return ReportPluginHostError(ex); }
+        catch (OperationCanceledException)
+        {
+            return ReportPluginHostError(new RLoopException("CANCELLED", "Operation was cancelled.", ExitCodes.OperationFailed));
+        }
+        catch (Exception ex)
+        {
+            return ReportPluginHostError(new RLoopException("UNEXPECTED_ERROR", ex.Message, ExitCodes.OperationFailed,
+                suggestions: ["Re-run the plugin command and inspect stderr."], innerException: ex));
+        }
+    }
+
+    // Tokens after the plugin command name belong to the plugin, so the host never switches to JSON output here.
+    private static int ReportPluginHostError(RLoopException error)
+    {
+        using var output = new OutputWriter(false);
+        output.Error(error);
+        return error.ExitCode;
     }
 
     private static async Task<int> RunBlender(ParsedArguments args, OutputWriter output, RLoopConfig config, CancellationToken token)
@@ -384,6 +446,9 @@ public static partial class Program
         checks.Add(await ManagedDataCheckAsync(config.ResoniteManagedDataPath, fluxStatus, flux, cancellationToken));
         checks.Add(PathCheck("resonite-log", config.ResoniteLogPath,
             "Set RESONITE_LOG_PATH when resoloop logs is needed."));
+
+        checks.AddRange(await PluginDoctorChecks.RunAsync(args.Option("project"), Environment.CurrentDirectory, ProductVersion(),
+            PluginDispatchContext.Current(ProductVersion()).Environment, cancellationToken));
 
         var report = new DoctorReport(
             checks.Where(check => check.Required).All(check => check.Status == "pass"),
@@ -1062,7 +1127,7 @@ public static partial class Program
     {
         if (!args.Has("yes")) throw new RLoopException("CONFIRMATION_REQUIRED", $"{operation} is destructive and requires --yes.", ExitCodes.ValidationFailed);
     }
-    private static RLoopException UnknownCommand(string command) => new("UNKNOWN_COMMAND", $"Unknown command '{command}'.", ExitCodes.InvalidArguments,
+    internal static RLoopException UnknownCommand(string command) => new("UNKNOWN_COMMAND", $"Unknown command '{command}'.", ExitCodes.InvalidArguments,
         suggestions: ["Run resoloop help to list commands."]);
 
     private static void PrintHelp(TextWriter writer, string? command = null)
@@ -1145,7 +1210,11 @@ Project setup:
   resoloop manifest scaffold --output NEW_FILE.json [--key panel] [--json]
   resoloop manifest scaffold --kind provider --key KEY --type REFLECTED_TYPE --output NEW_NODE.json [--json]
   resoloop skills sync [DIRECTORY] (--check | --update) [--json]
-  resoloop doctor [--url ws://localhost:PORT] [--json]
+  resoloop doctor [--url ws://localhost:PORT] [--project DIR] [--json]
+  resoloop plugin install SOURCE [--ref GIT_REF] [--project DIR] [--json]
+  resoloop plugin list [--project DIR] [--json]
+  resoloop plugin remove NAME --yes [--project DIR] [--json]   (also deletes the plugin's data/ directory)
+  resoloop [--project DIR] PLUGIN_COMMAND [ARGUMENTS...]   (arguments after the command name go to the plugin unchanged)
 
 Connection and observation:
   resoloop import SLOT --output NEW_DIRECTORY [--max-slots 50000] [--split-slots 256] [--json]
@@ -1187,9 +1256,9 @@ Editing:
   resoloop apply FILE.json [--state FILE] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
   resoloop test FILE.json [--state FILE] [--probe --yes]
   resoloop uix audit SLOT|$slot:key [--state FILE] [--depth 6] [--max-slots 256] [--strict]
-  resoloop uix recipe list
-  resoloop uix recipe describe NAME
-  resoloop uix recipe export NAME --output NEW_FILE.json (offline structural prototypes; no visual defaults)
+  resoloop uix recipe list [--project DIR]
+  resoloop uix recipe describe NAME [--project DIR]   (plugin recipes: PLUGIN:RECIPE)
+  resoloop uix recipe export NAME --output NEW_FILE.json [--project DIR] (offline structural prototypes; no visual defaults)
   resoloop item audit SLOT [--strict] [--allow-external ID|PATH|$slot:key ...]
     [--allow-external-role COMPONENT_TYPE:MEMBER_PATH|COMPONENT_ID:MEMBER_PATH ...] [--state WORLD_STATE]
     Review externalRoleCandidates first; type roles cover all matching components, ID roles are session-scoped.
