@@ -2377,12 +2377,20 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
     private static SlotUpdateRequest CreateSlotUpdate(NodeRuntime node, string rootParentId)
     {
         var existing = node.Existing!;
-        return new SlotUpdateRequest(existing.Id,
+        var update = new SlotUpdateRequest(existing.Id,
             existing.Name == node.Spec.Name ? null : node.Spec.Name,
             node.RelocationPosition ?? (ManagesTransform(node.Spec, "position") && node.Spec.Position is not null && !VectorEquals(existing.Position, node.Spec.Position) ? node.Spec.Position.ToVector3("position") : null),
             node.RelocationRotation ?? (ManagesTransform(node.Spec, "rotation") && node.Spec.Rotation is not null && !QuaternionEquals(existing.Rotation, node.Spec.Rotation) ? node.Spec.Rotation.ToQuaternion("rotation") : null),
             node.RelocationScale ?? (ManagesTransform(node.Spec, "scale") && node.Spec.Scale is not null && !VectorEquals(existing.Scale, node.Spec.Scale) ? node.Spec.Scale.ToVector3("scale") : null),
             node.SlotAction == "relocate" ? node.Parent?.Id ?? rootParentId : null);
+        if (node.SlotAction != "relocate") return update;
+        // Resonite keeps the world transform when the Parent changes, so send every local value with it.
+        return update with
+        {
+            Position = update.Position ?? existing.Position,
+            Rotation = update.Rotation ?? existing.Rotation,
+            Scale = update.Scale ?? existing.Scale
+        };
     }
 
     private static bool ManagesTransform(ApplySlotSpec slot, string field) =>
