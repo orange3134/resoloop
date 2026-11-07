@@ -2253,7 +2253,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             identityValues = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var name in component.Spec.IdentityFields)
             {
-                // Reference evidence is recorded as selectors, not as this session's target IDs.
+                // Target IDs change on every world load. A single reference is recorded as a selector below;
+                // a reference list is not used as identity evidence.
                 if (TryGetReferenceSelector(component.Spec, name, out _) || DeclaresReferenceList(component.Spec, name)) continue;
                 if (resolvedFields?.TryGetValue(name, out var resolved) == true) identityValues[name] = resolved;
                 else if (component.AppliedOnCreate?.TryGetValue(name, out var initial) == true) identityValues[name] = initial;
