@@ -1869,8 +1869,11 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             {
                 if (!slots.TryGetValue(stable.Key, out var target) || target.Id is null)
                     throw new RLoopException("APPLY_REFERENCE_NOT_FOUND", $"Slot reference '{value}' could not be resolved.", ExitCodes.ValidationFailed);
-                var observed = await client.GetSlotAsync(target.Id, 0, false, cancellationToken);
-                return RequireSlotMember(observed, stable.MemberName!, value).Id!;
+                // A Slot's field IDs never change, so the preflight snapshot has them. A Slot created by this apply is read once.
+                if (target.Existing?.Members?.TryGetValue(stable.MemberName!, out var known) == true && !string.IsNullOrWhiteSpace(known.Id))
+                    return known.Id;
+                target.Observed ??= await client.GetSlotAsync(target.Id, 0, false, cancellationToken);
+                return RequireSlotMember(target.Observed, stable.MemberName!, value).Id!;
             }
             if (stable!.Kind == "component")
                 return components.TryGetValue(stable.Key, out var component) && component.Id is not null
@@ -2742,6 +2745,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         public IReadOnlyList<string> PathSegments { get; set; } = [];
         public string SlotAction { get; } = slotAction;
         public string? Id { get; set; }
+        // Read for $slot-member: references when Existing has no field IDs (a Slot created by this apply).
+        public SlotInfo? Observed { get; set; }
         public Vector3Value? RelocationPosition { get; set; }
         public QuaternionValue? RelocationRotation { get; set; }
         public Vector3Value? RelocationScale { get; set; }
