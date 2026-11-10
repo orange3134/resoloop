@@ -1,3 +1,4 @@
+using System.Numerics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using RLoop.Core;
@@ -1072,6 +1073,42 @@ public sealed partial class ApplyWorkflowTests : IDisposable
     }
 
     [Fact]
+    public async Task LocalTransformRelocationKeepsLocalValuesWhenTheEngineKeepsWorldPose()
+    {
+        var initialPath = Path.Combine(_root, "local-relocation-initial.json");
+        File.WriteAllText(initialPath, """
+            { "schemaVersion":"1", "ownership":{"key":"local-relocation"},
+              "slot":{"key":"root","name":"Managed","parent":"Root"},
+              "children":[{"slot":{"key":"parent","name":"Parent","position":[10,0,0]},
+                "children":[{"slot":{"key":"declared","name":"Declared","position":[2,0,0]}},
+                            {"slot":{"key":"undeclared","name":"Undeclared"}}]}] }
+            """);
+        var desiredPath = Path.Combine(_root, "local-relocation-desired.json");
+        File.WriteAllText(desiredPath, """
+            { "schemaVersion":"1", "ownership":{"key":"local-relocation"},
+              "slot":{"key":"root","name":"Managed","parent":"Root"},
+              "children":[{"slot":{"key":"declared","name":"Declared","position":[2,0,0]}},
+                          {"slot":{"key":"undeclared","name":"Undeclared"}}] }
+            """);
+        var client = new FakeResoniteClient { KeepsWorldPositionOnReparent = true };
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "local-relocation.state.json");
+        await service.ApplyAsync(ApplyDocument.Load(initialPath), new ApplyOptions(state));
+        var parent = client.Root.Children.Single().Children.Single();
+        parent.Children.Single(slot => slot.Name == "Undeclared").Position = new Vector3Value(0, 3, 0);
+
+        await service.ApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(state));
+        client.ResetWriteCounts();
+        var reapplied = await service.ApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(state));
+
+        var children = client.Root.Children.Single().Children;
+        Assert.Equal(new Vector3Value(2, 0, 0), children.Single(slot => slot.Name == "Declared").Position);
+        Assert.Equal(new Vector3Value(0, 3, 0), children.Single(slot => slot.Name == "Undeclared").Position);
+        Assert.Equal(0, reapplied.SlotsUpdated);
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Fact]
     public async Task ValidationRejectsUnknownRelocationTransformPolicy()
     {
         var path = Path.Combine(_root, "invalid-relocation-transform.json");
@@ -1493,6 +1530,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public int ComponentReads { get; private set; }
         public List<string> Mutations { get; } = [];
         public List<(string Id, int Depth)> SlotReads { get; } = [];
+        public bool KeepsWorldPositionOnReparent { get; set; }
         public int? CancelAfterWrites { get; set; }
         public int? FailOnWrite { get; set; }
         // The write with this number lands, and then its response is lost.
@@ -1572,9 +1610,13 @@ public sealed partial class ApplyWorkflowTests : IDisposable
             var slot = _slots[request.Id];
             if (request.ParentId is not null && request.ParentId != slot.ParentId)
             {
+                var world = WorldPosition(slot);
                 if (slot.ParentId is not null) _slots[slot.ParentId].Children.Remove(slot);
                 _slots[request.ParentId].Children.Add(slot);
                 slot.ParentId = request.ParentId;
+                // Like Resonite, a Parent change keeps the world pose (modelled for translation only).
+                var local = world - WorldPosition(_slots[request.ParentId]);
+                if (KeepsWorldPositionOnReparent) slot.Position = new Vector3Value(local.X, local.Y, local.Z);
             }
             if (request.Name is not null) slot.Name = request.Name;
             if (request.Position is not null) slot.Position = request.Position;
@@ -1583,6 +1625,10 @@ public sealed partial class ApplyWorkflowTests : IDisposable
             Acknowledge();
             return Task.CompletedTask;
         }
+
+        private Vector3 WorldPosition(FakeSlot slot) =>
+            new Vector3(slot.Position?.X ?? 0, slot.Position?.Y ?? 0, slot.Position?.Z ?? 0) +
+            (slot.ParentId is null ? Vector3.Zero : WorldPosition(_slots[slot.ParentId]));
 
         public Task DeleteSlotAsync(string id, CancellationToken cancellationToken = default)
         {

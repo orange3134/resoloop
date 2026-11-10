@@ -80,7 +80,7 @@ CLI の `validate --strict`、`plan`、`apply`、`test` は、ownership の作�
 }
 ~~~
 
-`managedFields`に指定できるのは`position`、`rotation`、`scale`です。省略時は、宣言されたtransformをすべて管理します。既存Slotで`preserveWorldTransform: true`を指定すると、この3つのlocal値を更新しません。`preserveWorldTransform`と`managedFields`を併記した場合は保持を優先します。Slot名はどちらの設定にも関係なく管理されます。stable keyを保った親変更はplanで`relocate`となり、ResoniteLinkのParent更新でSlot IDを維持します。`relocationTransform`は`local`（既定）または`world`です。`local`は現在のlocal値／通常のmanaged fieldを新親でも使います。`world`は旧Slotと新親のRootからのtransform chainを観測し、world matrixを維持するlocal position/rotation/scaleへ再計算します。`world`指定の既存transformは以後管理対象外になり、2回目applyで宣言localへ戻りません。新規Slotにはどちらのpolicyでも宣言値を初期値として適用します。
+`managedFields`に指定できるのは`position`、`rotation`、`scale`です。省略時は、宣言されたtransformをすべて管理します。既存Slotで`preserveWorldTransform: true`を指定すると、この3つのlocal値を更新しません。`preserveWorldTransform`と`managedFields`を併記した場合は保持を優先します。Slot名はどちらの設定にも関係なく管理されます。stable keyを保った親変更はplanで`relocate`となり、ResoniteLinkのParent更新でSlot IDを維持します。`relocationTransform`は`local`（既定）または`world`です。`local`は現在のlocal値／通常のmanaged fieldを新親でも使います。ResoniteはParent更新でworld transformを保つため、`local`ではParentと同じ更新でposition/rotation/scaleを書き戻します（管理対象は宣言値、それ以外は移動前の値。drive中のfieldも含みます）。`world`は旧Slotと新親のRootからのtransform chainを観測し、world matrixを維持するlocal position/rotation/scaleへ再計算します。`world`指定の既存transformは以後管理対象外になり、2回目applyで宣言localへ戻りません。新規Slotにはどちらのpolicyでも宣言値を初期値として適用します。
 
 装備などによりruntime中だけ宣言親の外へ移動するitem rootには`runtimeRelocatable: true`を指定できます。同じSlot上に、再接続後の照合証拠となる管理Componentを最低1つ宣言してください。保存pathが見つからない場合、resoloopはRoot以下を最大depth 64で探索し、Slot名と管理Componentの型・member集合・`identityFields`が一意に一致した場合だけstable selectorを再解決します。候補0件または複数件では推測しません。itemが宣言親の外にある間の`plan`/`apply`は`APPLY_RUNTIME_RELOCATABLE_ACTIVE`でmutation前に停止するため、装備中のitemを複製したり強制的に元へ戻したりしません。dropして宣言親へ戻してからapplyしてください。
 
