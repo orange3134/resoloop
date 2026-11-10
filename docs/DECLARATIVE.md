@@ -224,7 +224,11 @@ resoloop flux watch examples/flux/resoloop.flux.json --json
 }
 ~~~
 
-`source`はFlux moduleの `in` 名、`drive`は `out` 名をkeyにします。source targetはslot/component/member、drive targetはmemberだけです。resoloopはworld stateから現在のIDを再解決し、Flux-SDKのInputMap/OutputMapへ渡します。binding宣言と解決結果が一致しない場合はdeployしません。deploy stateはsource、binding、transitive dependencyのhash、置換後module child IDを保存し、no-op/updateと非atomic recoveryを報告します。結果の`parentSlotId`はdeploy先、各moduleの`moduleSlotIdBefore` / `moduleSlotIdAfter`はparent直下を再観測した実module childです。接続が変わっても再観測したchildとhashが一致すればno-opになります。watchは変更を検出して成功buildだけを検証済みparentへ再deployします。
+`source`はFlux moduleの `in` 名、`drive`は `out` 名をkeyにします。source targetはslot/component/member、drive targetはmemberだけです。resoloopはworld stateから現在のIDを再解決し、Flux-SDKのInputMap/OutputMapへ渡します。binding宣言と解決結果が一致しない場合はdeployしません。deploy stateはsource、binding、transitive dependencyのhash、置換後module child IDを保存し、no-op/updateと非atomic recoveryを報告します。結果の`parentSlotId`はdeploy先、各moduleの`moduleSlotIdBefore` / `moduleSlotIdAfter`はparent直下を再観測した実module childです。hashはセッション単位のtarget IDを含まず、IDはdeploy stateに別に保存します。
+
+sourceと依存hashが一致するbinding付きmoduleは、IDが同じ場合も含め、module直下をdepth 1で読み取り、**各binding名・方向・現在のtarget**の接続を確認してからno-opとします。Flux-SDK 1.9.0の`Input:` / `Input:[Elem]` / `Input:[Global]`の名前付きSlotにある入力参照（通常入力ではSourceからの接続も）、`Output:` SlotのDriveとNodeの接続を照合します。単に全target IDがmodule内のどこかに現れるだけでは不十分です。同名Slotの重複、接続切れ、取得できない情報、未対応の構造ではno-opにせず再deployします。これにより、接続先の交換や同一IDのままの配線変更を修復しつつ、保存・再読込後も正しい配線のmoduleを置き換えず`store`/`sync`状態を保持します。programmatic APIで検証callbackを省略した場合もbinding付きmoduleは再deployします。watchは変更を検出して成功buildだけを検証済みparentへ再deployします。
+
+0.2.0のbinding付きdeploy stateはhashが変わるため、一度再deployして新形式へ更新します。追加された`targets`を含むstateは0.2.0では読めません。再deployはmodule内のruntime stateを初期化するため、旧stateからの移行や検証不能な構造の再deploy前に必要な値を退避してください。
 
 manifest deployはsource headerの`in`/`out` signatureとbindingを一対一で照合してからbuild/deployへ進み、方向、world target型、driveのmember可否を検査します。`int`/`int32`/`System.Int32`や`bool`/`System.Boolean`などのscalar aliasは同値です。build結果の`Packing 0 ProtoFlux nodes`は`FLUX_EMPTY_MODULE`、未結線portは`FLUX_MODULE_PORT_UNBOUND`です。module childはmodule pathの最後の要素の名前でparent直下に作られ、同名のchildを置き換えるため、同じ名前になるmodule（同じmoduleの複数entryなど）は`FLUX_MODULE_CHILD_COLLISION`として拒否されます。複数のinstanceは1つのmoduleでまとめて扱うか、parentの異なるmanifestに分けます。Flux-SDK 1.9.xの`IButton global`のようなinterface globalは既知の非原子的失敗を避けるためdeploy前に拒否されます。concrete Componentの`element` inputからmodule内で`asDrivenGlobal`するか、eventだけならDynamic Impulse bridgeを選びます。
 

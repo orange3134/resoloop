@@ -5,6 +5,7 @@
     <RootNamespace>RLoop.Flux.Deployer</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="BindingInspector.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>

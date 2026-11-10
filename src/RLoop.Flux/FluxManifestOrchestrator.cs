@@ -19,6 +19,8 @@ public sealed record FluxResolvedModuleBindings(IReadOnlyList<FluxResolvedBindin
 public sealed record FluxModuleSpec(string Name, string Source, string Module, IReadOnlyList<string>? DependsOn = null,
     IReadOnlyDictionary<string, FluxBindingSpec>? Bindings = null);
 public delegate Task<string?> FluxModuleSlotResolver(FluxModuleSpec module, CancellationToken cancellationToken);
+/// <summary>Verifies each named source/drive binding on the observed module, not just the set of referenced IDs.</summary>
+public delegate Task<bool> FluxModuleBindingVerifier(string moduleSlotId, FluxResolvedModuleBindings bindings, CancellationToken cancellationToken);
 public sealed record FluxModuleManifest(string? SchemaVersion, IReadOnlyList<FluxModuleSpec> Modules, string? ProjectDirectory = null,
     string? Parent = null, string? WorldState = null, string? DeployState = null);
 public sealed record FluxModuleDeployment(string Name, string Action, string Reason, bool BuildSucceeded,
@@ -37,7 +39,8 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
         string? libraryPath, string? helperPath, string? sessionId = null,
         IReadOnlyDictionary<string, FluxResolvedModuleBindings>? resolvedBindings = null,
         FluxModuleSlotResolver? resolveModuleSlot = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        FluxModuleBindingVerifier? verifyModuleBindings = null)
     {
         var loaded = Load(manifestPath);
         var statePath = ResolveStatePath(loaded.Manifest, loaded.Path);
@@ -53,20 +56,35 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
             _ = resolvedBindings?.TryGetValue(module.Name, out moduleBindings);
             ValidateResolvedBindings(module, moduleBindings, source);
             var hash = EffectiveHash(hashes[module.Name], moduleBindings);
+            var targets = moduleBindings?.Bindings.ToDictionary(binding => binding.Name, binding => binding.TargetId, StringComparer.Ordinal)
+                ?? new Dictionary<string, string>(StringComparer.Ordinal);
             var beforeSlotId = resolveModuleSlot is null
                 ? previous?.SlotId
                 : await resolveModuleSlot(module, cancellationToken);
             if (previous?.Hash == hash && !string.IsNullOrWhiteSpace(beforeSlotId) &&
-                state.ParentSlotId == parentSlotId && (resolveModuleSlot is not null || state.SessionId == sessionId))
+                (resolveModuleSlot is not null || state.SessionId == sessionId))
             {
-                if (previous.SlotId != beforeSlotId)
+                var sameIds = state.ParentSlotId == parentSlotId && SameTargets(previous.Targets, targets);
+                // IDs alone are not wiring evidence, even in the same session: a port may have been rewired.
+                var wired = targets.Count == 0
+                    ? sameIds || resolveModuleSlot is not null
+                    : resolveModuleSlot is not null && verifyModuleBindings is not null &&
+                      await verifyModuleBindings(beforeSlotId, moduleBindings!, cancellationToken);
+                if (wired)
                 {
-                    state.Modules[module.Name] = new ModuleState(hash, beforeSlotId);
-                    SaveState(statePath, state);
+                    if (!sameIds || previous.SlotId != beforeSlotId)
+                    {
+                        state.Modules[module.Name] = new ModuleState(hash, beforeSlotId, targets);
+                        state.ParentSlotId = parentSlotId;
+                        state.SessionId = sessionId;
+                        SaveState(statePath, state);
+                    }
+                    results.Add(new FluxModuleDeployment(module.Name, "no-op", targets.Count == 0
+                            ? "source and transitive dependency hashes match deploy state"
+                            : "source is unchanged and every named source/drive binding is verified against its current target",
+                        true, false, beforeSlotId, beforeSlotId, Bindings: moduleBindings?.Bindings));
+                    continue;
                 }
-                results.Add(new FluxModuleDeployment(module.Name, "no-op", "source and transitive dependency hashes match deploy state",
-                    true, false, beforeSlotId, beforeSlotId, Bindings: moduleBindings?.Bindings));
-                continue;
             }
             var build = await flux.BuildAsync(new FluxBuildRequest(source, loaded.ProjectDirectory, null, libraryPath), cancellationToken);
             if (!build.Success)
@@ -102,12 +120,15 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
                     moduleBindings?.Bindings));
                 return Report(false);
             }
-            state.Modules[module.Name] = new ModuleState(hash, afterSlotId);
+            state.Modules[module.Name] = new ModuleState(hash, afterSlotId, targets);
             state.ParentSlotId = parentSlotId;
             state.SessionId = sessionId;
             SaveState(statePath, state);
             results.Add(new FluxModuleDeployment(module.Name, previous is null ? "create" : "update",
-                previous is null ? "module has no deploy state" : "source or transitive dependency changed",
+                previous is null ? "module has no deploy state"
+                : previous.Hash != hash ? "source, bindings or transitive dependency changed"
+                : string.IsNullOrWhiteSpace(beforeSlotId) ? "module child was not found below the parent"
+                : "named source/drive bindings could not be verified against their current targets",
                 true, true, beforeSlotId, afterSlotId, Bindings: moduleBindings?.Bindings));
         }
         return Report(true);
@@ -116,11 +137,16 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
             $"Module replacement is non-atomic. Successful modules are checkpointed in {statePath}; fix the error and re-run to converge.");
     }
 
+    private static bool SameTargets(IReadOnlyDictionary<string, string>? previous, IReadOnlyDictionary<string, string> current) =>
+        (previous?.Count ?? 0) == current.Count &&
+        current.All(pair => previous!.TryGetValue(pair.Key, out var id) && id == pair.Value);
+
     public async Task<FluxManifestResult> WatchAsync(string manifestPath, string parentSlotId, Uri url,
         string? libraryPath, string? helperPath, string? sessionId, TimeSpan pollInterval,
         IReadOnlyDictionary<string, FluxResolvedModuleBindings>? resolvedBindings = null,
         FluxModuleSlotResolver? resolveModuleSlot = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        FluxModuleBindingVerifier? verifyModuleBindings = null)
     {
         FluxManifestResult? last = null;
         string? fingerprint = null;
@@ -134,7 +160,7 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
                 if (current != fingerprint)
                 {
                     last = await DeployAsync(manifestPath, parentSlotId, url, libraryPath, helperPath, sessionId,
-                        resolvedBindings, resolveModuleSlot, cancellationToken);
+                        resolvedBindings, resolveModuleSlot, cancellationToken, verifyModuleBindings);
                     fingerprint = current;
                 }
                 await Task.Delay(pollInterval, cancellationToken);
@@ -402,8 +428,9 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
         if (bindings is null || bindings.Bindings.Count == 0) return sourceHash;
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         hash.AppendData(Encoding.UTF8.GetBytes(sourceHash));
+        // Target IDs are session-scoped and kept in the deploy state instead, so the hash survives a world reload.
         foreach (var binding in bindings.Bindings.OrderBy(binding => binding.Name, StringComparer.Ordinal))
-            hash.AppendData(JsonSerializer.SerializeToUtf8Bytes(binding, JsonOptions));
+            hash.AppendData(JsonSerializer.SerializeToUtf8Bytes(binding with { TargetId = "" }, JsonOptions));
         return Convert.ToHexString(hash.GetHashAndReset());
     }
 
@@ -440,6 +467,6 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
         public string? SessionId { get; set; }
         public Dictionary<string, ModuleState> Modules { get; set; } = new(StringComparer.Ordinal);
     }
-    private sealed record ModuleState(string Hash, string? SlotId);
+    private sealed record ModuleState(string Hash, string? SlotId, IReadOnlyDictionary<string, string>? Targets = null);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true, UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow };
 }

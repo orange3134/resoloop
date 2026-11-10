@@ -373,6 +373,8 @@ resoloop flux watch examples/flux/resoloop.flux.json --json
 
 弾、標的、エフェクトなど多数の同型オブジェクトは、各templateへ完全なFlux graphを複製せず、template側を不可避なDriverやadapterだけに留めます。instance stateは`Projectile/Active`のような型付き・名前空間付きDynamicVariableへ置き、上限付きpoolを1つのcontroller moduleから走査、確保、更新、完全reset、再利用します。これによりpool数を増やしてもProtoFlux module数とdeploy costが比例増加しません。[PooledProjectiles.pg](examples/flux/PooledProjectiles.pg)と[manifest](examples/flux/pooled-projectiles.flux.json)が最小例です。
 
+`flux deploy-manifest`の再実行では、source/依存hashと各binding名・方向・実際の接続先を確認し、一致すればワールド再読込後もmoduleを保持します。IDが同じでも配線を観測し、入れ替わった接続や曖昧な構造をno-opにはしません。`moduleSlotIdBefore` / `moduleSlotIdAfter`と各moduleの`reason`で結果を確認してください。0.2.0のbinding付きstateからは一度再deployが必要です。検証不能な構造も再deployになるため、保持したいruntime stateがある場合は退避してから実行します。[判定と互換性の詳細](docs/DECLARATIVE.md)を参照してください。
+
 保存・配布するGrabbableは、保存前に参照閉包を監査できます。
 
 `AudioClipPlayer.playback`などのSyncPlayback memberは型情報を保持するため、`in Rain: SyncPlayback element`へ`$member:player.playback`で接続できます。PlaybackノードがIPlayableを要求する場合は、Reflectionで実装を確認したうえで`ObjectCast<SyncPlayback,IPlayable>`を使います。

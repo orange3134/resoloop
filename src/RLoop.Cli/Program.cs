@@ -932,12 +932,20 @@ public static partial class Program
                         new Dictionary<string, object?> { ["module"] = module.Name, ["ids"] = matches.Select(match => match.Id).ToArray() });
                 return matches.SingleOrDefault()?.Id;
             }
+            async Task<bool> VerifyModuleBindings(string moduleSlotId, FluxResolvedModuleBindings bindings, CancellationToken cancellationToken)
+            {
+                // SDK 1.9.0 keeps its named I/O nodes directly below the module child.
+                var module = await client.GetSlotAsync(moduleSlotId, 1, true, cancellationToken);
+                return FluxSdkBindingInspector.Verify(module, bindings.InputMap, bindings.OutputMap);
+            }
             var report = sub == "watch"
                 ? await orchestrator.WatchAsync(manifestPath, parentId, uri, args.Option("library-path") ?? config.ResoniteManagedDataPath,
                     config.FluxDeployerPath, currentSession.UniqueSessionId,
-                    TimeSpan.FromMilliseconds(args.IntOption("poll-ms", 500, 100, 10000)), resolvedBindings, ResolveModuleSlot, ct)
+                    TimeSpan.FromMilliseconds(args.IntOption("poll-ms", 500, 100, 10000)), resolvedBindings, ResolveModuleSlot, ct,
+                    VerifyModuleBindings)
                 : await orchestrator.DeployAsync(manifestPath, parentId, uri, args.Option("library-path") ?? config.ResoniteManagedDataPath,
-                    config.FluxDeployerPath, currentSession.UniqueSessionId, resolvedBindings, ResolveModuleSlot, ct);
+                    config.FluxDeployerPath, currentSession.UniqueSessionId, resolvedBindings, ResolveModuleSlot, ct,
+                    VerifyModuleBindings);
             if (!report.Success)
                 throw new RLoopException("FLUX_MANIFEST_DEPLOY_FAILED", "One or more Flux modules failed; successful modules were checkpointed.", ExitCodes.ExternalToolFailed,
                     new Dictionary<string, object?> { ["report"] = report }, [report.Recovery]);

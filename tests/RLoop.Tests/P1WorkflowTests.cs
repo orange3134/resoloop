@@ -4,7 +4,7 @@ using RLoop.Flux;
 
 namespace RLoop.Tests;
 
-public sealed class P1WorkflowTests : IDisposable
+public sealed partial class P1WorkflowTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "resoloop-p1-" + Guid.NewGuid().ToString("N"));
     public P1WorkflowTests() => Directory.CreateDirectory(_root);
@@ -290,6 +290,85 @@ public sealed class P1WorkflowTests : IDisposable
             resolveModuleSlot: (_, _) => Task.FromResult(observations.Dequeue()));
 
         Assert.Equal("no-op", Assert.Single(reconnected.Modules).Action);
+        Assert.Single(fake.Requests);
+    }
+
+    [Theory]
+    [InlineData("unchanged", "no-op")]
+    [InlineData("target-not-referenced", "update")]
+    [InlineData("source-changed", "update")]
+    [InlineData("module-child-missing", "update")]
+    [InlineData("no-binding-verifier", "update")]
+    public async Task FluxManifestKeepsModulesThatAreStillWiredAfterAWorldReload(string change, string expected)
+    {
+        var name = "Reload" + change.Replace("-", "");
+        File.WriteAllText(Path.Combine(_root, name + ".pg"),
+            $"module {name}\nin Source: Slot element\nout Result: bool\nwhere {{ Result = true; Source->display }}");
+        var manifest = Path.Combine(_root, name + "-flux.json");
+        File.WriteAllText(manifest, $$"""
+            { "schemaVersion":"1", "modules":[{ "name":"{{name}}", "source":"{{name}}.pg", "module":"{{name}}", "bindings":{
+              "Source":{"target":"$slot:root","mode":"source"}, "Result":{"target":"$member:target.Enabled","mode":"drive"} } }] }
+            """);
+        Dictionary<string, FluxResolvedModuleBindings> Bindings(string slotId, string memberId) => new()
+        {
+            [name] = new([new("Source", "source", "$slot:root", slotId, "slot", "Slot"),
+                new("Result", "drive", "$member:target.Enabled", memberId, "member", "bool")])
+        };
+        var fake = new FakeFluxTool();
+        var orchestrator = new FluxManifestOrchestrator(fake);
+        var uri = new Uri("ws://localhost:12449");
+        await orchestrator.DeployAsync(manifest, "Reso_OldParent", uri, null, null, "session-1", Bindings("Reso_OldSlot", "Reso_OldMember"),
+            (_, _) => Task.FromResult<string?>("Reso_OldModule"));
+        if (change == "source-changed") File.AppendAllText(Path.Combine(_root, name + ".pg"), "\n");
+        var references = new Dictionary<string, string>
+            { ["Source"] = "Reso_NewSlot", ["Result"] = change == "target-not-referenced" ? "Reso_OldMember" : "Reso_NewMember" };
+
+        // After a reload the parent and every target have new IDs.
+        var reloaded = await orchestrator.DeployAsync(manifest, "Reso_NewParent", uri, null, null, "session-2",
+            Bindings("Reso_NewSlot", "Reso_NewMember"),
+            (_, _) => Task.FromResult<string?>(change == "module-child-missing" ? null : "Reso_NewModule"),
+            verifyModuleBindings: change == "no-binding-verifier" ? null : (_, bindings, _) =>
+                Task.FromResult(bindings.Bindings.All(binding => references.GetValueOrDefault(binding.Name) == binding.TargetId)));
+
+        var deployment = Assert.Single(reloaded.Modules);
+        Assert.Equal(expected, deployment.Action);
+        if (expected == "update")
+        {
+            Assert.Equal("Reso_NewMember", fake.Requests[^1].OutputMap!["Result"]);
+            if (change != "module-child-missing")
+                Assert.StartsWith(change == "source-changed" ? "source" : "named source/drive bindings", deployment.Reason);
+            return;
+        }
+        Assert.Single(fake.Requests);
+        // Even with unchanged IDs, confirm each named binding so manual rewiring is not hidden by the checkpoint.
+        var verified = false;
+        var again = await orchestrator.DeployAsync(manifest, "Reso_NewParent", uri, null, null, "session-3",
+            Bindings("Reso_NewSlot", "Reso_NewMember"), (_, _) => Task.FromResult<string?>("Reso_NewModule"),
+            verifyModuleBindings: (_, bindings, _) =>
+            {
+                verified = true;
+                return Task.FromResult(bindings.Bindings.All(binding => references.GetValueOrDefault(binding.Name) == binding.TargetId));
+            });
+        Assert.Equal("no-op", Assert.Single(again.Modules).Action);
+        Assert.True(verified);
+    }
+
+    [Fact]
+    public async Task FluxManifestKeepsUnboundModulesAfterAWorldReload()
+    {
+        File.WriteAllText(Path.Combine(_root, "unbound.pg"), "module Unbound where { 1->display }");
+        var manifest = Path.Combine(_root, "unbound-flux.json");
+        File.WriteAllText(manifest, """{ "schemaVersion":"1", "modules":[{"name":"unbound","source":"unbound.pg","module":"Unbound"}] }""");
+        var fake = new FakeFluxTool();
+        var orchestrator = new FluxManifestOrchestrator(fake);
+        var uri = new Uri("ws://localhost:12449");
+        await orchestrator.DeployAsync(manifest, "Reso_OldParent", uri, null, null, "session-1",
+            resolveModuleSlot: (_, _) => Task.FromResult<string?>("Reso_OldModule"));
+
+        var reloaded = await orchestrator.DeployAsync(manifest, "Reso_NewParent", uri, null, null, "session-2",
+            resolveModuleSlot: (_, _) => Task.FromResult<string?>("Reso_NewModule"));
+
+        Assert.Equal("no-op", Assert.Single(reloaded.Modules).Action);
         Assert.Single(fake.Requests);
     }
 

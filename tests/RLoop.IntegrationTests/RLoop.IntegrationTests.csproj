@@ -12,6 +12,8 @@
   <ItemGroup>
     <ProjectReference Include="../../src/RLoop.Core/RLoop.Core.csproj" />
     <ProjectReference Include="../../src/RLoop.ResoniteLink/RLoop.ResoniteLink.csproj" />
+    <ProjectReference Include="../../src/RLoop.Flux/RLoop.Flux.csproj" />
+    <ProjectReference Include="../../src/RLoop.Flux.Deployer/RLoop.Flux.Deployer.fsproj" />
   </ItemGroup>
   <ItemGroup>
     <None Include="../../examples/uix-responsive.json" Link="examples/uix-responsive.json" CopyToOutputDirectory="PreserveNewest" />
