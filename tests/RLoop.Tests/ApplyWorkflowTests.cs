@@ -1,3 +1,4 @@
+using System.Numerics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using RLoop.Core;
@@ -586,6 +587,39 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         Assert.Equal(0, client.Writes);
     }
 
+    [Fact]
+    public async Task SlotMemberReferencesUseTheSnapshotAndReadANewSlotOnce()
+    {
+        string Manifest(bool enabled) => """
+            {"schemaVersion":"1","ownership":{"key":"slot-member-reads"},"slot":{"key":"root","name":"Managed","parent":"Root"},
+             "components":[
+               {"key":"rotation","type":"Test.Target","fields":{"Target":"$slot-member:child.Rotation","Enabled":ENABLED}},
+               {"key":"position","type":"Test.Target","fields":{"Target":"$slot-member:child.Position","Enabled":ENABLED}}],
+             "children":[{"slot":{"key":"child","name":"Driven"}}]}
+            """.Replace("ENABLED", enabled ? "true" : "false");
+        var path = Path.Combine(_root, "slot-member-reads.json");
+        File.WriteAllText(path, Manifest(false));
+        var document = ApplyDocument.Load(path);
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "slot-member-reads.state.json");
+        await service.ApplyAsync(document, new ApplyOptions(state));
+        var child = client.Root.Children.Single().Children.Single();
+        // The child is created by this apply, so its fields are read once for both references.
+        Assert.Single(client.SlotReads, read => read == (child.Id, 0));
+
+        File.WriteAllText(path, Manifest(true));
+        document = ApplyDocument.Load(path);
+        client.SlotReads.Clear();
+        var updated = await service.ApplyAsync(document, new ApplyOptions(state));
+        Assert.Equal(2, updated.ComponentsUpdated);
+        // Now the preflight snapshot has the child's field IDs.
+        Assert.DoesNotContain(client.SlotReads, read => read == (child.Id, 0));
+        var components = client.Root.Children.Single().Components.Where(x => x.Type == "Test.Target").ToArray();
+        Assert.Contains(components, x => x.Members["Target"].TargetId == child.Id + ":Rotation");
+        Assert.Contains(components, x => x.Members["Target"].TargetId == child.Id + ":Position");
+    }
+
     [Theory]
     [InlineData("$slot-member:missing.Rotation", "APPLY_REFERENCE_NOT_FOUND")]
     [InlineData("$slot-member:root.NotAField", "APPLY_MEMBER_REFERENCE_NOT_FOUND")]
@@ -1039,6 +1073,42 @@ public sealed partial class ApplyWorkflowTests : IDisposable
     }
 
     [Fact]
+    public async Task LocalTransformRelocationKeepsLocalValuesWhenTheEngineKeepsWorldPose()
+    {
+        var initialPath = Path.Combine(_root, "local-relocation-initial.json");
+        File.WriteAllText(initialPath, """
+            { "schemaVersion":"1", "ownership":{"key":"local-relocation"},
+              "slot":{"key":"root","name":"Managed","parent":"Root"},
+              "children":[{"slot":{"key":"parent","name":"Parent","position":[10,0,0]},
+                "children":[{"slot":{"key":"declared","name":"Declared","position":[2,0,0]}},
+                            {"slot":{"key":"undeclared","name":"Undeclared"}}]}] }
+            """);
+        var desiredPath = Path.Combine(_root, "local-relocation-desired.json");
+        File.WriteAllText(desiredPath, """
+            { "schemaVersion":"1", "ownership":{"key":"local-relocation"},
+              "slot":{"key":"root","name":"Managed","parent":"Root"},
+              "children":[{"slot":{"key":"declared","name":"Declared","position":[2,0,0]}},
+                          {"slot":{"key":"undeclared","name":"Undeclared"}}] }
+            """);
+        var client = new FakeResoniteClient { KeepsWorldPositionOnReparent = true };
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "local-relocation.state.json");
+        await service.ApplyAsync(ApplyDocument.Load(initialPath), new ApplyOptions(state));
+        var parent = client.Root.Children.Single().Children.Single();
+        parent.Children.Single(slot => slot.Name == "Undeclared").Position = new Vector3Value(0, 3, 0);
+
+        await service.ApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(state));
+        client.ResetWriteCounts();
+        var reapplied = await service.ApplyAsync(ApplyDocument.Load(desiredPath), new ApplyOptions(state));
+
+        var children = client.Root.Children.Single().Children;
+        Assert.Equal(new Vector3Value(2, 0, 0), children.Single(slot => slot.Name == "Declared").Position);
+        Assert.Equal(new Vector3Value(0, 3, 0), children.Single(slot => slot.Name == "Undeclared").Position);
+        Assert.Equal(0, reapplied.SlotsUpdated);
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Fact]
     public async Task ValidationRejectsUnknownRelocationTransformPolicy()
     {
         var path = Path.Combine(_root, "invalid-relocation-transform.json");
@@ -1457,7 +1527,10 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public FakeSlot Root { get; }
         public int Writes { get; private set; }
         public int BatchUpdates { get; private set; }
+        public int ComponentReads { get; private set; }
         public List<string> Mutations { get; } = [];
+        public List<(string Id, int Depth)> SlotReads { get; } = [];
+        public bool KeepsWorldPositionOnReparent { get; set; }
         public int? CancelAfterWrites { get; set; }
         public int? FailOnWrite { get; set; }
         // The write with this number lands, and then its response is lost.
@@ -1500,6 +1573,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             _requests++;
+            SlotReads.Add((id, depth));
             if (!_slots.TryGetValue(id, out var slot)) throw new RLoopException("SLOT_NOT_FOUND", id, ExitCodes.NotFound);
             return Task.FromResult(Map(slot, depth, includeComponentData));
         }
@@ -1508,6 +1582,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             _requests++;
+            ComponentReads++;
             var component = _components[id];
             return Task.FromResult(new ComponentInfo(component.Id, component.Type, component.Members));
         }
@@ -1535,9 +1610,13 @@ public sealed partial class ApplyWorkflowTests : IDisposable
             var slot = _slots[request.Id];
             if (request.ParentId is not null && request.ParentId != slot.ParentId)
             {
+                var world = WorldPosition(slot);
                 if (slot.ParentId is not null) _slots[slot.ParentId].Children.Remove(slot);
                 _slots[request.ParentId].Children.Add(slot);
                 slot.ParentId = request.ParentId;
+                // Like Resonite, a Parent change keeps the world pose (modelled for translation only).
+                var local = world - WorldPosition(_slots[request.ParentId]);
+                if (KeepsWorldPositionOnReparent) slot.Position = new Vector3Value(local.X, local.Y, local.Z);
             }
             if (request.Name is not null) slot.Name = request.Name;
             if (request.Position is not null) slot.Position = request.Position;
@@ -1546,6 +1625,10 @@ public sealed partial class ApplyWorkflowTests : IDisposable
             Acknowledge();
             return Task.CompletedTask;
         }
+
+        private Vector3 WorldPosition(FakeSlot slot) =>
+            new Vector3(slot.Position?.X ?? 0, slot.Position?.Y ?? 0, slot.Position?.Z ?? 0) +
+            (slot.ParentId is null ? Vector3.Zero : WorldPosition(_slots[slot.ParentId]));
 
         public Task DeleteSlotAsync(string id, CancellationToken cancellationToken = default)
         {
@@ -1637,7 +1720,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public void ResetMetrics() => _requests = 0;
         public ClientMetrics SnapshotMetrics() => new(_requests, 0, 0,
             [new ClientOperationMetric("fake", _requests, 0)]);
-        public void ResetWriteCounts() { Writes = 0; BatchUpdates = 0; }
+        public void ResetWriteCounts() { Writes = 0; BatchUpdates = 0; ComponentReads = 0; }
 
         // Simulates saving the world and loading it again: every Slot and Component except Root gets a new ID.
         public void ReloadWorld(string sessionId)
@@ -1812,7 +1895,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
             slot.Position, slot.Rotation, slot.Scale, true, true, null, false,
             slot.Components.Select(x => new ComponentSummary(x.Id, x.Type, members ? x.Members : null)).ToArray(),
             depth == 0 ? [] : slot.Children.Select(x => Map(x, depth < 0 ? -1 : depth - 1, members)).ToArray(),
-            Members: new Dictionary<string, MemberValue> { ["Rotation"] = new("field", slot.Id + ":Rotation", "floatQ") });
+            Members: new Dictionary<string, MemberValue> { ["Rotation"] = new("field", slot.Id + ":Rotation", "floatQ"), ["Position"] = new("field", slot.Id + ":Position", "float3") });
 
         public sealed class FakeSlot(string id, string name, string? parentId, Vector3Value? position,
             QuaternionValue? rotation, Vector3Value? scale)

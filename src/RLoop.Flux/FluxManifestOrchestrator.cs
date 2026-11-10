@@ -354,6 +354,15 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
         if (manifest.Modules.Count == 0) throw new RLoopException("FLUX_MANIFEST_EMPTY", "Flux manifest requires at least one module.", ExitCodes.ValidationFailed);
         if (manifest.Modules.Select(x => x.Name).Distinct(StringComparer.Ordinal).Count() != manifest.Modules.Count)
             throw new RLoopException("FLUX_MODULE_DUPLICATE", "Flux module names must be unique.", ExitCodes.ValidationFailed);
+        // Every module is deployed as a child Slot named after its module, directly below the one manifest parent, and
+        // a deploy replaces the child with that name. Entries sharing it would silently replace each other.
+        var collision = manifest.Modules.GroupBy(ModuleChildName, StringComparer.Ordinal).FirstOrDefault(group => group.Count() > 1);
+        if (collision is not null)
+            throw new RLoopException("FLUX_MODULE_CHILD_COLLISION",
+                $"Modules {string.Join(", ", collision.Select(module => $"'{module.Name}'"))} would all deploy as the child '{collision.Key}' below the same parent, so each deploy would replace the previous one.",
+                ExitCodes.ValidationFailed,
+                new Dictionary<string, object?> { ["child"] = collision.Key, ["modules"] = collision.Select(module => module.Name).ToArray() },
+                ["Deploy one module that handles every instance (for example through a binding per instance), or deploy each instance from a manifest with its own parent."]);
         var directory = Path.GetDirectoryName(path)!;
         var project = Path.GetFullPath(manifest.ProjectDirectory ?? directory, directory);
         foreach (var module in manifest.Modules)
@@ -382,6 +391,10 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
         _ = Topological(manifest.Modules);
         return new LoadedManifest(path, directory, project, manifest);
     }
+
+    /// <summary>The name of the Slot a module deploys as below its parent: the last segment of its module path.</summary>
+    public static string ModuleChildName(FluxModuleSpec module) =>
+        module.Module.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? module.Module;
 
     private static IReadOnlyList<FluxModuleSpec> Topological(IReadOnlyList<FluxModuleSpec> modules)
     {

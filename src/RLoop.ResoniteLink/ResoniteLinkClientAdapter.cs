@@ -13,8 +13,10 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     private readonly TimeSpan _requestTimeout;
     private readonly Dictionary<string, Link.ComponentDefinition> _componentDefinitions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TypeInfo> _typeDefinitions = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Link.SyncObjectDefinition> _syncObjectDefinitions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, MutableMetric> _metrics = new(StringComparer.Ordinal);
     private IReadOnlyList<string>? _allComponentTypes;
+    private bool _allComponentTypesLive;
     private int _cacheHits;
     private Uri? _uri;
     private ReflectionCacheOptions _cacheOptions;
@@ -229,10 +231,9 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             else if (step.Member is { } name && member is Link.SyncObjectMemberDefinition sync)
             {
                 var type = ModelMapper.Render(sync.Type) ?? throw new RLoopException("SYNC_OBJECT_TYPE_MISSING", "SyncObject type is unavailable.", ExitCodes.ValidationFailed);
-                var response = await Wait(_link.GetSyncObjectDefinition(new Link.GetSyncObjectDefinition { SyncObjectType = type, Flattened = true }), "sync-object-definition.get", cancellationToken);
-                EnsureSuccess(response, "SYNC_OBJECT_DESCRIBE_FAILED");
-                if (!response.Definition.Members.TryGetValue(name, out member))
-                    throw UnknownMember(type, name, response.Definition.Members.Keys);
+                var syncObject = await DescribeSyncObjectAsync(type, cancellationToken);
+                if (!syncObject.Members.TryGetValue(name, out member))
+                    throw UnknownMember(type, name, syncObject.Members.Keys);
             }
             else throw new RLoopException("MEMBER_PATH_REFLECTION_UNAVAILABLE", "Reflection does not expose this member path/container.", ExitCodes.ValidationFailed);
         }
@@ -400,32 +401,56 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
 
     private async Task<string> ResolveComponentTypeAsync(string query, CancellationToken cancellationToken)
     {
-        var types = await GetAllComponentTypeNames(cancellationToken);
-        var exact = types.FirstOrDefault(x => x.Equals(query, StringComparison.Ordinal) || StripAssembly(x).Equals(query, StringComparison.Ordinal));
-        if (exact is not null) return exact;
-        var matches = types.Where(x => StripAssembly(x).EndsWith('.' + query, StringComparison.Ordinal) ||
-                                       StripAssembly(x).Equals(query, StringComparison.OrdinalIgnoreCase)).Take(20).ToArray();
+        var matches = MatchComponentTypes(await GetAllComponentTypeNames(cancellationToken), query);
+        // A list read from disk can predate a type added since (by a MOD, for example), so look live before giving up.
+        if (matches.Length == 0 && !_allComponentTypesLive)
+            matches = MatchComponentTypes(await GetAllComponentTypeNames(cancellationToken, refresh: true), query);
         if (matches.Length == 1) return matches[0];
         throw new RLoopException("COMPONENT_TYPE_NOT_FOUND",
             matches.Length == 0 ? $"Component type '{query}' was not found." : $"Component type '{query}' is ambiguous.",
             ExitCodes.NotFound, new Dictionary<string, object?> { ["query"] = query }, matches.Take(10).ToArray());
     }
 
-    private async Task<IReadOnlyList<string>> GetAllComponentTypeNames(CancellationToken cancellationToken)
+    private static string[] MatchComponentTypes(IReadOnlyList<string> types, string query)
     {
-        if (_allComponentTypes is not null)
+        var exact = types.FirstOrDefault(x => x.Equals(query, StringComparison.Ordinal) || StripAssembly(x).Equals(query, StringComparison.Ordinal));
+        if (exact is not null) return [exact];
+        return types.Where(x => StripAssembly(x).EndsWith('.' + query, StringComparison.Ordinal) ||
+                                StripAssembly(x).Equals(query, StringComparison.OrdinalIgnoreCase)).Take(20).ToArray();
+    }
+
+    // Collecting the list can take one request per category (hundreds), so it is kept in the reflection disk cache
+    // under the same version scope as the rest of the SDK metadata.
+    private async Task<IReadOnlyList<string>> GetAllComponentTypeNames(CancellationToken cancellationToken, bool refresh = false)
+    {
+        refresh |= _forceLiveMetadata;
+        if (_allComponentTypes is not null && (!refresh || _allComponentTypesLive))
         {
             Interlocked.Increment(ref _cacheHits);
             return _allComponentTypes;
         }
+        var disk = await GetReflectionCacheAsync(cancellationToken);
+        if (refresh) disk.Invalidate("component-types", "all");
+        else if (disk.Read<string[]>("component-types", "all", types => types.Length > 0) is { } stored)
+        {
+            _allComponentTypesLive = false;
+            return _allComponentTypes = stored.Value;
+        }
         var response = await Wait(_link.GetAllComponentTypes(), "component-types.get-all", cancellationToken);
         EnsureSuccess(response, "TYPE_SEARCH_FAILED");
-        if (response.ComponentTypes is { Count: > 0 }) return _allComponentTypes = response.ComponentTypes;
+        if (response.ComponentTypes is { Count: > 0 }) return RememberComponentTypes(disk, response.ComponentTypes.ToArray());
 
         var results = new HashSet<string>(StringComparer.Ordinal);
         var visited = new HashSet<string>(StringComparer.Ordinal);
         await CollectCategory(string.Empty, results, visited, cancellationToken);
-        return _allComponentTypes = results.ToArray();
+        return RememberComponentTypes(disk, results.ToArray());
+    }
+
+    private IReadOnlyList<string> RememberComponentTypes(ReflectionMetadataCache disk, string[] types)
+    {
+        disk.Write("component-types", "all", types, DateTimeOffset.UtcNow);
+        _allComponentTypesLive = true;
+        return _allComponentTypes = types;
     }
 
     private async Task CollectCategory(string category, HashSet<string> results, HashSet<string> visited,
@@ -506,9 +531,21 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         return _diskCache = new ReflectionMetadataCache(session, _cacheOptions);
     }
 
+    private async Task<Link.SyncObjectDefinition> DescribeSyncObjectAsync(string type, CancellationToken ct)
+    {
+        if (_syncObjectDefinitions.TryGetValue(type, out var cached))
+        {
+            Interlocked.Increment(ref _cacheHits);
+            return cached;
+        }
+        var response = await Wait(_link.GetSyncObjectDefinition(new Link.GetSyncObjectDefinition { SyncObjectType = type, Flattened = true }), "sync-object-definition.get", ct);
+        EnsureSuccess(response, "SYNC_OBJECT_DESCRIBE_FAILED");
+        return _syncObjectDefinitions[type] = response.Definition;
+    }
+
     private void ClearReflectionMemory()
     {
-        _componentDefinitions.Clear(); _typeDefinitions.Clear(); _allComponentTypes = null;
+        _componentDefinitions.Clear(); _typeDefinitions.Clear(); _syncObjectDefinitions.Clear(); _allComponentTypes = null; _allComponentTypesLive = false;
         _componentEvidence.Clear(); _typeEvidence.Clear();
     }
 
@@ -557,7 +594,8 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
                 {
                     if (!definition.Members.TryGetValue(field.Key, out var memberDefinition))
                         throw UnknownMember(componentType, field.Key, definition.Members.Keys);
-                    members[field.Key] = await ValueCodec.ParseAsync(_link, memberDefinition, field.Value, ct, _requestTimeout, RecordMetric, DescribeTypeAsync);
+                    members[field.Key] = await ValueCodec.ParseAsync(_link, memberDefinition, field.Value, ct, _requestTimeout, RecordMetric,
+                        DescribeTypeAsync, DescribeSyncObjectAsync);
                 }
                 return members;
             }
@@ -799,7 +837,8 @@ public static class ValueCodec
     public static async Task<Link.Member> ParseAsync(Link.LinkInterface link, Link.MemberDefinition definition, string raw,
         CancellationToken cancellationToken = default, TimeSpan? requestTimeout = null,
         Action<string, double>? requestCompleted = null,
-        Func<string, CancellationToken, Task<TypeInfo>>? describeType = null)
+        Func<string, CancellationToken, Task<TypeInfo>>? describeType = null,
+        Func<string, CancellationToken, Task<Link.SyncObjectDefinition>>? describeSyncObject = null)
     {
         if (definition is Link.ReferenceDefinition)
         {
@@ -808,9 +847,9 @@ public static class ValueCodec
                     suggestions: ["Pass Reso_123 as the reference value. Shell quotes may group an argument, but literal quote characters are not part of an ID."]);
             return new Link.Reference { TargetID = raw.Equals("null", StringComparison.OrdinalIgnoreCase) ? null : raw };
         }
-        if (definition is Link.ListDefinition list) return await ParseListAsync(link, list, raw, cancellationToken, requestTimeout, requestCompleted, describeType);
-        if (definition is Link.DictionaryDefinition dictionary) return await ParseDictionaryAsync(link, dictionary, raw, cancellationToken, requestTimeout, requestCompleted, describeType);
-        if (definition is Link.SyncObjectMemberDefinition syncObject) return await ParseSyncObjectAsync(link, syncObject, raw, cancellationToken, requestTimeout, requestCompleted, describeType);
+        if (definition is Link.ListDefinition list) return await ParseListAsync(link, list, raw, cancellationToken, requestTimeout, requestCompleted, describeType, describeSyncObject);
+        if (definition is Link.DictionaryDefinition dictionary) return await ParseDictionaryAsync(link, dictionary, raw, cancellationToken, requestTimeout, requestCompleted, describeType, describeSyncObject);
+        if (definition is Link.SyncObjectMemberDefinition syncObject) return await ParseSyncObjectAsync(link, syncObject, raw, cancellationToken, requestTimeout, requestCompleted, describeType, describeSyncObject);
         if (definition is not Link.FieldDefinition field)
             throw new RLoopException("MEMBER_TYPE_UNSUPPORTED", $"Setting {definition.GetType().Name} members is not supported in v0.1.", ExitCodes.ValidationFailed);
 
@@ -852,7 +891,8 @@ public static class ValueCodec
 
     private static async Task<Link.SyncDictionary> ParseDictionaryAsync(Link.LinkInterface link, Link.DictionaryDefinition definition,
         string raw, CancellationToken cancellationToken, TimeSpan? requestTimeout, Action<string, double>? requestCompleted,
-        Func<string, CancellationToken, Task<TypeInfo>>? describeType)
+        Func<string, CancellationToken, Task<TypeInfo>>? describeType,
+        Func<string, CancellationToken, Task<Link.SyncObjectDefinition>>? describeSyncObject)
     {
         if (definition.ElementDefinition is null)
             throw new RLoopException("DICTIONARY_ELEMENT_TYPE_MISSING", "The runtime dictionary definition did not include a value type.", ExitCodes.ValidationFailed);
@@ -874,24 +914,34 @@ public static class ValueCodec
         {
             var key = Convert.ChangeType(pair.Key, dictionaryKeyType, CultureInfo.InvariantCulture);
             var valueRaw = pair.Value is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var text) ? text : pair.Value?.ToJsonString() ?? "null";
-            elements.Add(key!, await ParseAsync(link, definition.ElementDefinition, valueRaw, cancellationToken, requestTimeout, requestCompleted, describeType));
+            elements.Add(key!, await ParseAsync(link, definition.ElementDefinition, valueRaw, cancellationToken, requestTimeout, requestCompleted, describeType, describeSyncObject));
         }
         property.SetValue(result, elements);
         return result;
     }
 
+    private static async Task<Link.SyncObjectDefinition> GetSyncObjectDefinitionAsync(Link.LinkInterface link, string type,
+        CancellationToken cancellationToken, TimeSpan? requestTimeout, Action<string, double>? requestCompleted)
+    {
+        var response = await WaitValueRequest(link.GetSyncObjectDefinition(new Link.GetSyncObjectDefinition { SyncObjectType = type, Flattened = true }), "sync-object-definition.get", requestTimeout,
+            cancellationToken, requestCompleted);
+        if (!response.Success) throw new RLoopException("SYNC_OBJECT_DESCRIBE_FAILED", response.ErrorInfo, ExitCodes.OperationFailed);
+        return response.Definition;
+    }
+
     private static async Task<Link.SyncObject> ParseSyncObjectAsync(Link.LinkInterface link, Link.SyncObjectMemberDefinition member,
         string raw, CancellationToken cancellationToken, TimeSpan? requestTimeout, Action<string, double>? requestCompleted,
-        Func<string, CancellationToken, Task<TypeInfo>>? describeType)
+        Func<string, CancellationToken, Task<TypeInfo>>? describeType,
+        Func<string, CancellationToken, Task<Link.SyncObjectDefinition>>? describeSyncObject)
     {
         JsonObject source;
         try { source = JsonNode.Parse(raw) as JsonObject ?? throw new JsonException("Expected an object."); }
         catch (JsonException ex) { throw new RLoopException("SYNC_OBJECT_VALUE_INVALID", "SyncObject values must use a JSON object.", ExitCodes.ValidationFailed, innerException: ex); }
         var type = ModelMapper.Render(member.Type) ?? throw new RLoopException("SYNC_OBJECT_TYPE_MISSING", "SyncObject member has no runtime type.", ExitCodes.ValidationFailed);
-        var response = await WaitValueRequest(link.GetSyncObjectDefinition(new Link.GetSyncObjectDefinition { SyncObjectType = type, Flattened = true }), "sync-object-definition.get", requestTimeout,
-            cancellationToken, requestCompleted);
-        if (!response.Success) throw new RLoopException("SYNC_OBJECT_DESCRIBE_FAILED", response.ErrorInfo, ExitCodes.OperationFailed);
-        var definition = response.Definition;
+        // Every element of a SyncObject list has the same type; describeSyncObject lets the caller cache its definition.
+        var definition = describeSyncObject is not null
+            ? await describeSyncObject(type, cancellationToken)
+            : await GetSyncObjectDefinitionAsync(link, type, cancellationToken, requestTimeout, requestCompleted);
         var members = new Dictionary<string, Link.Member>(StringComparer.Ordinal);
         foreach (var pair in source)
         {
@@ -899,14 +949,15 @@ public static class ValueCodec
                 throw new RLoopException("SYNC_OBJECT_MEMBER_NOT_FOUND", $"SyncObject member '{pair.Key}' was not found.", ExitCodes.ValidationFailed,
                     suggestions: definition.Members.Keys.Take(30).ToArray());
             var valueRaw = pair.Value is JsonValue value && value.TryGetValue<string>(out var text) ? text : pair.Value?.ToJsonString() ?? "null";
-            members[pair.Key] = await ParseAsync(link, memberDefinition, valueRaw, cancellationToken, requestTimeout, requestCompleted, describeType);
+            members[pair.Key] = await ParseAsync(link, memberDefinition, valueRaw, cancellationToken, requestTimeout, requestCompleted, describeType, describeSyncObject);
         }
         return new Link.SyncObject { Members = members };
     }
 
     private static async Task<Link.SyncList> ParseListAsync(Link.LinkInterface link, Link.ListDefinition definition,
         string raw, CancellationToken cancellationToken, TimeSpan? requestTimeout, Action<string, double>? requestCompleted,
-        Func<string, CancellationToken, Task<TypeInfo>>? describeType)
+        Func<string, CancellationToken, Task<TypeInfo>>? describeType,
+        Func<string, CancellationToken, Task<Link.SyncObjectDefinition>>? describeSyncObject)
     {
         if (definition.ElementDefinition is null)
             throw new RLoopException("LIST_ELEMENT_TYPE_MISSING", "The runtime list definition did not include an element type.", ExitCodes.ValidationFailed);
@@ -936,7 +987,7 @@ public static class ValueCodec
 
         var elements = new List<Link.Member>(values.Count);
         foreach (var value in values)
-            elements.Add(await ParseAsync(link, definition.ElementDefinition, value, cancellationToken, requestTimeout, requestCompleted, describeType));
+            elements.Add(await ParseAsync(link, definition.ElementDefinition, value, cancellationToken, requestTimeout, requestCompleted, describeType, describeSyncObject));
         return new Link.SyncList { Elements = elements };
     }
 
