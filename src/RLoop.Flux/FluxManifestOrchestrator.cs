@@ -19,8 +19,8 @@ public sealed record FluxResolvedModuleBindings(IReadOnlyList<FluxResolvedBindin
 public sealed record FluxModuleSpec(string Name, string Source, string Module, IReadOnlyList<string>? DependsOn = null,
     IReadOnlyDictionary<string, FluxBindingSpec>? Bindings = null);
 public delegate Task<string?> FluxModuleSlotResolver(FluxModuleSpec module, CancellationToken cancellationToken);
-/// <summary>Returns the target IDs of every reference member below a deployed module child.</summary>
-public delegate Task<IReadOnlySet<string>> FluxModuleReferenceReader(string moduleSlotId, CancellationToken cancellationToken);
+/// <summary>Verifies each named source/drive binding on the observed module, not just the set of referenced IDs.</summary>
+public delegate Task<bool> FluxModuleBindingVerifier(string moduleSlotId, FluxResolvedModuleBindings bindings, CancellationToken cancellationToken);
 public sealed record FluxModuleManifest(string? SchemaVersion, IReadOnlyList<FluxModuleSpec> Modules, string? ProjectDirectory = null,
     string? Parent = null, string? WorldState = null, string? DeployState = null);
 public sealed record FluxModuleDeployment(string Name, string Action, string Reason, bool BuildSucceeded,
@@ -40,7 +40,7 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
         IReadOnlyDictionary<string, FluxResolvedModuleBindings>? resolvedBindings = null,
         FluxModuleSlotResolver? resolveModuleSlot = null,
         CancellationToken cancellationToken = default,
-        FluxModuleReferenceReader? readModuleReferences = null)
+        FluxModuleBindingVerifier? verifyModuleBindings = null)
     {
         var loaded = Load(manifestPath);
         var statePath = ResolveStatePath(loaded.Manifest, loaded.Path);
@@ -65,17 +65,23 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
                 (resolveModuleSlot is not null || state.SessionId == sessionId))
             {
                 var sameIds = state.ParentSlotId == parentSlotId && SameTargets(previous.Targets, targets);
-                if (sameIds || await StillWiredAsync(beforeSlotId, targets.Values))
+                // IDs alone are not wiring evidence, even in the same session: a port may have been rewired.
+                var wired = targets.Count == 0
+                    ? sameIds || resolveModuleSlot is not null
+                    : resolveModuleSlot is not null && verifyModuleBindings is not null &&
+                      await verifyModuleBindings(beforeSlotId, moduleBindings!, cancellationToken);
+                if (wired)
                 {
                     if (!sameIds || previous.SlotId != beforeSlotId)
                     {
                         state.Modules[module.Name] = new ModuleState(hash, beforeSlotId, targets);
                         state.ParentSlotId = parentSlotId;
+                        state.SessionId = sessionId;
                         SaveState(statePath, state);
                     }
-                    results.Add(new FluxModuleDeployment(module.Name, "no-op", sameIds
+                    results.Add(new FluxModuleDeployment(module.Name, "no-op", targets.Count == 0
                             ? "source and transitive dependency hashes match deploy state"
-                            : "IDs changed (e.g. after a world reload), but the source is unchanged and the module is still wired to every binding target",
+                            : "source is unchanged and every named source/drive binding is verified against its current target",
                         true, false, beforeSlotId, beforeSlotId, Bindings: moduleBindings?.Bindings));
                     continue;
                 }
@@ -122,24 +128,13 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
                 previous is null ? "module has no deploy state"
                 : previous.Hash != hash ? "source, bindings or transitive dependency changed"
                 : string.IsNullOrWhiteSpace(beforeSlotId) ? "module child was not found below the parent"
-                : "binding target IDs changed and the module is not wired to all of them",
+                : "named source/drive bindings could not be verified against their current targets",
                 true, true, beforeSlotId, afterSlotId, Bindings: moduleBindings?.Bindings));
         }
         return Report(true);
 
         FluxManifestResult Report(bool success) => new(success, loaded.Path, parentSlotId, results, false,
             $"Module replacement is non-atomic. Successful modules are checkpointed in {statePath}; fix the error and re-run to converge.");
-
-        // A world reload gives the parent and every binding target a new ID. The module child re-observed below the
-        // current parent is still correctly wired if it references each target's current ID; a recreated target isn't.
-        async Task<bool> StillWiredAsync(string moduleSlotId, IEnumerable<string> targetIds)
-        {
-            if (resolveModuleSlot is null) return false;
-            if (!targetIds.Any()) return true;
-            if (readModuleReferences is null) return false;
-            var references = await readModuleReferences(moduleSlotId, cancellationToken);
-            return targetIds.All(references.Contains);
-        }
     }
 
     private static bool SameTargets(IReadOnlyDictionary<string, string>? previous, IReadOnlyDictionary<string, string> current) =>
@@ -151,7 +146,7 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
         IReadOnlyDictionary<string, FluxResolvedModuleBindings>? resolvedBindings = null,
         FluxModuleSlotResolver? resolveModuleSlot = null,
         CancellationToken cancellationToken = default,
-        FluxModuleReferenceReader? readModuleReferences = null)
+        FluxModuleBindingVerifier? verifyModuleBindings = null)
     {
         FluxManifestResult? last = null;
         string? fingerprint = null;
@@ -165,7 +160,7 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
                 if (current != fingerprint)
                 {
                     last = await DeployAsync(manifestPath, parentSlotId, url, libraryPath, helperPath, sessionId,
-                        resolvedBindings, resolveModuleSlot, cancellationToken, readModuleReferences);
+                        resolvedBindings, resolveModuleSlot, cancellationToken, verifyModuleBindings);
                     fingerprint = current;
                 }
                 await Task.Delay(pollInterval, cancellationToken);

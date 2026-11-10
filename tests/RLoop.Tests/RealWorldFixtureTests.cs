@@ -1,6 +1,7 @@
 using System.Text.Json;
 using RLoop.Core;
 using RLoop.Flux;
+using RLoop.Flux.Deployer;
 
 namespace RLoop.Tests;
 
@@ -53,7 +54,11 @@ public sealed class RealWorldFixtureTests : IDisposable
         var first = await orchestrator.DeployAsync(Path.Combine(_temp, "fixed.flux.json"), "S_Parent",
             new Uri("ws://localhost:1"), null, null, "session", resolved);
         var second = await orchestrator.DeployAsync(Path.Combine(_temp, "fixed.flux.json"), "S_Parent",
-            new Uri("ws://localhost:1"), null, null, "session", resolved);
+            new Uri("ws://localhost:1"), null, null, "session", resolved,
+            resolveModuleSlot: (_, _) => Task.FromResult<string?>("S_Module"),
+            verifyModuleBindings: (_, bindings, _) => Task.FromResult(FluxSdkBindingInspector.Verify(
+                FluxBindingFixture.Slot("Module", [FluxBindingFixture.Input("TouchButton", "C_Button")]),
+                bindings.InputMap, bindings.OutputMap)));
 
         Assert.Equal("FLUX_INTERFACE_GLOBAL_UNSUPPORTED", broken.Code);
         Assert.True(first.Success);

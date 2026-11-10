@@ -4,7 +4,7 @@ using RLoop.Flux;
 
 namespace RLoop.Tests;
 
-public sealed class P1WorkflowTests : IDisposable
+public sealed partial class P1WorkflowTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "resoloop-p1-" + Guid.NewGuid().ToString("N"));
     public P1WorkflowTests() => Directory.CreateDirectory(_root);
@@ -298,7 +298,7 @@ public sealed class P1WorkflowTests : IDisposable
     [InlineData("target-not-referenced", "update")]
     [InlineData("source-changed", "update")]
     [InlineData("module-child-missing", "update")]
-    [InlineData("no-reference-reader", "update")]
+    [InlineData("no-binding-verifier", "update")]
     public async Task FluxManifestKeepsModulesThatAreStillWiredAfterAWorldReload(string change, string expected)
     {
         var name = "Reload" + change.Replace("-", "");
@@ -320,14 +320,15 @@ public sealed class P1WorkflowTests : IDisposable
         await orchestrator.DeployAsync(manifest, "Reso_OldParent", uri, null, null, "session-1", Bindings("Reso_OldSlot", "Reso_OldMember"),
             (_, _) => Task.FromResult<string?>("Reso_OldModule"));
         if (change == "source-changed") File.AppendAllText(Path.Combine(_root, name + ".pg"), "\n");
-        IReadOnlySet<string> references = new HashSet<string>
-            { "Reso_NewSlot", change == "target-not-referenced" ? "Reso_OldMember" : "Reso_NewMember", "Reso_Other" };
+        var references = new Dictionary<string, string>
+            { ["Source"] = "Reso_NewSlot", ["Result"] = change == "target-not-referenced" ? "Reso_OldMember" : "Reso_NewMember" };
 
         // After a reload the parent and every target have new IDs.
         var reloaded = await orchestrator.DeployAsync(manifest, "Reso_NewParent", uri, null, null, "session-2",
             Bindings("Reso_NewSlot", "Reso_NewMember"),
             (_, _) => Task.FromResult<string?>(change == "module-child-missing" ? null : "Reso_NewModule"),
-            readModuleReferences: change == "no-reference-reader" ? null : (_, _) => Task.FromResult(references));
+            verifyModuleBindings: change == "no-binding-verifier" ? null : (_, bindings, _) =>
+                Task.FromResult(bindings.Bindings.All(binding => references.GetValueOrDefault(binding.Name) == binding.TargetId)));
 
         var deployment = Assert.Single(reloaded.Modules);
         Assert.Equal(expected, deployment.Action);
@@ -335,15 +336,21 @@ public sealed class P1WorkflowTests : IDisposable
         {
             Assert.Equal("Reso_NewMember", fake.Requests[^1].OutputMap!["Result"]);
             if (change != "module-child-missing")
-                Assert.StartsWith(change == "source-changed" ? "source" : "binding target IDs changed", deployment.Reason);
+                Assert.StartsWith(change == "source-changed" ? "source" : "named source/drive bindings", deployment.Reason);
             return;
         }
         Assert.Single(fake.Requests);
-        // The new IDs are recorded, so the next run is an ordinary no-op that reads nothing.
+        // Even with unchanged IDs, confirm each named binding so manual rewiring is not hidden by the checkpoint.
+        var verified = false;
         var again = await orchestrator.DeployAsync(manifest, "Reso_NewParent", uri, null, null, "session-3",
             Bindings("Reso_NewSlot", "Reso_NewMember"), (_, _) => Task.FromResult<string?>("Reso_NewModule"),
-            readModuleReferences: (_, _) => throw new InvalidOperationException("no read expected"));
+            verifyModuleBindings: (_, bindings, _) =>
+            {
+                verified = true;
+                return Task.FromResult(bindings.Bindings.All(binding => references.GetValueOrDefault(binding.Name) == binding.TargetId));
+            });
         Assert.Equal("no-op", Assert.Single(again.Modules).Action);
+        Assert.True(verified);
     }
 
     [Fact]
