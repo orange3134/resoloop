@@ -1160,12 +1160,12 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 // Like a move, a recreate needs a saved record: the first adopting apply updates existing content in place.
                 // A resumed recreate whose replaced Component is already gone starts again if the declaration shrank further.
                 var recreateReason = existing is null || stateComponent is null || (resumed && superseded is not null) ? null :
-                    ListShrinkReason(spec, existing);
+                    TypeChangeReason(spec, existing) ?? ListShrinkReason(spec, existing);
                 // A key whose create was interrupted has no saved ID, so this Component was matched by type and position only.
                 // It may be unmanaged content; never remove it as a replaced Component.
                 if (recreateReason is not null && string.IsNullOrEmpty(stateComponent?.Id))
                     throw new RLoopException("STABLE_COMPONENT_AMBIGUOUS",
-                        $"Component '{stableKey}' has no saved ID, so it was matched by type and position only, and its list is longer than declared. Apply does not recreate a Component it cannot verify. No mutations were performed.",
+                        $"Component '{stableKey}' has no saved ID, so it was matched by type and position only, and it would have to be recreated ({recreateReason}). Apply does not recreate a Component it cannot verify. No mutations were performed.",
                         ExitCodes.ValidationFailed,
                         new Dictionary<string, object?> { ["candidateIds"] = new[] { existing!.Id }, ["type"] = existing.Type, ["componentKey"] = stableKey },
                         ["If an interrupted apply created this Component, remove it with 'resoloop component remove ID --yes'; otherwise it is unmanaged content and should stay.",
@@ -1237,6 +1237,12 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 { Reason = $"stable key migrated from '{migratedFrom}' without recreating the Component" };
         }
     }
+
+    // Components are matched by their saved type, so a key whose declared type changed still finds the old Component.
+    // A Component's type can't be changed in place, and the new type's fields don't fit the old Component.
+    private static string? TypeChangeReason(ApplyComponentSpec spec, ComponentSummary existing) =>
+        TypeNamesEquivalent(existing.Type, spec.Type) ? null :
+            $"type changes from '{existing.Type}' to '{spec.Type}', so apply replaces the Component (initialFields return to their declared values and undeclared members to their type defaults)";
 
     // ResoniteLink 0.13.1 replaces only the leading elements of a list and cannot remove any (observed on Resonite
     // 2026.9.18.82), so a declared list shorter than the runtime list never converges in place.
@@ -1758,7 +1764,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         }
         if (references.Count > 0)
             throw new RLoopException("APPLY_LIST_SHRINK_REFERENCED",
-                "A declared list member must shrink, which requires recreating its Component, but something other than a declared managed reference points at the Component or its members. No mutations were performed.",
+                "A Component must be recreated (its type changes or a declared list member shrinks; see context.recreates), but something other than a declared managed reference points at the Component or its members. No mutations were performed.",
                 ExitCodes.ValidationFailed, new Dictionary<string, object?>
                 {
                     ["stateFile"] = prepared.StatePath,
