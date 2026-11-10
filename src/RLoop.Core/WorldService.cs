@@ -419,6 +419,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 new Dictionary<string, object?> { ["deleteCandidates"] = prepared.Deletions.Count, ["stateFile"] = prepared.StatePath });
         var counts = new ApplyCounts();
         var updatedComponents = new HashSet<string>(StringComparer.Ordinal);
+        var referencesWritten = new HashSet<string>(StringComparer.Ordinal);
         var completed = 0;
         var total = prepared.Nodes.Count + prepared.Components.Count * 2;
         try
@@ -474,7 +475,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                         break;
                 }
                 prepared.State.Slots[node.StableKey] = new ApplyStateSlot(node.Id, node.Path, node.Spec.RuntimeRelocatable, node.PathSegments);
-                Checkpoint(prepared);
+                Checkpoint(prepared, mutated: node.SlotAction is "create" or "update");
                 completed++;
                 options.Progress?.Invoke(new ApplyProgress("slots", completed, total, node.Path, $"{node.SlotAction} Slot"));
             }
@@ -523,7 +524,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 if (!string.IsNullOrWhiteSpace(component.Spec.Key) && !component.AwaitsVerification) byKey[component.Spec.Key!] = component;
                 prepared.State.Components[component.StableKey] = CreateComponentState(component, component.Id!,
                     previous: prepared.State.Components.GetValueOrDefault(component.StableKey));
-                Checkpoint(prepared);
+                Checkpoint(prepared, mutated: component.Existing is null);
                 completed++;
                 options.Progress?.Invoke(new ApplyProgress("components", completed, total, component.Path,
                     component.Existing is null ? "created Component" : "resolved Component"));
@@ -544,6 +545,9 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                                     !MemberMatchesRaw(current, field.Value)).ToDictionary(StringComparer.Ordinal);
                 if (changed.Count > 0)
                 {
+                    if (changed.Keys.Any(key => desiredFields?.TryGetValue(key, out var declared) == true &&
+                                                ContainsWorldReference(declared)))
+                        referencesWritten.Add(component.StableKey);
                     ForgetComponentAssetEvidence(prepared, component.StableKey, changed.Keys);
                     Checkpoint(prepared);
                     await client.SetComponentMembersAsync(component.Id!, component.ResolvedType ?? component.Spec.Type, changed, cancellationToken);
@@ -553,8 +557,10 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 {
                     counts.ComponentsUnchanged++;
                 }
+                var relocated = false;
                 if (component.RelocationSource is not null && component.RelocationSource.Id != component.Id)
                 {
+                    relocated = true;
                     MarkSlotIndexesUnverified(prepared, component.RelocationSourceSlotKey!);
                     await client.RemoveComponentAsync(component.RelocationSource.Id, cancellationToken);
                     counts.ComponentsDeleted++;
@@ -563,7 +569,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                         cancellationToken);
                 }
                 prepared.State.Components[component.StableKey] = CreateComponentState(component, component.Id!, fields);
-                Checkpoint(prepared);
+                Checkpoint(prepared, mutated: changed.Count > 0 || relocated);
                 completed++;
                 options.Progress?.Invoke(new ApplyProgress("fields", completed, total, component.Path,
                     changed.Count == 0 ? "no field changes" : $"updated {changed.Count} field(s)"));
@@ -634,11 +640,14 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                         prepared.Deletions.Count, deletion.Path, "deleted owned Slot"));
                 }
             }
-            // An old driver can reject a replacement's reference while it still owns the field.
-            // Reconcile after removals, and never report success for a connection the runtime dropped.
-            if (counts.ComponentsAdded + counts.ComponentsUpdated + counts.ComponentsDeleted + counts.SlotsUpdated + counts.SlotsDeleted > 0)
+            // An old driver can reject a replacement's reference while it still owns the field, so after a lifecycle
+            // change (Components added or removed, Slots relocated or deleted) every declared reference is read back.
+            // Otherwise only the references written by this apply can have been dropped.
+            var lifecycleChanged = counts.ComponentsAdded + counts.ComponentsDeleted + counts.SlotsDeleted > 0 ||
+                                   prepared.Nodes.Any(node => node.SlotAction == "relocate");
             foreach (var component in prepared.Components)
             {
+                if (!lifecycleChanged && !referencesWritten.Contains(component.StableKey)) continue;
                 var desired = component.Existing is null ? MergeCreateFields(component.Spec) : component.Spec.Fields;
                 var referenceFields = (desired ?? new Dictionary<string, JsonElement>())
                     .Where(field => ContainsWorldReference(field.Value)).ToDictionary(pair => pair.Key, pair => pair.Value);
@@ -668,8 +677,9 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 prepared.State.Components[component.StableKey] = prepared.State.Components[component.StableKey]
                     with { AssetFields = previousAssetFields };
                 Checkpoint(prepared);
-                options.Progress?.Invoke(new ApplyProgress("references", completed, total, component.Path, "reconciled references after removals"));
+                options.Progress?.Invoke(new ApplyProgress("references", completed, total, component.Path, "reconciled references"));
             }
+            if (prepared.CheckpointPending) Checkpoint(prepared);
         }
         catch (OperationCanceledException ex)
         {
@@ -1150,12 +1160,12 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 // Like a move, a recreate needs a saved record: the first adopting apply updates existing content in place.
                 // A resumed recreate whose replaced Component is already gone starts again if the declaration shrank further.
                 var recreateReason = existing is null || stateComponent is null || (resumed && superseded is not null) ? null :
-                    ListShrinkReason(spec, existing);
+                    TypeChangeReason(spec, existing) ?? ListShrinkReason(spec, existing);
                 // A key whose create was interrupted has no saved ID, so this Component was matched by type and position only.
                 // It may be unmanaged content; never remove it as a replaced Component.
                 if (recreateReason is not null && string.IsNullOrEmpty(stateComponent?.Id))
                     throw new RLoopException("STABLE_COMPONENT_AMBIGUOUS",
-                        $"Component '{stableKey}' has no saved ID, so it was matched by type and position only, and its list is longer than declared. Apply does not recreate a Component it cannot verify. No mutations were performed.",
+                        $"Component '{stableKey}' has no saved ID, so it was matched by type and position only, and it would have to be recreated ({recreateReason}). Apply does not recreate a Component it cannot verify. No mutations were performed.",
                         ExitCodes.ValidationFailed,
                         new Dictionary<string, object?> { ["candidateIds"] = new[] { existing!.Id }, ["type"] = existing.Type, ["componentKey"] = stableKey },
                         ["If an interrupted apply created this Component, remove it with 'resoloop component remove ID --yes'; otherwise it is unmanaged content and should stay.",
@@ -1227,6 +1237,12 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 { Reason = $"stable key migrated from '{migratedFrom}' without recreating the Component" };
         }
     }
+
+    // Components are matched by their saved type, so a key whose declared type changed still finds the old Component.
+    // A Component's type can't be changed in place, and the new type's fields don't fit the old Component.
+    private static string? TypeChangeReason(ApplyComponentSpec spec, ComponentSummary existing) =>
+        TypeNamesEquivalent(existing.Type, spec.Type) ? null :
+            $"type changes from '{existing.Type}' to '{spec.Type}', so apply replaces the Component (initialFields return to their declared values and undeclared members to their type defaults)";
 
     // ResoniteLink 0.13.1 replaces only the leading elements of a list and cannot remove any (observed on Resonite
     // 2026.9.18.82), so a declared list shorter than the runtime list never converges in place.
@@ -1748,7 +1764,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         }
         if (references.Count > 0)
             throw new RLoopException("APPLY_LIST_SHRINK_REFERENCED",
-                "A declared list member must shrink, which requires recreating its Component, but something other than a declared managed reference points at the Component or its members. No mutations were performed.",
+                "A Component must be recreated (its type changes or a declared list member shrinks; see context.recreates), but something other than a declared managed reference points at the Component or its members. No mutations were performed.",
                 ExitCodes.ValidationFailed, new Dictionary<string, object?>
                 {
                     ["stateFile"] = prepared.StatePath,
@@ -1869,8 +1885,11 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             {
                 if (!slots.TryGetValue(stable.Key, out var target) || target.Id is null)
                     throw new RLoopException("APPLY_REFERENCE_NOT_FOUND", $"Slot reference '{value}' could not be resolved.", ExitCodes.ValidationFailed);
-                var observed = await client.GetSlotAsync(target.Id, 0, false, cancellationToken);
-                return RequireSlotMember(observed, stable.MemberName!, value).Id!;
+                // A Slot's field IDs never change, so the preflight snapshot has them. A Slot created by this apply is read once.
+                if (target.Existing?.Members?.TryGetValue(stable.MemberName!, out var known) == true && !string.IsNullOrWhiteSpace(known.Id))
+                    return known.Id;
+                target.Observed ??= await client.GetSlotAsync(target.Id, 0, false, cancellationToken);
+                return RequireSlotMember(target.Observed, stable.MemberName!, value).Id!;
             }
             if (stable!.Kind == "component")
                 return components.TryGetValue(stable.Key, out var component) && component.Id is not null
@@ -2005,6 +2024,9 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         };
         return true;
     }
+
+    private static bool IsReferenceList(MemberValue member) =>
+        member.Kind == "list" && member.Elements is { Count: > 0 } && member.Elements.All(element => element.Kind == "reference");
 
     private static bool MemberMatchesRaw(MemberValue member, string raw)
     {
@@ -2223,7 +2245,9 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             candidates = candidates.Where(component => memberNames.All(name => component.Members?.ContainsKey(name) == true)).ToArray();
         if (identityValues is not null)
             candidates = candidates.Where(component => identityValues.All(identity =>
-                component.Members?.TryGetValue(identity.Key, out var value) == true && MemberMatchesRaw(value, identity.Value))).ToArray();
+                component.Members?.TryGetValue(identity.Key, out var value) == true &&
+                // Older checkpoints recorded reference lists as target IDs, which change on every world load.
+                (IsReferenceList(value) || MemberMatchesRaw(value, identity.Value)))).ToArray();
         if (referenceTargets is not null)
             candidates = candidates.Where(component => referenceTargets.All(reference =>
                 component.Members?.TryGetValue(reference.Key, out var value) == true &&
@@ -2248,7 +2272,9 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             identityValues = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var name in component.Spec.IdentityFields)
             {
-                if (TryGetReferenceSelector(component.Spec, name, out _)) continue;
+                // Target IDs change on every world load. A single reference is recorded as a selector below;
+                // a reference list is not used as identity evidence.
+                if (TryGetReferenceSelector(component.Spec, name, out _) || DeclaresReferenceList(component.Spec, name)) continue;
                 if (resolvedFields?.TryGetValue(name, out var resolved) == true) identityValues[name] = resolved;
                 else if (component.AppliedOnCreate?.TryGetValue(name, out var initial) == true) identityValues[name] = initial;
                 else if (component.Existing?.Members?.TryGetValue(name, out var current) == true) identityValues[name] = MemberRaw(current);
@@ -2271,13 +2297,20 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             referenceSelectors.Count == 0 ? null : referenceSelectors, assetFields, component.SupersededId);
     }
 
+    private static bool TryGetDeclaredField(ApplyComponentSpec component, string memberName, out JsonElement value)
+    {
+        value = default;
+        return component.Fields?.TryGetValue(memberName, out value) == true ||
+               component.InitialFields?.TryGetValue(memberName, out value) == true;
+    }
+
+    private static bool DeclaresReferenceList(ApplyComponentSpec component, string memberName) =>
+        TryGetDeclaredField(component, memberName, out var value) && value.ValueKind == JsonValueKind.Array && ContainsWorldReference(value);
+
     private static bool TryGetReferenceSelector(ApplyComponentSpec component, string memberName, out string selector)
     {
         selector = string.Empty;
-        JsonElement value;
-        if (component.Fields?.TryGetValue(memberName, out value) != true &&
-            component.InitialFields?.TryGetValue(memberName, out value) != true) return false;
-        if (value.ValueKind != JsonValueKind.String) return false;
+        if (!TryGetDeclaredField(component, memberName, out var value) || value.ValueKind != JsonValueKind.String) return false;
         var raw = value.GetString() ?? string.Empty;
         if (!StableSelectorSyntax.TryParse(raw, out var parsed) || parsed!.Kind == "member" && parsed.MemberName is null) return false;
         selector = raw;
@@ -2445,8 +2478,16 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
 
     private static bool VectorEquals(Vector3Value? current, float[] desired) => current is not null &&
         NearlyEqual(current.X, desired[0]) && NearlyEqual(current.Y, desired[1]) && NearlyEqual(current.Z, desired[2]);
-    private static bool QuaternionEquals(QuaternionValue? current, float[] desired) => current is not null &&
-        NearlyEqual(current.X, desired[0]) && NearlyEqual(current.Y, desired[1]) && NearlyEqual(current.Z, desired[2]) && NearlyEqual(current.W, desired[3]);
+    // q and -q are the same rotation, and the engine stores rotations normalised, so compare the rotations themselves:
+    // |dot| of the normalised quaternions is 1 for equal rotations (1 - 1e-8 tolerates about 0.016 degrees).
+    private static bool QuaternionEquals(QuaternionValue? current, float[] desired)
+    {
+        if (current is null) return false;
+        double cx = current.X, cy = current.Y, cz = current.Z, cw = current.W;
+        double dx = desired[0], dy = desired[1], dz = desired[2], dw = desired[3];
+        var lengths = Math.Sqrt((cx * cx + cy * cy + cz * cz + cw * cw) * (dx * dx + dy * dy + dz * dz + dw * dw));
+        return lengths > 0 && Math.Abs(cx * dx + cy * dy + cz * dz + cw * dw) / lengths >= 1 - 1e-8;
+    }
     private static bool NearlyEqual(float left, float right) => Math.Abs(left - right) <= 0.00001f * Math.Max(1, Math.Max(Math.Abs(left), Math.Abs(right)));
 
     // A replacement cannot become a target for managed fields until all replacement lists have been written and read back.
@@ -2637,6 +2678,15 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
     {
         prepared.State.SessionId = prepared.Session.UniqueSessionId;
         ApplyStateStore.Save(prepared.StatePath, prepared.State);
+        prepared.CheckpointPending = false;
+    }
+
+    // A step that changed nothing in the world only records what preflight resolved, which the next run resolves
+    // again, so it is saved with the next checkpoint instead of rewriting the whole state file per item.
+    private static void Checkpoint(PreparedApply prepared, bool mutated)
+    {
+        if (mutated) Checkpoint(prepared);
+        else prepared.CheckpointPending = true;
     }
 
     private static int MaxDepth(IReadOnlyList<ApplyNodeSpec>? children) => children is null || children.Count == 0
@@ -2699,6 +2749,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         public ApplyOptions Options { get; } = options;
         public ApplyState State { get; } = state;
         public string StatePath { get; } = statePath;
+        public bool CheckpointPending { get; set; }
         public SessionInfo Session { get; } = session;
         public string ParentId { get; } = parentId;
         public bool SameSession { get; } = sameSession;
@@ -2750,6 +2801,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         public IReadOnlyList<string> PathSegments { get; set; } = [];
         public string SlotAction { get; } = slotAction;
         public string? Id { get; set; }
+        // Read for $slot-member: references when Existing has no field IDs (a Slot created by this apply).
+        public SlotInfo? Observed { get; set; }
         public Vector3Value? RelocationPosition { get; set; }
         public QuaternionValue? RelocationRotation { get; set; }
         public Vector3Value? RelocationScale { get; set; }
