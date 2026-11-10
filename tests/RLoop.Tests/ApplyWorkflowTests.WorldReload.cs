@@ -43,6 +43,26 @@ public sealed partial class ApplyWorkflowTests
     }
 
     [Fact]
+    public async Task NoChangeApplyAfterWorldReloadSavesTheNewSession()
+    {
+        var document = ReloadDocument("reload-save", ReloadedWorld);
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "reload-save.state.json");
+        await service.ApplyAsync(document, new ApplyOptions(state));
+        client.ReloadWorld("session-reloaded");
+        client.ResetWriteCounts();
+
+        await service.ApplyAsync(document, new ApplyOptions(state));
+
+        Assert.Equal(0, client.Writes);
+        var saved = ApplyStateStore.Load(state, "reload");
+        Assert.Equal("session-reloaded", saved.SessionId);
+        var foundation = client.Root.Children.Single().Children.Single().Children.Single();
+        Assert.Equal(foundation.Id, saved.Slots["foundation"].Id);
+    }
+
+    [Fact]
     public async Task PruneAfterWorldReloadPlansTheStaleSlotOnce()
     {
         var document = ReloadDocument("reload-prune", ReloadedWorld);

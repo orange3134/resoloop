@@ -46,6 +46,28 @@ public sealed class ValueCodecTests
         Assert.IsType(expected, result);
     }
 
+    [Fact]
+    public async Task SyncObjectListElementsUseTheSuppliedDefinitionLookup()
+    {
+        // An unconnected link: any direct definition request would fail, so every element must use the lookup.
+        var element = new Link.SyncObjectMemberDefinition { Type = new Link.TypeReference { Type = "[Test]Segment" } };
+        var segment = new Link.SyncObjectDefinition
+        {
+            Members = new Dictionary<string, Link.MemberDefinition>
+            {
+                ["Radius"] = new Link.FieldDefinition { ValueType = new Link.TypeReference { Type = "float" } }
+            }
+        };
+        var lookups = 0;
+
+        var list = Assert.IsType<Link.SyncList>(await ValueCodec.ParseAsync(new Link.LinkInterface(),
+            new Link.ListDefinition { ElementDefinition = element }, "[{\"Radius\":0.1},{\"Radius\":0.2}]",
+            describeSyncObject: (_, _) => { lookups++; return Task.FromResult(segment); }));
+
+        Assert.Equal(2, list.Elements.Count);
+        Assert.Equal(2, lookups);
+    }
+
     [Theory]
     [InlineData("[1,2,3]")]
     [InlineData("{\"x\":1,\"y\":2,\"z\":3}")]
