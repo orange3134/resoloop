@@ -474,7 +474,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                         break;
                 }
                 prepared.State.Slots[node.StableKey] = new ApplyStateSlot(node.Id, node.Path, node.Spec.RuntimeRelocatable, node.PathSegments);
-                Checkpoint(prepared);
+                Checkpoint(prepared, mutated: node.SlotAction is "create" or "update");
                 completed++;
                 options.Progress?.Invoke(new ApplyProgress("slots", completed, total, node.Path, $"{node.SlotAction} Slot"));
             }
@@ -523,7 +523,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 if (!string.IsNullOrWhiteSpace(component.Spec.Key) && !component.AwaitsVerification) byKey[component.Spec.Key!] = component;
                 prepared.State.Components[component.StableKey] = CreateComponentState(component, component.Id!,
                     previous: prepared.State.Components.GetValueOrDefault(component.StableKey));
-                Checkpoint(prepared);
+                Checkpoint(prepared, mutated: component.Existing is null);
                 completed++;
                 options.Progress?.Invoke(new ApplyProgress("components", completed, total, component.Path,
                     component.Existing is null ? "created Component" : "resolved Component"));
@@ -553,8 +553,10 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 {
                     counts.ComponentsUnchanged++;
                 }
+                var relocated = false;
                 if (component.RelocationSource is not null && component.RelocationSource.Id != component.Id)
                 {
+                    relocated = true;
                     MarkSlotIndexesUnverified(prepared, component.RelocationSourceSlotKey!);
                     await client.RemoveComponentAsync(component.RelocationSource.Id, cancellationToken);
                     counts.ComponentsDeleted++;
@@ -563,7 +565,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                         cancellationToken);
                 }
                 prepared.State.Components[component.StableKey] = CreateComponentState(component, component.Id!, fields);
-                Checkpoint(prepared);
+                Checkpoint(prepared, mutated: changed.Count > 0 || relocated);
                 completed++;
                 options.Progress?.Invoke(new ApplyProgress("fields", completed, total, component.Path,
                     changed.Count == 0 ? "no field changes" : $"updated {changed.Count} field(s)"));
@@ -670,6 +672,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 Checkpoint(prepared);
                 options.Progress?.Invoke(new ApplyProgress("references", completed, total, component.Path, "reconciled references after removals"));
             }
+            if (prepared.CheckpointPending) Checkpoint(prepared);
         }
         catch (OperationCanceledException ex)
         {
@@ -2629,6 +2632,15 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
     {
         prepared.State.SessionId = prepared.Session.UniqueSessionId;
         ApplyStateStore.Save(prepared.StatePath, prepared.State);
+        prepared.CheckpointPending = false;
+    }
+
+    // A step that changed nothing in the world only records what preflight resolved, which the next run resolves
+    // again, so it is saved with the next checkpoint instead of rewriting the whole state file per item.
+    private static void Checkpoint(PreparedApply prepared, bool mutated)
+    {
+        if (mutated) Checkpoint(prepared);
+        else prepared.CheckpointPending = true;
     }
 
     private static int MaxDepth(IReadOnlyList<ApplyNodeSpec>? children) => children is null || children.Count == 0
@@ -2691,6 +2703,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         public ApplyOptions Options { get; } = options;
         public ApplyState State { get; } = state;
         public string StatePath { get; } = statePath;
+        public bool CheckpointPending { get; set; }
         public SessionInfo Session { get; } = session;
         public string ParentId { get; } = parentId;
         public bool SameSession { get; } = sameSession;
