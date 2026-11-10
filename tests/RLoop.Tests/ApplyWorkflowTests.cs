@@ -1457,6 +1457,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public FakeSlot Root { get; }
         public int Writes { get; private set; }
         public int BatchUpdates { get; private set; }
+        public int ComponentReads { get; private set; }
         public List<string> Mutations { get; } = [];
         public int? CancelAfterWrites { get; set; }
         public int? FailOnWrite { get; set; }
@@ -1508,6 +1509,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             _requests++;
+            ComponentReads++;
             var component = _components[id];
             return Task.FromResult(new ComponentInfo(component.Id, component.Type, component.Members));
         }
@@ -1637,7 +1639,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public void ResetMetrics() => _requests = 0;
         public ClientMetrics SnapshotMetrics() => new(_requests, 0, 0,
             [new ClientOperationMetric("fake", _requests, 0)]);
-        public void ResetWriteCounts() { Writes = 0; BatchUpdates = 0; }
+        public void ResetWriteCounts() { Writes = 0; BatchUpdates = 0; ComponentReads = 0; }
 
         // Simulates saving the world and loading it again: every Slot and Component except Root gets a new ID.
         public void ReloadWorld(string sessionId)

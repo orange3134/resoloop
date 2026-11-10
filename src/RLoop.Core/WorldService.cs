@@ -419,6 +419,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 new Dictionary<string, object?> { ["deleteCandidates"] = prepared.Deletions.Count, ["stateFile"] = prepared.StatePath });
         var counts = new ApplyCounts();
         var updatedComponents = new HashSet<string>(StringComparer.Ordinal);
+        var referencesWritten = new HashSet<string>(StringComparer.Ordinal);
         var completed = 0;
         var total = prepared.Nodes.Count + prepared.Components.Count * 2;
         try
@@ -544,6 +545,9 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                                     !MemberMatchesRaw(current, field.Value)).ToDictionary(StringComparer.Ordinal);
                 if (changed.Count > 0)
                 {
+                    if (changed.Keys.Any(key => desiredFields?.TryGetValue(key, out var declared) == true &&
+                                                ContainsWorldReference(declared)))
+                        referencesWritten.Add(component.StableKey);
                     ForgetComponentAssetEvidence(prepared, component.StableKey, changed.Keys);
                     Checkpoint(prepared);
                     await client.SetComponentMembersAsync(component.Id!, component.ResolvedType ?? component.Spec.Type, changed, cancellationToken);
@@ -636,11 +640,14 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                         prepared.Deletions.Count, deletion.Path, "deleted owned Slot"));
                 }
             }
-            // An old driver can reject a replacement's reference while it still owns the field.
-            // Reconcile after removals, and never report success for a connection the runtime dropped.
-            if (counts.ComponentsAdded + counts.ComponentsUpdated + counts.ComponentsDeleted + counts.SlotsUpdated + counts.SlotsDeleted > 0)
+            // An old driver can reject a replacement's reference while it still owns the field, so after a lifecycle
+            // change (Components added or removed, Slots relocated or deleted) every declared reference is read back.
+            // Otherwise only the references written by this apply can have been dropped.
+            var lifecycleChanged = counts.ComponentsAdded + counts.ComponentsDeleted + counts.SlotsDeleted > 0 ||
+                                   prepared.Nodes.Any(node => node.SlotAction == "relocate");
             foreach (var component in prepared.Components)
             {
+                if (!lifecycleChanged && !referencesWritten.Contains(component.StableKey)) continue;
                 var desired = component.Existing is null ? MergeCreateFields(component.Spec) : component.Spec.Fields;
                 var referenceFields = (desired ?? new Dictionary<string, JsonElement>())
                     .Where(field => ContainsWorldReference(field.Value)).ToDictionary(pair => pair.Key, pair => pair.Value);
@@ -670,7 +677,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 prepared.State.Components[component.StableKey] = prepared.State.Components[component.StableKey]
                     with { AssetFields = previousAssetFields };
                 Checkpoint(prepared);
-                options.Progress?.Invoke(new ApplyProgress("references", completed, total, component.Path, "reconciled references after removals"));
+                options.Progress?.Invoke(new ApplyProgress("references", completed, total, component.Path, "reconciled references"));
             }
             if (prepared.CheckpointPending) Checkpoint(prepared);
         }
