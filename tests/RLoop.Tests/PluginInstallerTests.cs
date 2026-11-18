@@ -247,6 +247,8 @@ public sealed class PluginInstallerTests : IDisposable
             }
             catch (FileNotFoundException) { return false; }
             catch (DirectoryNotFoundException) { return false; }
+            // ESRCH (3): the process was reaped while its stat entry was being read.
+            catch (IOException error) when ((error.HResult & 0xffff) == 3) { return false; }
         }
     }
 
