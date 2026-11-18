@@ -19,13 +19,13 @@ Things to know first:
 - **Plugins belong to one project.** A project is a directory that has a `.resoloop.json` (`resoloop init` creates it). A plugin is installed into `<project>/.resoloop/plugins/<name>/`, never globally.
 - **Installing does not run plugin code.** Installing only copies files (or exports them from Git objects), validates the manifest and records SHA-256 hashes. Plugin code runs only when you run one of its commands.
 - **Plugin commands run with your permissions.** A plugin is neither signed nor sandboxed. Read [Safety and limits](#safety-and-limits) before installing one you did not write.
-- **Platforms.** Plugin commands run only on Linux and Windows. Everything in this guide was run on Linux. Windows was not run.
+- **Platforms.** Plugin commands run only on Linux and Windows. The commands and outputs in this guide were run on Linux. Statements about rules and limits were checked against the code, and run on Linux where that was possible. Windows was not run.
 
 A minimal example that uses all four features is in [`examples/plugins/hello/`](../examples/plugins/hello/). The Quick start below installs it.
 
 ## Quick start
 
-> Verified with ResoLoop 0.2.0 on feat/plugin-v2 (Linux). The outputs below were produced by running the commands in this order. Values that depend on the machine are replaced as listed here, and nothing else is edited. A line that contains only `…` stands for omitted lines.
+> Verified with ResoLoop 0.2.0 on feat/plugin-v2 (Linux). This note and the placeholder rule below apply to every output block in this guide, not only to the Quick start. The Quick start outputs were produced by running its commands in this order. Values that depend on the machine are replaced as listed here, and nothing else is edited. A line that contains only `…` stands for omitted lines. In JSON output, non-ASCII characters of a path are written as `\uXXXX` escapes, so a path such as `作業 ワールド` does not appear as typed there.
 
 | Placeholder | Stands for |
 | --- | --- |
@@ -133,7 +133,17 @@ SKILL_SYNC_REQUIRED: Bundled skills or their lock need synchronization.
   next: Review the reported paths, then run resoloop skills sync --update.
 ```
 
-The message talks about bundled skills only. Here the pending file is the plugin's (see `--json` below). Now write it:
+The message talks about bundled skills only. Here the pending file is the plugin's. A failing `--check` prints nothing on stdout, so with `--json` the failure is the error object on **stderr**, and the plugin's result is in `error.context.report.plugins` (`2>&1 >/dev/null` sends stderr to the pipe and drops stdout):
+
+```bash
+resoloop skills sync "$PROJECT" --check --json 2>&1 >/dev/null | jq -c .error.context.report.plugins
+```
+
+```output
+{"mode":"check","synchronized":false,"updated":[],"files":[{"plugin":"hello","skill":"hello-guide","path":".agents/skills/hello-guide/SKILL.md","status":"missing","packageHash":"<sha256>"}],"retained":[]}
+```
+
+`status` is `missing`: the plugin's skill file has not been written yet. Now write it:
 
 ```bash
 resoloop skills sync "$PROJECT" --update
@@ -145,7 +155,7 @@ skills update: synchronized=True
 …
 ```
 
-The text output lists only the bundled skills. The plugin's result is in the `plugins` key of the JSON output:
+The text output lists only the bundled skills. When the command succeeds, the plugin's result is in the `plugins` key of the JSON output (`data.plugins`; the failing case above is the one where it moves to `error.context.report.plugins`):
 
 ```bash
 resoloop skills sync "$PROJECT" --check --json | jq -c .data.plugins
@@ -251,8 +261,8 @@ resoloop plugin install "file://$GITSRC" --ref main --project "$PROJECT" --json
 
 ### Choosing the project
 
-- `--project DIR` names the project directory. It must contain `.resoloop.json`, or the command stops with `PLUGIN_PROJECT_NOT_FOUND`.
-- Without `--project`, `plugin install`, `plugin list`, `plugin remove`, plugin commands, `doctor` and `uix recipe` search for `.resoloop.json` from the current directory upward.
+- `--project DIR` names the project directory. It must contain `.resoloop.json`, or the command stops with `PLUGIN_PROJECT_NOT_FOUND`. The exception is `doctor`: it does not stop, but prints one failing `plugins` item (`[fail] plugins: PLUGIN_PROJECT_NOT_FOUND: …`) and still exits 0 (see [Doctor](#doctor)).
+- Without `--project`, `plugin install`, `plugin list`, `plugin remove`, plugin commands, `doctor` and `uix recipe` search for `.resoloop.json` from the current directory upward. If they find none, `plugin install`, `plugin list` and `plugin remove` fail with `PLUGIN_PROJECT_NOT_FOUND`, and a plugin command name is unknown (`UNKNOWN_COMMAND`; pass `--project DIR`). `doctor` and `uix recipe` do not fail: `doctor` has no plugin items, and `uix recipe` knows only the built-in recipes.
 - `init [DIRECTORY]` and `skills sync [DIRECTORY]` use exactly the directory you give (default: the current directory) and never search upward. If that directory is not the project root, the plugins' skills are silently not distributed.
 - A declaration file that uses a plugin recipe (`validate`, `diff`, `apply` and so on) finds its project from the directory of the file, upward. `--project` is not consulted.
 - For a plugin command, `--project` is accepted only before the command name, and only once (`--project DIR` or `--project=DIR`).
@@ -337,9 +347,9 @@ hello  PROBLEM PLUGIN_MODIFIED: Package content differs from the install record.
 - Plugin commands never connect to Resonite.
 - The program's stdout and stderr are passed through unchanged, and its exit code becomes ResoLoop's exit code. On Linux a program killed by a signal gives `128` plus the signal number. Errors of ResoLoop itself (`CODE: message`) go to stderr.
 - A command that runs longer than its deadline is stopped, and ResoLoop exits with `PLUGIN_COMMAND_TIMEOUT` (exit 8). The deadline is the command's `timeoutSeconds` in the manifest. Without one it is `commandTimeoutSeconds`: the environment variable `RESOLOOP_COMMAND_TIMEOUT_SECONDS` first, then `commandTimeoutSeconds` in the project's `.resoloop.json`, then in `~/.resoloop/config.json`, and 900 seconds when none is set. The `--command-timeout` option does not apply, because options after the command name belong to the plugin.
-- Ctrl+C, SIGTERM, SIGHUP and SIGQUIT stop the command's whole process tree and end with `PLUGIN_COMMAND_CANCELLED` (exit 7). The process tree is also stopped when the command ends, so a plugin cannot leave background processes behind.
-- The project's plugins are verified before every call. If **any** installed plugin of the project fails verification, **every** plugin command, skill distribution and plugin recipe lookup of that project refuses to run with the first problem's code (for example `PLUGIN_MODIFIED: Installed plugins failed verification.`, exit 6). Run `plugin list` to see which plugin is broken, then remove or reinstall it.
-- While a plugin command runs, ResoLoop holds the project's plugin lock. In the same project, `plugin install`, `plugin list`, `plugin remove`, `uix recipe list` and the other operations that read the plugin area fail at once with `PLUGIN_PROJECT_BUSY` (exit 7). They do not wait.
+- Ctrl+C, SIGTERM, SIGHUP and SIGQUIT stop the command's process group (Linux) or job (Windows) and end with `PLUGIN_COMMAND_CANCELLED` (exit 7). The same group or job is stopped when the command ends, so processes the command left running in it are stopped too. A process that has left the group is not: on Linux, a child that calls `setsid` or `setpgid` survives. This is cleanup, not isolation (see the "Process tree" item in [Commands](#commands)).
+- The project's plugins are verified before every call. If **any** installed plugin of the project fails verification, **every** plugin command, `plugin install` (of any plugin), skill distribution and plugin recipe lookup of that project refuses to run with the first problem's code (for example `PLUGIN_MODIFIED: Installed plugins failed verification.`, exit 6). `plugin list`, `plugin remove` and `doctor` still work and show which plugin is broken (`doctor` as a failing `plugin:<plugin-name>` item). Remove or reinstall the broken plugin.
+- While a plugin command runs, ResoLoop holds the project's plugin lock. In the same project, `plugin install`, `plugin list`, `plugin remove`, `init`, `skills sync`, `uix recipe list`, `describe` and `export` of a plugin recipe, validation of a declaration that uses a plugin recipe, and another plugin command fail at once with `PLUGIN_PROJECT_BUSY` (exit 7). They do not wait. `doctor` also cannot read the plugin area, but it does not fail: it prints one `[fail] plugins: PLUGIN_PROJECT_BUSY: …` item and exits 0 (see [Doctor](#doctor)).
 
 ### Skills
 
@@ -364,9 +374,15 @@ hello  PROBLEM PLUGIN_MODIFIED: Package content differs from the install record.
 
 Any conflict stops `skills sync` with `SKILL_SYNC_CONFLICT` (and `init` with `INIT_FILE_EXISTS`) before any file is written. ResoLoop never overwrites a skill you edited. A record entry is never deleted: files of a plugin that was removed, or that no longer declares them, are reported under `plugins.retained` and left in place.
 
-The result for plugins is not printed in the text output of `init` and `skills sync`. Use `--json` and read `data.plugins`: `mode`, `synchronized`, `updated`, `files` (one entry per distributed file with `plugin`, `skill`, `path`, `status` and the hashes) and `retained`. `data.plugins` is absent when the project has no plugin skills and no record.
+The result for plugins is not printed in the text output of `init` and `skills sync`. Use `--json`. When the command succeeds, read `data.plugins`: `mode`, `synchronized`, `updated`, `files` (one entry per distributed file with `plugin`, `skill`, `path`, `status` and the hashes) and `retained`. `data.plugins` is absent when the project has no plugin skills and no record.
 
-The text of `SKILL_SYNC_REQUIRED` (`Bundled skills or their lock need synchronization.`) was written for the bundled skills. It is also what you get when only a plugin's skill is pending, as in step 6 of the Quick start. Read `--json` to see which files.
+When `skills sync --check` fails with `SKILL_SYNC_REQUIRED`, nothing is printed on stdout, so there is no `data.plugins`. The same object is then in `error.context.report.plugins` of the error on **stderr**:
+
+```bash
+resoloop skills sync "$PROJECT" --check --json 2>&1 >/dev/null | jq -c .error.context.report.plugins
+```
+
+The text of `SKILL_SYNC_REQUIRED` (`Bundled skills or their lock need synchronization.`) was written for the bundled skills. It is also what you get when only a plugin's skill is pending, as in step 6 of the Quick start. Read `error.context.report.plugins` in the `--json` output (on stderr) to see which files are pending.
 
 ### UIX recipes
 
@@ -424,7 +440,7 @@ The text of `SKILL_SYNC_REQUIRED` (`Bundled skills or their lock need synchroniz
 
   `validate --strict` also needs a ResoniteLink connection (without a URL it fails with `RESONITE_LINK_URL_MISSING`, exit 3).
 - `$with` must contain exactly the parameters the recipe declares (`APPLY_RECIPE_PARAMETERS` for a missing or unknown one). `$with.key` may use only ASCII letters, digits, `-` and `_` (`APPLY_RECIPE_KEY_INVALID`). The Slot and Component keys of the instance get the prefix `uix-plugin--<plugin-name>--<recipe-name>--`, so `greeting` above becomes `uix-plugin--hello--hello-card--greeting`. `$recipe` cannot be combined with `$prototype` or `$instance`. Other fields next to `$recipe` override the recipe's.
-- Unknown names fail with `UIX_RECIPE_NOT_FOUND` (exit 5). A recipe of a plugin that is not installed fails with `PLUGIN_NOT_INSTALLED` (exit 5).
+- Unknown names fail with `UIX_RECIPE_NOT_FOUND` (exit 5). A recipe of a plugin that is not installed fails with `PLUGIN_NOT_INSTALLED` (exit 5), but only when a project was found. Outside a project, with no `--project`, `uix recipe` knows only the built-in recipes, so `uix recipe describe hello:hello-card` gives `UIX_RECIPE_NOT_FOUND` (`next: Run resoloop uix recipe list --json.`). Run it inside the project or pass `--project`. With a `--project` that has no `.resoloop.json` it fails with `PLUGIN_PROJECT_NOT_FOUND`.
 
 ### Doctor
 
@@ -434,11 +450,20 @@ The text of `SKILL_SYNC_REQUIRED` (`Bundled skills or their lock need synchroniz
 
 - `doctor` checks the plugins' tools only when you run it. Nothing else runs a tool probe, and doctor never installs or repairs anything.
 - For every tool in a plugin's manifest, it looks up `executable` in the absolute `PATH` entries and, when `versionArgs` is not empty, runs it with those arguments in the project directory (30 second limit, 64 KiB output limit). A plugin that fails verification shows up as one failing `plugin:<plugin-name>` item with the problem code.
-- Each item is named `plugin:<plugin-name>:<tool-name>`:
+- **Doctor reports problems with the plugin area as an item. It does not fail.** When doctor cannot read the project's plugins at all, it adds one required item named `plugins` (no plugin name) with the error code and message, and still exits 0. Because the item is required, `ready` is false. The causes are the errors of reading the plugin area: `PLUGIN_PROJECT_BUSY` while another operation of the project (for example a running plugin command) holds the plugin lock, `PLUGIN_PROJECT_NOT_FOUND` for an explicit `--project DIR` that is not a project, and `PLUGIN_PATH_UNSAFE`. For example, while a plugin command of the same project is running:
+
+  ```output
+  …
+  [fail] plugins: PLUGIN_PROJECT_BUSY: Another operation is using this project's plugins.
+  not ready: resolve required checks above
+  ```
+
+  Without `--project`, when no project is found from the current directory upward, doctor adds no plugin items at all. Do not rely on a non-zero exit code to detect any of this.
+- Each tool item is named `plugin:<plugin-name>:<tool-name>`:
 
   | Status | When |
   | --- | --- |
-  | `pass` | The tool was found, and the version command exited with 0. The message is `<path> <first line of output>`. |
+  | `pass` | The tool was found, and the version command exited with 0. The message is `<path> <first line of output>` (the first line of stdout, or of stderr when stdout is empty). It is only `<path>` when `versionArgs` is empty or the version command printed nothing. |
   | `fail` | The tool is `required` (the default) and is missing, exited non-zero, or did not finish in time. |
   | `warning` | The same problems, for a tool declared with `"required": false`. |
 
@@ -595,8 +620,8 @@ ResoLoop starts a command like this:
   ```
 
   (In JSON, `RESOLOOP_PLUGIN_HOST_ARGV` is the JSON array encoded again as a string.)
-- **Process tree.** The command runs in its own process group (Linux) or job (Windows). When it ends, however it ends, everything left in that group is stopped, so do not rely on background processes.
-- **Calling ResoLoop back.** While your command runs, ResoLoop holds the project's plugin lock. A callback that needs the plugin area (`plugin` subcommands, another plugin command, `skills sync`, `doctor`, `uix recipe`, or a document that uses a plugin recipe) fails with `PLUGIN_PROJECT_BUSY`.
+- **Process tree.** The command runs in its own process group (Linux) or job (Windows). When it ends, however it ends, every process still in that group or job is stopped, so do not rely on background processes. This is cleanup, not a guarantee: a process that has left the group is not stopped. On Linux, a child that calls `setsid` or `setpgid` gets a group of its own and keeps running after the command has returned.
+- **Calling ResoLoop back.** While your command runs, ResoLoop holds the project's plugin lock. A callback that needs the plugin area (`plugin` subcommands, another plugin command, `init`, `skills sync`, `uix recipe list` or a plugin recipe, or a document that uses a plugin recipe) fails with `PLUGIN_PROJECT_BUSY`. `doctor` does not fail: it exits 0 and reports the problem as a `[fail] plugins: PLUGIN_PROJECT_BUSY: …` item, so a callback that runs `doctor` has to read that item (`--json`), not the exit code.
 
 #### Keep `package/` unchanged
 
@@ -612,7 +637,7 @@ The example does this with Python and uv:
 - ResoLoop sets `UV_PROJECT_ENVIRONMENT` to `<data>/.venv`, so uv creates the virtual environment in `data/`. It sets `PYTHONPYCACHEPREFIX` to `<data>/.cache/python`, so bytecode goes to `data/` too.
 - `pyproject.toml` declares `[tool.uv] package = false`, a virtual project. uv installs no package and builds nothing, so nothing is created inside `package/` (a built package would leave artifacts such as `*.egg-info` there).
 - `--locked` makes uv fail instead of rewriting `uv.lock` when it is out of date. Run `uv lock` in your source directory after you edit `pyproject.toml`, and commit `uv.lock`.
-- Do not run `uv run` or `uv sync` inside the source directory you install from. They create a `.venv` there, which a Git-less install would copy. List `.venv/` in `.gitignore` for a Git source, or test from a scratch copy.
+- Do not run `uv run` or `uv sync` inside the source directory you install from. They create a `.venv` there. The virtual environment holds links (`.venv/bin/python` is a symlink), and an install of a directory outside Git refuses links, so the install fails with `PLUGIN_SOURCE_INVALID: Package contains a link.` rather than copying it. A Git source does not install ignored files, so list `.venv/` in `.gitignore` for it. Or test from a scratch copy.
 
 ResoLoop installs no dependencies for you. Tell your users what to install (here: `uv`) in your plugin's own documentation, and declare it in `tools` so `doctor` can check it.
 
@@ -705,11 +730,11 @@ What the verification does **not** cover: `data/`, and file permissions (it comp
 - **It is not a signature.** The hashes prove nothing about who wrote the plugin, only that the files are the files that were installed.
 - **It is not a sandbox.** A verified plugin still runs with your full permissions.
 - **It does not defend against whoever can write `install.json`.** Anyone with your permissions can change `package/` and `install.json` together, and the plugin then verifies fine. Full protection against a malicious user of your own account is out of scope.
-- Stopping the process tree after a command is cleanup, not isolation.
+- Stopping the process group or job after a command is cleanup, not isolation. A process that leaves the group (on Linux, for example with `setsid`) keeps running.
 
 ### Current conditions
 
-These are the conditions of the current implementation, verified on Linux.
+These are the conditions of the current implementation. They were checked against the code and, where possible, run on Linux. The management-area link rules and the Windows rules were read in the code; Windows was not run.
 
 - **Git sources must be the work tree root.** A subdirectory of a Git work tree, or a bare repository, is `PLUGIN_SOURCE_INVALID`. So is a Git source that contains a nested repository. Ignored files of a Git source are not installed.
 - **A source outside Git is copied as a whole.** Any `.git` inside it, any link, and any special file is refused.
@@ -737,7 +762,7 @@ These are the conditions of the current implementation, verified on Linux.
 
 ### One operation at a time
 
-Install, remove, listing, verification and every plugin command take the project's plugin lock (`.resoloop/plugins/.lock`) and fail at once with `PLUGIN_PROJECT_BUSY` (exit 7) when another operation holds it. A running plugin command holds it for its whole run. The lock is cooperative: it serializes ResoLoop's own operations, not other programs.
+Install, remove, listing, verification and every plugin command take the project's plugin lock (`.resoloop/plugins/.lock`) and fail at once with `PLUGIN_PROJECT_BUSY` (exit 7) when another operation holds it. A running plugin command holds it for its whole run. `doctor` is the exception to "fail": it prints a failing `plugins` item with `PLUGIN_PROJECT_BUSY` and exits 0. The lock is cooperative: it serializes ResoLoop's own operations, not other programs.
 
 ## Errors
 
@@ -745,7 +770,7 @@ Errors print as `CODE: message` on stderr, followed by `next:` lines. With `--js
 
 | Code | Exit | Meaning and what to do |
 | --- | --- | --- |
-| `PLUGIN_PROJECT_NOT_FOUND` | 3 | No `.resoloop.json` in the `--project` directory, or none from the current directory upward. Run `resoloop init DIR` or pass `--project`. |
+| `PLUGIN_PROJECT_NOT_FOUND` | 3 | No `.resoloop.json` in the `--project` directory, or none from the current directory upward. Run `resoloop init DIR` or pass `--project`. Without `--project`, only `plugin install`, `plugin list` and `plugin remove` raise it; `uix recipe` and `doctor` carry on without plugins. `doctor --project DIR` reports it as a failing `plugins` item and exits 0. |
 | `PLUGIN_SOURCE_NOT_FOUND` | 5 | `SOURCE` is neither an existing directory nor a URL. Check the path. |
 | `PLUGIN_SOURCE_INVALID` | 6 | The source cannot be installed: a Git subdirectory, a bare repository, a nested repository or `.git`, a link or special file, overlap with the project, `--ref` with a directory, a bad or ambiguous ref, a refused URL (credentials, query, fragment, unsupported scheme), a non-regular Git entry, or too many files or bytes. Read the message and see [Current conditions](#current-conditions). |
 | `PLUGIN_MANIFEST_NOT_FOUND` | 6 | `resoloop-plugin.json` is not at the package root. For Git, it must be at the repository root. |
@@ -757,7 +782,7 @@ Errors print as `CODE: message` on stderr, followed by `next:` lines. With `--js
 | `PLUGIN_GIT_REF_REQUIRED` | 2 | A Git URL was given without `--ref`. Add `--ref` (a full commit SHA is best). |
 | `PLUGIN_GIT_REF_NOT_FOUND` | 5 | The ref does not exist in the repository. |
 | `PLUGIN_GIT_FAILED` | 9 | `git` failed or timed out (clone, network, authentication, `git` missing). The message is deliberately generic and has no URL. Test the clone with `git` directly. |
-| `PLUGIN_MODIFIED` | 6 | The package no longer matches `install.json`. Remove the plugin and install it again. While it exists, plugin commands, skill distribution and recipes of the project refuse to run. |
+| `PLUGIN_MODIFIED` | 6 | The package no longer matches `install.json`. Remove the plugin and install it again. While it exists, plugin commands, `plugin install` of any plugin, skill distribution and plugin recipes of the project refuse to run. |
 | `PLUGIN_RECORD_INVALID` | 6 | `install.json` is unreadable, malformed or contradicts the manifest. Remove and reinstall the plugin. |
 | `PLUGIN_PATH_UNSAFE` | 6 | A link, special file, or non-directory is in a path ResoLoop manages (`.resoloop`, `plugins`, a plugin directory, `package`, `data`). Replace it with an ordinary directory. |
 | `PLUGIN_IGNORE_CONFLICT` | 6 | `.resoloop/plugins/.gitignore` exists and is not the managed `*`. Move it away. |
@@ -765,14 +790,14 @@ Errors print as `CODE: message` on stderr, followed by `next:` lines. With `--js
 | `CONFIRMATION_REQUIRED` | 6 | `plugin remove` without `--yes`. Add `--yes` after checking the target. |
 | `PLUGIN_NOT_INSTALLED` | 5 | There is no plugin with that name (or a recipe asks for a plugin that is not installed). Check `plugin list`. |
 | `PLUGIN_NAME_INVALID` | 2 | The plugin name given to `plugin remove` does not follow the name rule. |
-| `PLUGIN_PROJECT_BUSY` | 7 | Another operation (often a running plugin command) holds the project's plugin lock. Wait for it to finish and run the command again. |
+| `PLUGIN_PROJECT_BUSY` | 7 | Another operation (often a running plugin command) holds the project's plugin lock. Wait for it to finish and run the command again. `doctor` does not exit with 7: it prints `[fail] plugins: PLUGIN_PROJECT_BUSY: …` and exits 0. |
 | `PLUGIN_COMMAND_START_FAILED` | 9 | The program could not be started: not found in an absolute `PATH` entry, the package file is missing, not a regular file or not executable, a `.exe` rule on Windows, a NUL in an argument, or ResoLoop could not tell how to call itself back. Install the program, or fix the manifest or file mode. |
 | `PLUGIN_COMMAND_TIMEOUT` | 8 | The command exceeded its deadline and was stopped. Raise `timeoutSeconds` in the manifest or `commandTimeoutSeconds`. |
 | `PLUGIN_COMMAND_CANCELLED` | 7 | The command was interrupted (Ctrl+C or a termination signal) and its process tree was stopped. |
 | `PLUGIN_COMMAND_STOP_FAILED` | 7 | ResoLoop could not confirm that the command's process tree stopped. Look for leftover processes before running it again. |
 | `UNKNOWN_COMMAND` | 2 | The name is neither built-in nor a command of an installed plugin in the selected project. |
-| `SKILL_SYNC_REQUIRED` | 6 | `skills sync --check` found files to write. Run `skills sync --update`. The wording mentions bundled skills even if only a plugin's skill is pending. |
+| `SKILL_SYNC_REQUIRED` | 6 | `skills sync --check` found files to write. Run `skills sync --update`. The wording mentions bundled skills even if only a plugin's skill is pending. With `--json`, the pending files are in `error.context.report.plugins` on stderr. |
 | `SKILL_SYNC_CONFLICT` | 6 | A distributed skill was edited, is unowned, owned by another plugin, or its path is unsafe. Nothing was written. See `context.pluginConflicts`. |
-| `UIX_RECIPE_NOT_FOUND` | 5 | No such recipe. Run `uix recipe list`. |
+| `UIX_RECIPE_NOT_FOUND` | 5 | No such recipe. Run `uix recipe list`. A plugin recipe such as `hello:hello-card` also gives this when no project was found (outside a project with no `--project`, only the built-in recipes are known): run inside the project or pass `--project`. |
 
 Other plugin codes you may meet: `PLUGIN_SKILL_RECORD_INVALID` (the skill record `.agents/skills/.resoloop-plugins.json` is broken; restore it from version control, because ResoLoop never treats a broken record as empty), `PLUGIN_SKILL_WRITE_FAILED` (a skill file could not be written; fix the permission and run `skills sync --update` again) and `PLUGIN_SKILL_RECORD_TOO_LARGE`.
