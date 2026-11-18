@@ -84,6 +84,16 @@ PCにBlenderがインストールされていれば自動で検出して利用�
 
 Blenderを立ち上げておく必要はありません。
 
+## プラグイン
+
+プラグインは、1つの resoloop プロジェクトにコマンド、スキル、UIX レシピ、tools の検査を追加します。
+
+`resoloop plugin install SOURCE` で導入し、`resoloop plugin list` で導入済みのプラグインを確認し、プラグインのコマンドは `resoloop [--project DIR] COMMAND` で実行します。
+
+プラグインは `feat/plugin-v2` の機能です。NuGet で公開している 0.2.0 には含まれていません。
+
+詳しくは[プラグインのガイド](https://github.com/usaturn/resoloop/blob/feat/plugin-v2/docs/PLUGINS.ja.md)と[最小の例](https://github.com/usaturn/resoloop/tree/feat/plugin-v2/examples/plugins/hello)を参照してください。
+
 ## さらに詳しく
 
 - [詳細資料](README-DETAILS.md) — エージェント向けの操作手順、コマンド、取り込み・オフライン解析、制約

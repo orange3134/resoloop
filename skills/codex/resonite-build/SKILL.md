@@ -68,6 +68,8 @@ For shapes that are difficult or wasteful to express with Resonite procedural me
 
 The status `connectionId` is scoped to one ResoniteLink connection, not a stable world identity. Refresh raw IDs after reconnect/restart and rely on managed key/path re-resolution.
 
+If the project has plugins, check them with `resoloop plugin list --json` and call a plugin command with `resoloop [--project DIR] COMMAND`. Everything after the command name goes to the plugin unchanged. See `docs/PLUGINS.md` in the resoloop repository.
+
 ## Automatic connection discovery
 
 When the user asks to build something with resoloop, establishing a connection is part of the task. Honor the user's chosen session and existing connection configuration in CLI > environment > project > user order. An unset `RESONITE_LINK_URL` alone does not mean no URL is configured. If no effective URL is configured (including `RESONITE_LINK_URL_MISSING`), run `resoloop discover --json` yourself before asking the user for a port. Use the same selection workflow when the effective URL is `auto`.

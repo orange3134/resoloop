@@ -418,6 +418,20 @@ resoloop skills sync --update
 
 同梱スキルはreferencesもfile単位でhash追跡します。lock schema 2の`files`へ移行し、schema 1の`skills`も読み込めます。referenceを利用者が編集した場合も全件preflightで保護し、欠損fileは復旧します。
 
+## Plugins
+
+プラグインは、1つのprojectにコマンド、スキル、UIXレシピ、toolsの検査を追加する機能です。`feat/plugin-v2` の機能で、NuGetで公開している0.2.0には含まれていません。
+
+| 機能 | コマンド |
+|---|---|
+| 導入・一覧・削除 | `plugin install SOURCE [--ref GIT_REF]`、`plugin list`、`plugin remove NAME --yes`（`data/` も削除） |
+| プラグインのコマンド | `resoloop [--project DIR] COMMAND [ARGUMENTS...]`（コマンド名より後ろの引数はプラグインへそのまま渡す） |
+| スキルの配布 | `init`、`skills sync` が `.agents/skills/<skill>/` へコピー（結果はテキスト出力に出ないため、`--json` の `plugins` を見る） |
+| UIXレシピ | `uix recipe list/describe/export`、宣言の `$recipe` が `PLUGIN:RECIPE` を受け付ける |
+| toolsの検査 | `doctor` が `plugin:<plugin-name>:<tool-name>` の項目で報告 |
+
+詳しくは[プラグインのガイド](https://github.com/usaturn/resoloop/blob/feat/plugin-v2/docs/PLUGINS.ja.md)と[最小の例](https://github.com/usaturn/resoloop/tree/feat/plugin-v2/examples/plugins/hello)を参照してください。
+
 ## Tests
 
 ~~~powershell
