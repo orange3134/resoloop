@@ -19,8 +19,8 @@ Things to know first:
 
 - **Plugins are a `feat/plugin-v2` feature.** They exist in the `feat/plugin-v2` branch of `usaturn/resoloop`. The ResoLoop 0.2.0 published on NuGet has no plugin support. A `feat/plugin-v2` build also reports `0.2.0` from `resoloop version`, so tell the two apart with `resoloop help`: only a build with plugin support has the `plugin install` line.
 - **Plugins belong to one project.** A project is a directory that has a `.resoloop.json` (`resoloop init` creates it). A plugin is installed into `<project>/.resoloop/plugins/<name>/`, never globally.
-- **Installing does not run plugin code.** Installing only copies files (or exports them from Git objects), validates the manifest and records SHA-256 hashes. Plugin code runs only when you run one of its commands.
-- **Plugin commands run with your permissions.** A plugin is neither signed nor sandboxed. Read [Safety and limits](#safety-and-limits) before installing one you did not write.
+- **Installing does not run plugin code.** Installing only copies files (or exports them from Git objects), validates the manifest and records SHA-256 hashes. After that, two things start programs that a plugin's manifest names: running one of its commands, and `resoloop doctor`, which runs the tools the manifest declares (see [Doctor](#doctor)). Either can run code from the plugin's package.
+- **Plugin commands and doctor's tool checks run with your permissions.** A plugin is neither signed nor sandboxed. Read [Safety and limits](#safety-and-limits) before installing one you did not write.
 - **Platforms.** Plugin commands run only on Linux and Windows. The commands and outputs in this guide were run on Linux. Statements about rules and limits were checked against the code, and run on Linux where that was possible. Windows was not run.
 
 A minimal example that uses all four features is in [`examples/plugins/hello/`](../examples/plugins/hello/). The Quick start below installs it.
@@ -685,10 +685,10 @@ Develop in a directory of your own, outside the ResoLoop repository. Install it 
 
 ### Trust
 
-Install only plugins from a source you trust, and read the code first. Installing does not execute anything, but the first command does:
+Install only plugins from a source you trust, and read the code first, including the `commands` and `tools` in its manifest. Installing does not execute anything, but two things do: running a plugin command, and `resoloop doctor`, which runs each tool's `executable` with its `versionArgs` in the project directory even if you have not run any plugin command:
 
-- A plugin command runs as you. It can read and write any file you can, use the network and start processes.
-- It inherits your environment (except stale `RESOLOOP_PLUGIN_*` variables), including any tokens or credentials in it.
+- A plugin command and a tool check run as you. They can read and write any file you can, use the network and start processes.
+- A plugin command inherits your environment (except stale `RESOLOOP_PLUGIN_*` variables), including any tokens or credentials in it. A tool check also runs with your environment.
 - ResoLoop does not sign, scan or sandbox plugins.
 
 ### Verifying what you installed
