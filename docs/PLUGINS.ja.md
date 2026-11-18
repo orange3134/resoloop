@@ -85,7 +85,7 @@ installed hello 1.0.0
   <project>/.resoloop/plugins/hello
 ```
 
-**4. 導入済みのプラグインを一覧します。**
+**4. 導入済みのプラグインの一覧を表示します。**
 
 ```bash
 resoloop plugin list --project "$PROJECT"
@@ -157,7 +157,7 @@ skills update: synchronized=True
 …
 ```
 
-テキストの出力に並ぶのは同梱スキルだけです。コマンドが成功したときは、プラグインの結果が JSON 出力の `plugins` キー（`data.plugins`）にあります。上の失敗した場合だけ、`error.context.report.plugins` へ移ります。
+テキストの出力に並ぶのは同梱スキルだけです。コマンドが成功したときは、プラグインの結果が JSON 出力の `plugins` キー（`data.plugins`）にあります。上の失敗した場合は、`error.context.report.plugins` へ移ります。
 
 ```bash
 resoloop skills sync "$PROJECT" --check --json | jq -c .data.plugins
@@ -301,12 +301,12 @@ resoloop plugin install "file://$GITSRC" --ref main --project "$PROJECT" --json
 
 ```
 <project>/.resoloop/plugins/
-├── .gitignore            ("*" を含む。plugins/ の下はコミットされない)
-├── .lock                 (導入、削除、プラグインの使用を直列にするロック)
+├── .gitignore            （"*" を含む。plugins/ の下はコミットされない）
+├── .lock                 （導入、削除、プラグインの使用を直列にするロック）
 └── <name>/
-    ├── install.json      (記録: 導入元、commit、installedAt、ファイルのハッシュ)
-    ├── package/          (プラグインのファイル。使う前に毎回ハッシュで検証する)
-    └── data/             (プラグインの永続的な作業ディレクトリ。検証しない)
+    ├── install.json      （記録: 導入元、commit、installedAt、ファイルのハッシュ）
+    ├── package/          （プラグインのファイル。使う前に毎回ハッシュで検証する）
+    └── data/             （プラグインの永続的な作業ディレクトリ。検証しない）
 ```
 
 `install.json` には `schemaVersion`、`name`、`version`、`source`（`kind` は `directory` か `git`。ほかに `location` と `ref`）、`commit`、`installedAt`（UTC）、`resoloopVersion`、`files`（`package/` のすべてのファイルの SHA-256）があります。Git の導入元の `source.location` に、資格情報が入ることはありません。`plugins/.gitignore` がすでにあって内容が異なる場合、導入は `PLUGIN_IGNORE_CONFLICT` で止まり、そのファイルには触れません。
@@ -479,7 +479,7 @@ resoloop skills sync "$PROJECT" --check --json 2>&1 >/dev/null | jq -c .error.co
   ```output
   {"name":"plugin:hello:uv","status":"pass","required":true,"message":"<uv-path> <uv-version-line>"}
   ```
-- **doctor の出力は項目ごとに分けて読んでください。** `ready` が true になるのは、本体の項目を含め、必須の項目がすべて pass のときだけです。doctor は `ready` が false でも終了コード 0 で終わるため、終了コードだけでは成功の目印になりません。プラグインの tools はそれ自身の `plugin:*` の項目で判断してください。ResoniteLink の URL がないといった本体の項目の失敗は `ready` を false にしますが、プラグインの tools については何も示しません。`warning` が `ready` を変えることはありません。
+- **読み方は次のとおりです。** `ready` が true になるのは、本体の項目を含め、必須の項目がすべて pass のときだけです。doctor は `ready` が false でも終了コード 0 で終わるため、終了コードだけでは成功の目印になりません。プラグインの tools はそれ自身の `plugin:*` の項目で判断してください。ResoniteLink の URL がないといった本体の項目の失敗は `ready` を false にしますが、プラグインの tools については何も示しません。`warning` が `ready` を変えることはありません。
 - tool が不足している場合は、次のようになります。例の `tools` に1項目を足した一時的なコピーを、スクラッチのプロジェクト（`$SCRATCH`。`resoloop init` で作り、`hello` を導入していないもの）へ導入します。足した項目は例の一部ではありません。
 
   ```bash
@@ -542,7 +542,7 @@ Git の導入元では、リポジトリのルートがパッケージのルー�
 | `name` | 文字列 | はい | [名前](#名前)。導入済みのすべてのプラグインの間で一意です。 |
 | `description` | 文字列 | はい | 1〜500 文字。 |
 | `program` | 文字列 | はい | 裸のコマンド名（`[A-Za-z0-9._+-]+`。絶対パスの `PATH` の項目から探します）か、`./path/in/the/package` のどちらか。 |
-| `args` | 文字列の配列 | いいえ | ユーザーの引数の前に渡されます。`${pluginRoot}` と `${pluginData}` は置き換えられます。それ以外の `${...}` や、閉じていない `${` は無効です。 |
+| `args` | 文字列の配列 | いいえ | 利用者の引数の前に渡されます。`${pluginRoot}` と `${pluginData}` は置き換えられます。それ以外の `${...}` や、閉じていない `${` は無効です。 |
 | `timeoutSeconds` | 整数 | いいえ | 1〜86400。ない場合の期限は `commandTimeoutSeconds`（既定 900）です。 |
 
 `skills[]` には、`name`（名前。必須）と `path`（必須）があります。`path` は、`SKILL.md` を含む、パッケージからの相対ディレクトリです。
@@ -595,7 +595,7 @@ Git の導入元では、リポジトリのルートがパッケージのルー�
 ResoLoop はコマンドを次のように起動します。
 
 - **シェルを使いません。** プログラムは直接起動されます。裸の名前の `program` は `PATH` の絶対パスの項目から探します（相対パスの項目と空の項目は読み飛ばします）。`./path` のプログラムは `package/` の中の通常のファイルで、Linux では実行ビットが必要です（Git ではモード 100755。ローカルのコピーはモードを保ちます）。Windows では `.exe` のファイルだけが起動されるため、スクリプトはインタープリターを `PATH` から呼び、スクリプトを `${pluginRoot}` で渡してください。
-- **引数は次のように作られます。** `args` の `${pluginRoot}`（`package/` の絶対パス）と `${pluginData}`（`data/` の絶対パス）を1回の処理で置き換えたあとに、ユーザーの引数が入力したとおりに追加されます。
+- **引数は次のように作られます。** `args` の `${pluginRoot}`（`package/` の絶対パス）と `${pluginData}`（`data/` の絶対パス）を1回の処理で置き換えたあとに、利用者の引数が入力したとおりに追加されます。
 - **作業ディレクトリはプロジェクトのルートです。**
 - **環境は次のとおりです。** 継承した環境から `RESOLOOP_PLUGIN_*` 変数をすべて除き、次を加えます。
 
@@ -604,13 +604,13 @@ ResoLoop はコマンドを次のように起動します。
   | `RESOLOOP_PLUGIN_NAME` | プラグインの名前。 |
   | `RESOLOOP_PLUGIN_COMMAND` | コマンドの名前。 |
   | `RESOLOOP_PLUGIN_ROOT` | `package/` の絶対パス。読み取り専用として扱ってください。 |
-  | `RESOLOOP_PLUGIN_DATA` | `data/` の絶対パス。書き込めて、呼び出しの間も残り、`plugin remove` で削除されます。 |
+  | `RESOLOOP_PLUGIN_DATA` | `data/` の絶対パス。書き込めて、呼び出しをまたいで残り、`plugin remove` で削除されます。 |
   | `RESOLOOP_PLUGIN_PROJECT_ROOT` | プロジェクトのルート（作業ディレクトリと同じ）。 |
   | `RESOLOOP_PLUGIN_HOST_ARGV` | 文字列の JSON 配列。この ResoLoop を起動した argv で、プラグインが ResoLoop を呼び戻せるようにします。ResoLoop の起動のしかたによって変わります。 |
   | `RESOLOOP_PLUGIN_HOST_VERSION` | 実行中の ResoLoop のバージョン（たとえば `0.2.0`）。 |
   | `PYTHONPYCACHEPREFIX` | `<data>/.cache/python` |
   | `UV_PROJECT_ENVIRONMENT` | `<data>/.venv` |
-- **ストリームと終了コードはそのまま扱われます。** stdout と stderr は利用者へ直接届きます。stdin はリダイレクトされていればそのまま渡され、端末なら空の入力になります。終了コードは変更されずに返ります。キャンセルされたコマンドや、期限を超えたコマンドが成功として扱われることはありません。停止される間にプログラムが 0 で終了しても、ResoLoop は `PLUGIN_COMMAND_CANCELLED` または `PLUGIN_COMMAND_TIMEOUT` を報告します。
+- **ストリームと終了コードは次のように扱われます。** stdout と stderr は利用者へ直接届きます。stdin はリダイレクトされていればそのまま渡され、端末なら空の入力になります。終了コードは変更されずに返ります。キャンセルされたコマンドや、期限を超えたコマンドが成功として扱われることはありません。停止される間にプログラムが 0 で終了しても、ResoLoop は `PLUGIN_COMMAND_CANCELLED` または `PLUGIN_COMMAND_TIMEOUT` を報告します。
 - **`--json` は作者が実装します。** ResoLoop は `--json` をほかのトークンと同じように素通しし、解析しません。コマンドに JSON を出力させたい場合は、それを実装してください。例は実装しています。ここでは、引数の順序が保たれ、値は文字列です。
 
   ```bash
@@ -688,7 +688,7 @@ ResoLoop は依存するものを導入しません。利用者が何を導入�
 
 - プラグインのコマンドは利用者として動きます。利用者が読み書きできるファイルはすべて読み書きでき、ネットワークを使い、プロセスを起動できます。
 - 環境（古い `RESOLOOP_PLUGIN_*` 変数を除く）を継承するため、その中のトークンや資格情報も含みます。
-- ResoLoop はプラグインに署名せず、中身を調べず、サンドボックスの中でも動かしません。
+- ResoLoop はプラグインに署名せず、危険なコードがないか検査せず、サンドボックスの中でも動かしません。
 
 ### 導入元の確かめ方
 
@@ -745,7 +745,7 @@ PLUGIN_MODIFIED: Installed plugins failed verification.
 - 導入元とプロジェクトは重なってはいけません。どちらも、もう一方を含んではいけません（`file://` URL も同じです）。
 - `--ref` はすべての Git URL で必要です。`file://` も同じです。ディレクトリでは拒否されます。
 - スキルの配布が見るのは1つのディレクトリだけです。`init DIRECTORY` と `skills sync DIRECTORY` はそのディレクトリそのものの `.resoloop.json` を使います。導入、一覧、削除、コマンド、doctor、レシピは、代わりにカレントディレクトリから上へ向かって探します。
-- 失敗した導入は片付けられます。削除されるのは、その導入の staging ディレクトリだけです。すでにある導入物、その記録、その `data/` は変わりません。使用中の配置先が上書きされることはなく、ほかの導入の staging ディレクトリには触れません。
+- 失敗した導入は片付けられます。削除されるのは、その導入の staging ディレクトリだけです。すでにある導入物、その記録、その `data/` は変わりません。すでにファイルかディレクトリがある配置先が上書きされることはなく、ほかの導入の staging ディレクトリには触れません。
 - プラグインのコマンドは Linux と Windows でだけ動きます。Windows では `.exe` のプログラムだけが起動されます（`.cmd` と `.bat` は起動されません）。
 
 ### 上限
