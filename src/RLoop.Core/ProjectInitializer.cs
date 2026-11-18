@@ -1,18 +1,33 @@
 using System.Text;
 using System.Text.Json;
+using RLoop.Core.Plugins;
 
 namespace RLoop.Core;
 
+/// <summary>Created and Unchanged list base files only; plugin skills are reported in Plugins.</summary>
 public sealed record ProjectInitResult(
     string RootDirectory,
     string ProjectName,
     IReadOnlyList<string> Created,
     IReadOnlyList<string> Unchanged,
-    IReadOnlyList<string> NextSteps);
+    IReadOnlyList<string> NextSteps,
+    PluginSkillSyncResult? Plugins = null);
 
 public static class ProjectInitializer
 {
-    public static ProjectInitResult Initialize(string targetDirectory)
+    public static ProjectInitResult Initialize(string targetDirectory) => Initialize(targetDirectory, plugins: null);
+
+    /// <summary>
+    /// Also creates the missing skill files of the verified plugins installed in exactly this project. Like the
+    /// base files, an existing plugin skill file is never overwritten; updates belong to skills sync --update.
+    /// </summary>
+    public static ProjectInitResult Initialize(string targetDirectory, string resoloopVersion, PluginNameReservations reservations)
+    {
+        using var plugins = PluginSkillManager.Open(targetDirectory, resoloopVersion, reservations);
+        return Initialize(targetDirectory, plugins);
+    }
+
+    private static ProjectInitResult Initialize(string targetDirectory, PluginSkillPlan? plugins)
     {
         var root = Path.GetFullPath(targetDirectory);
         var projectName = new DirectoryInfo(root).Name;
@@ -131,13 +146,19 @@ public static class ProjectInitializer
             else conflicts.Add(relativePath.Replace('\\', '/'));
         }
 
+        var pluginConflicts = plugins?.Conflicts(init: true) ?? [];
+        conflicts.AddRange(pluginConflicts.Select(conflict => conflict.Path));
         if (conflicts.Count > 0)
+        {
+            var context = new Dictionary<string, object?> { ["rootDirectory"] = root, ["conflicts"] = conflicts };
+            if (pluginConflicts.Count > 0) context["pluginConflicts"] = pluginConflicts;
             throw new RLoopException(
                 "INIT_FILE_EXISTS",
                 "Project initialization would overwrite existing files.",
                 ExitCodes.ValidationFailed,
-                new Dictionary<string, object?> { ["rootDirectory"] = root, ["conflicts"] = conflicts },
+                context,
                 ["Move or reconcile the listed files, then run resoloop init again. Existing files are never overwritten."]);
+        }
 
         var created = new List<string>();
         Directory.CreateDirectory(root);
@@ -150,6 +171,7 @@ public static class ProjectInitializer
             File.WriteAllText(path, NormalizeLineEndings(content), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
             created.Add(normalized);
         }
+        var pluginUpdated = plugins?.Apply(init: true) ?? [];
 
         return new ProjectInitResult(root, projectName, created, unchanged,
         [
@@ -158,7 +180,7 @@ public static class ProjectInitializer
             "Restart Codex if it does not detect the project skills under .agents/skills immediately.",
             "Capture the live world with resoloop capture content/main.json --camera main --output artifacts/main.jpg --json; use .svg for offline projection.",
             "For ProtoFlux, set RESONITE_MANAGED_DATA_PATH and use flux/resoloop.flux.json."
-        ]);
+        ], plugins?.Result("init", pluginUpdated, applied: true));
     }
 
     private static string ToSafeName(string name)

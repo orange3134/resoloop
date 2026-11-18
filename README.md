@@ -84,6 +84,16 @@ If Blender is installed on your PC, resoloop detects and uses it automatically.
 
 You do not need to have Blender open.
 
+## Plugins
+
+A plugin adds commands, skills, UIX recipes and tool checks to one ResoLoop project.
+
+Install one with `resoloop plugin install SOURCE`, list the installed plugins with `resoloop plugin list`, and run a plugin command with `resoloop [--project DIR] COMMAND`.
+
+`resoloop help` lists `plugin install` when your ResoLoop supports plugins. If the line is missing, build ResoLoop from source.
+
+See the [plugin guide](https://github.com/orange3134/resoloop/blob/main/docs/PLUGINS.md) and the [minimal example](https://github.com/orange3134/resoloop/tree/main/examples/plugins/hello).
+
 ## Learn more
 
 - [Detailed documentation](README-DETAILS.md) — agent workflows, commands, import and offline analysis, and limitations

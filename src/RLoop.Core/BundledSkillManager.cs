@@ -1,14 +1,16 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using RLoop.Core.Plugins;
 
 namespace RLoop.Core;
 
 public sealed record SkillSyncEntry(string Name, string Path, string Status, string BundledHash,
     string? InstalledHash, string? LockedHash);
 
+/// <summary>Plugins is null unless a plugin-aware sync found declared plugin skills or a plugin skill record.</summary>
 public sealed record SkillSyncResult(string RootDirectory, string Mode, bool Synchronized,
-    IReadOnlyList<string> Updated, IReadOnlyList<SkillSyncEntry> Skills);
+    IReadOnlyList<string> Updated, IReadOnlyList<SkillSyncEntry> Skills, PluginSkillSyncResult? Plugins = null);
 
 public static class BundledSkillManager
 {
@@ -24,7 +26,19 @@ public static class BundledSkillManager
             "resonite-uix/references/control-verification.md"])
         .Concat(UixRecipes.Catalog.Select(recipe => $"resonite-uix/recipes/{recipe.Name}.json")).ToArray();
 
-    public static SkillSyncResult Sync(string targetDirectory, bool update)
+    public static SkillSyncResult Sync(string targetDirectory, bool update) => Sync(targetDirectory, update, plugins: null);
+
+    /// <summary>
+    /// Also distributes the skills of the verified plugins installed in exactly this project. Every bundled and
+    /// plugin conflict is checked before anything is written, and the plugin lease is held until writing ends.
+    /// </summary>
+    public static SkillSyncResult Sync(string targetDirectory, bool update, string resoloopVersion, PluginNameReservations reservations)
+    {
+        using var plugins = PluginSkillManager.Open(targetDirectory, resoloopVersion, reservations);
+        return Sync(targetDirectory, update, plugins);
+    }
+
+    private static SkillSyncResult Sync(string targetDirectory, bool update, PluginSkillPlan? plugins)
     {
         var root = Path.GetFullPath(targetDirectory);
         var lockPath = Path.Combine(root, LockRelativePath.Replace('/', Path.DirectorySeparatorChar));
@@ -45,17 +59,22 @@ public static class BundledSkillManager
         }
 
         var conflicts = entries.Where(entry => entry.Status.EndsWith("conflict", StringComparison.Ordinal)).ToArray();
-        if (conflicts.Length > 0)
-            throw new RLoopException("SKILL_SYNC_CONFLICT",
-                "Bundled skill sync stopped because one or more installed skills are modified or have no trusted lock.",
-                ExitCodes.ValidationFailed,
-                new Dictionary<string, object?> { ["rootDirectory"] = root, ["conflicts"] = conflicts },
+        var pluginConflicts = plugins?.Conflicts(init: false) ?? [];
+        if (conflicts.Length > 0 || pluginConflicts.Count > 0)
+        {
+            var context = new Dictionary<string, object?> { ["rootDirectory"] = root, ["conflicts"] = conflicts };
+            if (pluginConflicts.Count > 0) context["pluginConflicts"] = pluginConflicts;
+            throw new RLoopException("SKILL_SYNC_CONFLICT", pluginConflicts.Count == 0
+                    ? "Bundled skill sync stopped because one or more installed skills are modified or have no trusted lock."
+                    : "Skill sync stopped because one or more bundled or plugin skills are modified, unowned or unsafe.",
+                ExitCodes.ValidationFailed, context,
                 ["Reconcile or back up the listed skills. resoloop never overwrites an unverified user-edited skill."]);
+        }
 
         var pending = entries.Where(entry => entry.Status is "missing" or "update-available").ToArray();
         if (!update)
-            return new SkillSyncResult(root, "check", pending.Length == 0 && entries.All(entry => entry.Status == "current"),
-                [], entries);
+            return new SkillSyncResult(root, "check", pending.Length == 0 && entries.All(entry => entry.Status == "current")
+                && (plugins?.Synchronized ?? true), [], entries, plugins?.Result("check", [], applied: false));
 
         var updated = new List<string>();
         foreach (var entry in pending)
@@ -76,13 +95,16 @@ public static class BundledSkillManager
             File.WriteAllText(lockPath, NormalizeLineEndings(serializedLock), new UTF8Encoding(false));
             updated.Add(LockRelativePath);
         }
+        var pluginUpdated = plugins?.Apply(init: false) ?? [];
+        updated.AddRange(pluginUpdated);
         var finalEntries = entries.Select(entry => entry with
         {
             Status = "current",
             InstalledHash = entry.BundledHash,
             LockedHash = entry.BundledHash
         }).ToArray();
-        return new SkillSyncResult(root, "update", true, updated, finalEntries);
+        return new SkillSyncResult(root, "update", true, updated, finalEntries,
+            plugins?.Result("update", pluginUpdated, applied: true));
     }
 
     internal static string LoadBundledFile(string file)

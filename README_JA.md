@@ -84,6 +84,16 @@ PCにBlenderがインストールされていれば自動で検出して利用�
 
 Blenderを立ち上げておく必要はありません。
 
+## プラグイン
+
+プラグインは、1つの resoloop プロジェクトにコマンド、スキル、UIX レシピ、tools の検査を追加します。
+
+`resoloop plugin install SOURCE` で導入し、`resoloop plugin list` で導入済みのプラグインを確認し、プラグインのコマンドは `resoloop [--project DIR] COMMAND` で実行します。
+
+プラグインに対応した ResoLoop では、`resoloop help` に `plugin install` の行があります。行が無い場合は、ソースからビルドしてください。
+
+詳しくは[プラグインのガイド](https://github.com/orange3134/resoloop/blob/main/docs/PLUGINS.ja.md)と[最小の例](https://github.com/orange3134/resoloop/tree/main/examples/plugins/hello)を参照してください。
+
 ## さらに詳しく
 
 - [詳細資料](README-DETAILS.md) — エージェント向けの操作手順、コマンド、取り込み・オフライン解析、制約

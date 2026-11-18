@@ -1,0 +1,10 @@
+[project]
+name = "resoloop-plugin-hello"
+version = "1.0.0"
+description = "Minimal ResoLoop example plugin."
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.uv]
+# A virtual project: uv installs no package, so nothing is built inside package/.
+package = false

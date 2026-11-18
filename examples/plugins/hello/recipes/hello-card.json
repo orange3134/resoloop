@@ -1,0 +1,11 @@
+{
+  "prototypes": {
+    "hello.card": {
+      "slot": { "key": "${key}", "name": "${key}" },
+      "components": [
+        { "key": "${key}-rect", "type": "FrooxEngine.UIX.RectTransform" },
+        { "key": "${key}-text", "type": "FrooxEngine.UIX.Text", "fields": { "Content": "Hello from the hello plugin" } }
+      ]
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "name": "hello",
+  "version": "1.0.0",
+  "description": "Minimal example plugin: a Python command run with uv, a skill, a UIX recipe and a tool check.",
+  "resoloop": { "minVersion": "0.2.0" },
+  "commands": [
+    {
+      "name": "hello",
+      "description": "Prints the arguments and RESOLOOP_PLUGIN_* variables it received.",
+      "program": "uv",
+      "args": ["run", "--project", "${pluginRoot}", "--locked", "python", "${pluginRoot}/hello.py"]
+    }
+  ],
+  "skills": [
+    { "name": "hello-guide", "path": "skills/hello-guide" }
+  ],
+  "recipes": [
+    {
+      "name": "hello-card",
+      "path": "recipes/hello-card.json",
+      "prototype": "hello.card",
+      "purpose": "A Slot with a RectTransform and a Text that says hello.",
+      "parameters": { "key": "Unique stable key prefix (also the default Slot name)." }
+    }
+  ],
+  "tools": [
+    {
+      "name": "uv",
+      "executable": "uv",
+      "versionArgs": ["--version"],
+      "required": true,
+      "hint": "Install uv from https://docs.astral.sh/uv/ and make sure it is on PATH."
+    }
+  ]
+}
