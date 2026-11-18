@@ -117,7 +117,7 @@ RESOLOOP_PLUGIN_HOST_ARGV=<host-argv>
 RESOLOOP_PLUGIN_HOST_VERSION=0.2.0
 ```
 
-Only `--project` may come before the command name. `--`, `--project=x` and the empty string above reached the plugin untouched. The first run also prints two progress lines from `uv` on stderr (the output above is stdout and does not change):
+Only `--project` may come before the command name. `--`, `--project=x` and the empty string above reached the plugin untouched. The first run also prints progress lines from `uv` on stderr, such as these. `uv` may print more, for example a warning when `VIRTUAL_ENV` is set, which is harmless because ResoLoop sets `UV_PROJECT_ENVIRONMENT`. The output above is stdout and does not change:
 
 ```output
 Using CPython <python-version> interpreter at: <python-path>
@@ -135,7 +135,7 @@ SKILL_SYNC_REQUIRED: Bundled skills or their lock need synchronization.
   next: Review the reported paths, then run resoloop skills sync --update.
 ```
 
-The message talks about bundled skills only. Here the pending file is the plugin's. A failing `--check` prints nothing on stdout, so with `--json` the failure is the error object on **stderr**, and the plugin's result is in `error.context.report.plugins` (`2>&1 >/dev/null` sends stderr to the pipe and drops stdout):
+The message talks about bundled skills only. Here the pending file is the plugin's. With `--json`, a failing `--check` prints the error object on **stderr** and nothing on stdout, and the plugin's result is in `error.context.report.plugins` (`2>&1 >/dev/null` sends stderr to the pipe and drops stdout):
 
 ```bash
 resoloop skills sync "$PROJECT" --check --json 2>&1 >/dev/null | jq -c .error.context.report.plugins
@@ -334,7 +334,7 @@ hello  PROBLEM PLUGIN_MODIFIED: Package content differs from the install record.
 - **There is no in-place update.** Installing a name that is already installed fails with `PLUGIN_ALREADY_INSTALLED`. To update, remove the plugin and install it again.
 - **`plugin remove` deletes `<project>/.resoloop/plugins/<name>/` as a whole, `data/` included.** Whatever the plugin keeps there (caches, a virtual environment, saved results) is gone. Copy what you need first.
 - Without `--yes`, the command fails with `CONFIRMATION_REQUIRED` (exit 6) and changes nothing.
-- A plugin whose record or package is broken can still be removed.
+- A plugin whose record or package is broken can still be removed. The exception is a plugin whose directory or `package` itself is a link: `plugin remove` refuses it with `PLUGIN_PATH_UNSAFE`, so replace the link with an ordinary directory first.
 - Links inside `data/` are deleted as links. What they point to is never touched.
 - **Skills that were already distributed stay** in `.agents/skills/<skill>/`. ResoLoop does not delete files it copied. `skills sync --json` lists them under `plugins.retained`.
 
@@ -344,6 +344,7 @@ hello  PROBLEM PLUGIN_MODIFIED: Package content differs from the install record.
   resoloop [--project DIR] PLUGIN_COMMAND [ARGUMENTS...]   (arguments after the command name go to the plugin unchanged)
 ```
 
+- `plugin list` and `resoloop help` do not show a plugin's command names. They are `commands[].name` in `<project>/.resoloop/plugins/<name>/package/resoloop-plugin.json`, and the plugin's own skill or documentation may list them too.
 - Only `--project` may come before the command name. The first other token is the command name, and everything after it, including `--json`, `--`, empty strings and `--project=x`, goes to the plugin unchanged. ResoLoop does not switch to JSON output for a plugin command. A plugin that offers `--json` implements it itself.
 - Built-in command names always win. A name that is neither built-in nor declared by an installed plugin fails with `UNKNOWN_COMMAND` (exit 2).
 - Plugin commands never connect to Resonite.
@@ -722,7 +723,7 @@ hello  PROBLEM PLUGIN_MODIFIED: Package content differs from the install record.
 PLUGIN_MODIFIED: Installed plugins failed verification.
 ```
 
-(The second line is on stderr and the command exits with 6.) A broken plugin does not heal itself. Remove it (`plugin remove NAME --yes` works on a broken plugin) and install it again.
+(The second line is on stderr and the command exits with 6.) A broken plugin does not heal itself. Remove it (`plugin remove NAME --yes` works on a broken plugin, except when the plugin's directory or `package` itself is a link; see [Updating and removing](#updating-and-removing)) and install it again.
 
 What the verification does **not** cover: `data/`, and file permissions (it compares the file set and the content hash of each file).
 
@@ -741,7 +742,7 @@ These are the conditions of the current implementation. They were checked agains
 - **Git sources must be the work tree root.** A subdirectory of a Git work tree, or a bare repository, is `PLUGIN_SOURCE_INVALID`. So is a Git source that contains a nested repository. Ignored files of a Git source are not installed.
 - **A source outside Git is copied as a whole.** Any `.git` inside it, any link, and any special file is refused.
 - **Source paths are resolved through links.** A local source path may be a link to a directory. ResoLoop resolves it to the real directory, and that real directory decides whether it is a Git root and which files are copied. The recorded `source.location` is the real path. The same is true of `--project`.
-- **Links are refused where ResoLoop writes or copies.** A link inside the package that would be copied is refused, tracked or not (an ignored link in a Git source is not copied and does not matter). A link at any of `.resoloop`, `plugins`, a plugin's directory, `package`, or `data` is refused (`PLUGIN_PATH_UNSAFE`; a link found inside `package/` while verifying shows up as `PLUGIN_MODIFIED`), and install, remove and commands never follow it. Use ordinary directories.
+- **Links are refused where ResoLoop writes or copies.** A link inside the package that would be copied is refused, tracked or not (an ignored link in a Git source is not copied and does not matter). A link at any of `.resoloop`, `plugins`, a plugin's directory, `package`, or `data` is refused (`PLUGIN_PATH_UNSAFE`; verification reports `package` itself being a link, or a link found inside `package/`, as `PLUGIN_MODIFIED`), and install, remove and commands never follow it. Use ordinary directories.
 - **The source and the project must not overlap.** Neither may contain the other (a `file://` URL included).
 - **`--ref` is required for every Git URL**, `file://` included, and is refused with a directory.
 - **Skill distribution looks at one directory only.** `init DIRECTORY` and `skills sync DIRECTORY` use the `.resoloop.json` of that exact directory. Install, list, remove, commands, doctor and recipes search upward from the current directory instead.

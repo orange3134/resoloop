@@ -68,7 +68,7 @@ For shapes that are difficult or wasteful to express with Resonite procedural me
 
 The status `connectionId` is scoped to one ResoniteLink connection, not a stable world identity. Refresh raw IDs after reconnect/restart and rely on managed key/path re-resolution.
 
-If the project has plugins, check them with `resoloop plugin list --json` and call a plugin command with `resoloop [--project DIR] COMMAND`. Everything after the command name goes to the plugin unchanged. See `docs/PLUGINS.md` in the resoloop repository.
+If the project has plugins, check them with `resoloop plugin list --json`, which does not show command names; they are `commands[].name` in `<project>/.resoloop/plugins/<name>/package/resoloop-plugin.json` (or see the plugin's own skill). Call a plugin command with `resoloop [--project DIR] COMMAND`; everything after the command name goes to the plugin unchanged. See `docs/PLUGINS.md` in the resoloop repository.
 
 ## Automatic connection discovery
 

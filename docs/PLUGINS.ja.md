@@ -117,7 +117,7 @@ RESOLOOP_PLUGIN_HOST_ARGV=<host-argv>
 RESOLOOP_PLUGIN_HOST_VERSION=0.2.0
 ```
 
-コマンド名より前に置けるのは `--project` だけです。上の `--`、`--project=x`、空文字列は変更されずにプラグインへ届きました。最初の実行では、`uv` が stderr に進捗の2行も出力します（上の出力は stdout で、変わりません）。
+コマンド名より前に置けるのは `--project` だけです。上の `--`、`--project=x`、空文字列は変更されずにプラグインへ届きました。最初の実行では、`uv` が次のような進捗の行も stderr に出力します。`uv` はほかの行を出力することもあります。たとえば `VIRTUAL_ENV` が設定されていると警告の行が出ますが、ResoLoop が `UV_PROJECT_ENVIRONMENT` を設定するため、この警告は影響しません。上の出力は stdout で、変わりません。
 
 ```output
 Using CPython <python-version> interpreter at: <python-path>
@@ -135,7 +135,7 @@ SKILL_SYNC_REQUIRED: Bundled skills or their lock need synchronization.
   next: Review the reported paths, then run resoloop skills sync --update.
 ```
 
-このメッセージは同梱スキルのことしか述べていませんが、ここで同期が必要なのはプラグインのファイルです。失敗した `--check` は stdout に何も出力しないため、`--json` を付けると失敗は **stderr** のエラーオブジェクトになり、プラグインの結果は `error.context.report.plugins` にあります（`2>&1 >/dev/null` は stderr をパイプへ送り、stdout を捨てます）。
+このメッセージは同梱スキルのことしか述べていませんが、ここで同期が必要なのはプラグインのファイルです。`--json` を付けると、失敗した `--check` は **stderr** にエラーオブジェクトを出力し、stdout には何も出力しません。プラグインの結果は `error.context.report.plugins` にあります（`2>&1 >/dev/null` は stderr をパイプへ送り、stdout を捨てます）。
 
 ```bash
 resoloop skills sync "$PROJECT" --check --json 2>&1 >/dev/null | jq -c .error.context.report.plugins
@@ -157,7 +157,7 @@ skills update: synchronized=True
 …
 ```
 
-テキストの出力に並ぶのは同梱スキルだけです。コマンドが成功したときは、プラグインの結果が JSON 出力の `plugins` キー（`data.plugins`）にあります。上の失敗した場合は、`error.context.report.plugins` へ移ります。
+テキストの出力に並ぶのは同梱スキルだけです。コマンドが成功したときは、プラグインの結果が JSON 出力の `plugins` キー（`data.plugins`）にあります。上のように失敗した場合は、`error.context.report.plugins` へ移ります。
 
 ```bash
 resoloop skills sync "$PROJECT" --check --json | jq -c .data.plugins
@@ -334,7 +334,7 @@ hello  PROBLEM PLUGIN_MODIFIED: Package content differs from the install record.
 - **その場での更新はありません。** すでに導入済みの名前を導入すると、`PLUGIN_ALREADY_INSTALLED` で失敗します。更新するには、プラグインを削除してから導入し直してください。
 - **`plugin remove` は `<project>/.resoloop/plugins/<name>/` を、`data/` を含めて丸ごと削除します。** プラグインがそこに置いたもの（キャッシュ、仮想環境、保存した結果）はすべてなくなります。必要なものは先にコピーしてください。
 - `--yes` がないと、コマンドは `CONFIRMATION_REQUIRED`（終了コード 6）で失敗し、何も変更しません。
-- 記録かパッケージが壊れているプラグインも、削除できます。
+- 記録かパッケージが壊れているプラグインも、削除できます。ただし、プラグインのディレクトリか `package` 自体がリンクの場合は、`plugin remove` が `PLUGIN_PATH_UNSAFE` で拒否するため、先にリンクを通常のディレクトリに置き換えてください。
 - `data/` の中のリンクはリンクとして削除されます。リンク先には触れません。
 - **配布済みのスキルは `.agents/skills/<skill>/` に残ります。** ResoLoop は、自分がコピーしたファイルを削除しません。`skills sync --json` は、それらを `plugins.retained` に並べます。
 
@@ -344,6 +344,7 @@ hello  PROBLEM PLUGIN_MODIFIED: Package content differs from the install record.
   resoloop [--project DIR] PLUGIN_COMMAND [ARGUMENTS...]   (arguments after the command name go to the plugin unchanged)
 ```
 
+- `plugin list` と `resoloop help` は、プラグインのコマンド名を表示しません。コマンド名は `<project>/.resoloop/plugins/<name>/package/resoloop-plugin.json` の `commands[].name` にあり、プラグイン自身のスキルやドキュメントにも載っていることがあります。
 - コマンド名より前に置けるのは `--project` だけです。それ以外で最初のトークンがコマンド名で、`--json`、`--`、空文字列、`--project=x` を含め、その後ろはすべて変更されずにプラグインへ渡ります。ResoLoop はプラグインのコマンドで JSON 出力に切り替えません。`--json` を提供するプラグインは自分で実装します。
 - 本体のコマンド名が常に優先されます。本体のコマンドでも、導入済みのプラグインが宣言したものでもない名前は、`UNKNOWN_COMMAND`（終了コード 2）で失敗します。
 - プラグインのコマンドは Resonite へ接続しません。
@@ -722,7 +723,7 @@ hello  PROBLEM PLUGIN_MODIFIED: Package content differs from the install record.
 PLUGIN_MODIFIED: Installed plugins failed verification.
 ```
 
-（2行目は stderr に出て、コマンドは終了コード 6 で終わります。）壊れたプラグインが自然に直ることはありません。削除して（`plugin remove NAME --yes` は、壊れたプラグインでも動きます）、導入し直してください。
+（2行目は stderr に出て、コマンドは終了コード 6 で終わります。）壊れたプラグインが自然に直ることはありません。削除して（`plugin remove NAME --yes` は、壊れたプラグインでも動きます。ただし、プラグインのディレクトリか `package` 自体がリンクの場合を除きます。[更新と削除](#更新と削除)を参照）、導入し直してください。
 
 照合の対象に**含まれない**ものは、`data/` と、ファイルのパーミッションです（ファイルの集合と、各ファイルの内容のハッシュを比べます）。
 
@@ -741,7 +742,7 @@ PLUGIN_MODIFIED: Installed plugins failed verification.
 - Git の導入元は作業ツリーのルートでなければなりません。Git の作業ツリーのサブディレクトリとベアリポジトリは `PLUGIN_SOURCE_INVALID` です。入れ子のリポジトリを含む Git の導入元も同じです。Git の導入元の無視されたファイルは導入されません。
 - Git の外の導入元は全体がコピーされます。その中の `.git`、リンク、特殊ファイルは拒否されます。
 - 導入元のパスはリンクを解決して扱われます。ローカルの導入元のパスはディレクトリへのリンクでもかまいません。ResoLoop は実体のディレクトリへ解決し、その実体が Git のルートかどうかとコピーされるファイルを決めます。記録される `source.location` は実体のパスです。`--project` も同じです。
-- ResoLoop が書き込む場所とコピーする場所では、リンクが拒否されます。コピーされるパッケージの中のリンクは、追跡されているかどうかにかかわらず拒否されます（Git の導入元の無視されたリンクはコピーされず、関係ありません）。`.resoloop`、`plugins`、プラグインのディレクトリ、`package`、`data` のどれかがリンクだと拒否され（`PLUGIN_PATH_UNSAFE`。検証中に `package/` の中で見つかったリンクは `PLUGIN_MODIFIED` として表れます）、導入、削除、コマンドはそのリンクをたどりません。通常のディレクトリを使ってください。
+- ResoLoop が書き込む場所とコピーする場所では、リンクが拒否されます。コピーされるパッケージの中のリンクは、追跡されているかどうかにかかわらず拒否されます（Git の導入元の無視されたリンクはコピーされず、関係ありません）。`.resoloop`、`plugins`、プラグインのディレクトリ、`package`、`data` のどれかがリンクだと拒否され（`PLUGIN_PATH_UNSAFE`。検証は、`package` 自体がリンクの場合も、`package/` の中でリンクが見つかった場合も、`PLUGIN_MODIFIED` として報告します）、導入、削除、コマンドはそのリンクをたどりません。通常のディレクトリを使ってください。
 - 導入元とプロジェクトは重なってはいけません。どちらも、もう一方を含んではいけません（`file://` URL も同じです）。
 - `--ref` はすべての Git URL で必要です。`file://` も同じです。ディレクトリでは拒否されます。
 - スキルの配布が見るのは1つのディレクトリだけです。`init DIRECTORY` と `skills sync DIRECTORY` はそのディレクトリそのものの `.resoloop.json` を使います。導入、一覧、削除、コマンド、doctor、レシピは、代わりにカレントディレクトリから上へ向かって探します。

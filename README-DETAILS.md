@@ -420,7 +420,7 @@ resoloop skills sync --update
 
 ## Plugins
 
-プラグインは、1つのprojectにコマンド、スキル、UIXレシピ、toolsの検査を追加する機能です。`feat/plugin-v2` の機能で、NuGetで公開している0.2.0には含まれていません。
+プラグインは、1つのprojectにコマンド、スキル、UIXレシピ、toolsの検査を追加するパッケージです。プラグインは `feat/plugin-v2` の機能で、NuGetで公開している0.2.0には含まれていません。
 
 | 機能 | コマンド |
 |---|---|
