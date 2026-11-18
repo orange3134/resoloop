@@ -90,9 +90,9 @@ Blenderを立ち上げておく必要はありません。
 
 `resoloop plugin install SOURCE` で導入し、`resoloop plugin list` で導入済みのプラグインを確認し、プラグインのコマンドは `resoloop [--project DIR] COMMAND` で実行します。
 
-プラグインは `feat/plugin-v2` の機能です。NuGet で公開している 0.2.0 には含まれていません。
+プラグインに対応した ResoLoop では、`resoloop help` に `plugin install` の行があります。行が無い場合は、ソースからビルドしてください。
 
-詳しくは[プラグインのガイド](https://github.com/usaturn/resoloop/blob/feat/plugin-v2/docs/PLUGINS.ja.md)と[最小の例](https://github.com/usaturn/resoloop/tree/feat/plugin-v2/examples/plugins/hello)を参照してください。
+詳しくは[プラグインのガイド](https://github.com/orange3134/resoloop/blob/main/docs/PLUGINS.ja.md)と[最小の例](https://github.com/orange3134/resoloop/tree/main/examples/plugins/hello)を参照してください。
 
 ## さらに詳しく
 

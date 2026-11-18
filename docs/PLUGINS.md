@@ -17,7 +17,7 @@ A plugin can provide any of these four things. None of them is required: a packa
 
 Things to know first:
 
-- **Plugins are a `feat/plugin-v2` feature.** They exist in the `feat/plugin-v2` branch of `usaturn/resoloop`. The ResoLoop 0.2.0 published on NuGet has no plugin support. A `feat/plugin-v2` build also reports `0.2.0` from `resoloop version`, so tell the two apart with `resoloop help`: only a build with plugin support has the `plugin install` line.
+- **Check that your ResoLoop has plugin support.** The ResoLoop 0.2.0 published on NuGet has no plugin support, and a build from source that has it can also report `0.2.0` from `resoloop version`. Tell the two apart with `resoloop help`: only a build with plugin support has the `plugin install` line. If the line is missing, build ResoLoop from source (`dotnet build ResoLoop.slnx`).
 - **Plugins belong to one project.** A project is a directory that has a `.resoloop.json` (`resoloop init` creates it). A plugin is installed into `<project>/.resoloop/plugins/<name>/`, never globally.
 - **Installing does not run plugin code.** Installing only copies files (or exports them from Git objects), validates the manifest and records SHA-256 hashes. After that, two things start programs that a plugin's manifest names: running one of its commands, and `resoloop doctor`, which runs the tools the manifest declares (see [Doctor](#doctor)). Either can run code from the plugin's package.
 - **Plugin commands and doctor's tool checks run with your permissions.** A plugin is neither signed nor sandboxed. Read [Safety and limits](#safety-and-limits) before installing one you did not write.
@@ -27,7 +27,7 @@ A minimal example that uses all four features is in [`examples/plugins/hello/`](
 
 ## Quick start
 
-> Verified with ResoLoop 0.2.0 on feat/plugin-v2 (Linux). This note and the placeholder rule below apply to every output block in this guide, not only to the Quick start. The Quick start outputs were produced by running its commands in this order. Values that depend on the machine are replaced as listed here, and nothing else is edited. A line that contains only `…` stands for omitted lines. In JSON output, non-ASCII characters of a path are written as `\uXXXX` escapes, so a path such as `作業 ワールド` does not appear as typed there.
+> Verified with ResoLoop 0.2.0 built from source (Linux). This note and the placeholder rule below apply to every output block in this guide, not only to the Quick start. The Quick start outputs were produced by running its commands in this order. Values that depend on the machine are replaced as listed here, and nothing else is edited. A line that contains only `…` stands for omitted lines. In JSON output, non-ASCII characters of a path are written as `\uXXXX` escapes, so a path such as `作業 ワールド` does not appear as typed there.
 
 | Placeholder | Stands for |
 | --- | --- |
@@ -43,7 +43,7 @@ A minimal example that uses all four features is in [`examples/plugins/hello/`](
 
 Prerequisites:
 
-- A `resoloop` from `feat/plugin-v2` on your `PATH`. If you build it from a checkout (`dotnet build ResoLoop.slnx`), a wrapper script named `resoloop` containing `exec dotnet "<checkout>/src/RLoop.Cli/bin/Debug/net10.0/resoloop.dll" "$@"` is enough.
+- A `resoloop` with plugin support on your `PATH`. If you build it from a checkout (`dotnet build ResoLoop.slnx`), a wrapper script named `resoloop` containing `exec dotnet "<checkout>/src/RLoop.Cli/bin/Debug/net10.0/resoloop.dll" "$@"` is enough.
 - `git` on `PATH`. The installer always uses it, also to classify a local directory.
 - `uv` on `PATH`. The example's command runs through `uv`, which looks for a Python 3.10 or later and may download one when it finds none.
 - `jq` is optional. The commands below use it only to pick fields out of JSON output.
@@ -67,7 +67,7 @@ initialized <project>
 **2. Copy the example to a work directory.** The example sits inside the ResoLoop repository, and `plugin install` accepts a Git directory only when it is the root of a work tree, so a subdirectory of that repository is refused with `PLUGIN_SOURCE_INVALID`. Copy it to a directory that is outside any Git repository and does not overlap the project:
 
 ```bash
-RESOLOOP_REPO=/path/to/resoloop     # your checkout of usaturn/resoloop at feat/plugin-v2
+RESOLOOP_REPO=/path/to/resoloop     # your checkout of the ResoLoop repository
 SOURCE="$(mktemp -d)/hello"
 cp -r "$RESOLOOP_REPO/examples/plugins/hello" "$SOURCE"
 ```

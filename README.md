@@ -90,9 +90,9 @@ A plugin adds commands, skills, UIX recipes and tool checks to one ResoLoop proj
 
 Install one with `resoloop plugin install SOURCE`, list the installed plugins with `resoloop plugin list`, and run a plugin command with `resoloop [--project DIR] COMMAND`.
 
-Plugins are a `feat/plugin-v2` feature. The 0.2.0 published on NuGet does not include them.
+`resoloop help` lists `plugin install` when your ResoLoop supports plugins. If the line is missing, build ResoLoop from source.
 
-See the [plugin guide](https://github.com/usaturn/resoloop/blob/feat/plugin-v2/docs/PLUGINS.md) and the [minimal example](https://github.com/usaturn/resoloop/tree/feat/plugin-v2/examples/plugins/hello).
+See the [plugin guide](https://github.com/orange3134/resoloop/blob/main/docs/PLUGINS.md) and the [minimal example](https://github.com/orange3134/resoloop/tree/main/examples/plugins/hello).
 
 ## Learn more
 

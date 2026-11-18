@@ -420,7 +420,7 @@ resoloop skills sync --update
 
 ## Plugins
 
-プラグインは、1つのprojectにコマンド、スキル、UIXレシピ、toolsの検査を追加するパッケージです。プラグインは `feat/plugin-v2` の機能で、NuGetで公開している0.2.0には含まれていません。
+プラグインは、1つのprojectにコマンド、スキル、UIXレシピ、toolsの検査を追加するパッケージです。プラグインに対応したResoLoopでは、`resoloop help`に`plugin install`の行があります。行が無い場合は、sourceからbuildしてください。
 
 | 機能 | コマンド |
 |---|---|
@@ -430,7 +430,7 @@ resoloop skills sync --update
 | UIXレシピ | `uix recipe list/describe/export`、宣言の `$recipe` が `PLUGIN:RECIPE` を受け付ける |
 | toolsの検査 | `doctor` が `plugin:<plugin-name>:<tool-name>` の項目で報告 |
 
-詳しくは[プラグインのガイド](https://github.com/usaturn/resoloop/blob/feat/plugin-v2/docs/PLUGINS.ja.md)と[最小の例](https://github.com/usaturn/resoloop/tree/feat/plugin-v2/examples/plugins/hello)を参照してください。
+詳しくは[プラグインのガイド](https://github.com/orange3134/resoloop/blob/main/docs/PLUGINS.ja.md)と[最小の例](https://github.com/orange3134/resoloop/tree/main/examples/plugins/hello)を参照してください。
 
 ## Tests
 

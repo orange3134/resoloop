@@ -17,7 +17,7 @@
 
 最初に知っておくことは次のとおりです。
 
-- **プラグインは `feat/plugin-v2` の機能です。** `usaturn/resoloop` の `feat/plugin-v2` ブランチにあります。NuGet で公開されている ResoLoop 0.2.0 には、プラグインの機能がありません。`feat/plugin-v2` のビルドも `resoloop version` は `0.2.0` と表示するため、2つの見分けには `resoloop help` を使ってください。プラグインの機能があるビルドだけが、`plugin install` の行を持ちます。
+- **使っている ResoLoop がプラグインに対応しているかを確かめてください。** NuGet で公開されている ResoLoop 0.2.0 には、プラグインの機能がありません。プラグインの機能があるソースからのビルドも、`resoloop version` は `0.2.0` と表示することがあります。2つの見分けには `resoloop help` を使ってください。プラグインの機能があるビルドだけが、`plugin install` の行を持ちます。行が無い場合は、ソースからビルドしてください（`dotnet build ResoLoop.slnx`）。
 - **プラグインは1つのプロジェクトに属します。** プロジェクトは `.resoloop.json` があるディレクトリです（`resoloop init` が作ります）。プラグインは `<project>/.resoloop/plugins/<name>/` へ導入され、グローバルには導入されません。
 - **導入してもプラグインのコードは実行されません。** 導入ではファイルのコピー（または Git のオブジェクトからの書き出し）、manifest の検証、SHA-256 のハッシュの記録だけを行います。導入の後に、プラグインの manifest が指定したプログラムを起動するのは、プラグインのコマンドの実行と `resoloop doctor` の2つです。`doctor` は manifest が宣言した tools を実行します（[doctor](#doctor) を参照）。どちらも、プラグインのパッケージの中のコードを実行できます。
 - **プラグインのコマンドと `doctor` の tools の検査は、利用者の権限で動きます。** プラグインは署名されておらず、サンドボックスの中でも動きません。自分で書いていないプラグインを導入する前に、[安全と制限](#安全と制限)を読んでください。
@@ -27,7 +27,7 @@
 
 ## クイックスタート
 
-> 0.2.0 の feat/plugin-v2 で確認（Linux）。この注記と下の置き換えの規則は、クイックスタートだけでなく、このガイドのすべての出力例に当てはまります。クイックスタートの出力は、記載した順にコマンドを実行して得たものです。マシンによって変わる値は表のとおりに置き換えてあり、ほかは編集していません。`…` だけの行は、省略した行を表します。JSON の出力では、パスの ASCII 以外の文字が `\uXXXX` のエスケープで書かれるため、`作業 ワールド` のようなパスは、入力したとおりには表示されません。
+> ソースからビルドした ResoLoop 0.2.0 で確認（Linux）。この注記と下の置き換えの規則は、クイックスタートだけでなく、このガイドのすべての出力例に当てはまります。クイックスタートの出力は、記載した順にコマンドを実行して得たものです。マシンによって変わる値は表のとおりに置き換えてあり、ほかは編集していません。`…` だけの行は、省略した行を表します。JSON の出力では、パスの ASCII 以外の文字が `\uXXXX` のエスケープで書かれるため、`作業 ワールド` のようなパスは、入力したとおりには表示されません。
 
 | 表記 | 表すもの |
 | --- | --- |
@@ -43,7 +43,7 @@
 
 前提条件は次のとおりです。
 
-- `feat/plugin-v2` の `resoloop` が `PATH` にあること。チェックアウトからビルドする場合（`dotnet build ResoLoop.slnx`）は、`exec dotnet "<checkout>/src/RLoop.Cli/bin/Debug/net10.0/resoloop.dll" "$@"` を書いた、`resoloop` という名前のラッパースクリプトがあれば足ります。
+- プラグインに対応した `resoloop` が `PATH` にあること。チェックアウトからビルドする場合（`dotnet build ResoLoop.slnx`）は、`exec dotnet "<checkout>/src/RLoop.Cli/bin/Debug/net10.0/resoloop.dll" "$@"` を書いた、`resoloop` という名前のラッパースクリプトがあれば足ります。
 - `git` が `PATH` にあること。導入処理は常に `git` を使い、ローカルのディレクトリの分類にも使います。
 - `uv` が `PATH` にあること。例のコマンドは `uv` 経由で動きます。`uv` は Python 3.10 以降を探し、見つからなければダウンロードすることがあります。
 - `jq` は任意です。以下のコマンドは JSON の出力から欄を取り出すためにだけ `jq` を使います。
@@ -67,7 +67,7 @@ initialized <project>
 **2. 例を作業用ディレクトリへコピーします。** 例は ResoLoop のリポジトリの中にあり、`plugin install` が受け付ける Git のディレクトリは作業ツリーのルートだけなので、このリポジトリのサブディレクトリは `PLUGIN_SOURCE_INVALID` で拒否されます。どの Git リポジトリの外にもあり、プロジェクトと重ならないディレクトリへコピーしてください。
 
 ```bash
-RESOLOOP_REPO=/path/to/resoloop     # your checkout of usaturn/resoloop at feat/plugin-v2
+RESOLOOP_REPO=/path/to/resoloop     # your checkout of the ResoLoop repository
 SOURCE="$(mktemp -d)/hello"
 cp -r "$RESOLOOP_REPO/examples/plugins/hello" "$SOURCE"
 ```
