@@ -131,7 +131,7 @@ internal static class PluginExecutable
 
 // A command owns a kernel containment boundary (Linux process group / Windows job), not a snapshot of
 // descendant PIDs. The boundary stays identifiable until StopAsync confirms that nothing in it executes.
-// Same approach as PluginGit's private launcher; that file is owned by the plugin core (create-reso-world#297).
+// Same approach as PluginGit's private launcher, which stays private to the Git source handling.
 internal abstract class PluginProcess : IDisposable
 {
     private static readonly TimeSpan StopConfirmation = TimeSpan.FromSeconds(5);

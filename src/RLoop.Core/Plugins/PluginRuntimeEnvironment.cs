@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 
 namespace RLoop.Core.Plugins;
 
-/// <summary>The argv and environment a plugin command receives (create-reso-world#98 calling convention).</summary>
+/// <summary>The argv and environment a plugin command receives (the plugin command calling convention).</summary>
 public static class PluginRuntimeEnvironment
 {
     public const string Prefix = "RESOLOOP_PLUGIN_";
