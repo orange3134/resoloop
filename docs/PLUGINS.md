@@ -1,3 +1,5 @@
+[English](PLUGINS.md)｜[日本語](PLUGINS.ja.md)
+
 # ResoLoop plugins
 
 A plugin is a package that adds commands, skills, UIX recipes and tool checks to one ResoLoop project. This guide is for people who install plugins ([For users](#for-users)) and people who write them ([For authors](#for-authors)). It describes what the code does today, not what it may do later.
